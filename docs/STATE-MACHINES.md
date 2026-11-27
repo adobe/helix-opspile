@@ -1,6 +1,9 @@
 # State machines
 
-opspile has two status columns, `channel_requests.status` and `bash_requests.status`. Everything
+opspile has seven status columns, `channel_requests.status`, `bash_requests.status`,
+`tool_requests.status`, `portal_requests.status`, `org_merge_requests.status`,
+`member_requests.status` and `questions.status` (and the customer portal, in its own database, `lobbies.status` and
+`integration_requests.status`). Everything
 else that has a lifecycle keeps it in the shape of its data: a nullable timestamp, a watermark, whether a row exists, a lease,
 a key in a Durable Object's storage, a flag in the page. Those are state machines all the same, and
 this is the list of them, so that a change to one can start from what it is.
@@ -28,7 +31,12 @@ that whoever comes second finds out instead of overwriting.
 ## Threads and messages
 
 **Message file.** absent → live → edited → tombstone. `merge` in `src/channels.js`: a file only moves
-to a newer `version`, and a tombstone is final, so a replay in any order comes out the same.
+to a newer `version` (or, at the same version, to what a higher `FORMAT` writes differently: its
+body or `dropped`), and a tombstone is final, so a replay in any order comes out the same. What makes
+one is the platform's deletion event (Slack `message_deleted`, a Discord deletion the poller found,
+a portal message's `deletedAt`) or, on Teams, a fetched copy with `deletedDateTime` or the `deleted`
+change notification itself, since Graph answers 404 for a deleted channel message. A message restored
+on the platform afterwards stays a tombstone.
 
 **Read watermark.** One moving position per person and thread (`watermarks`, `advanceWatermark` in
 `src/threads.js`). The write is conditional on being newer, so it never moves back.
@@ -71,16 +79,61 @@ reads its entry from the members that are still there (`latestMember`, `fold` in
 what was labeled already is a no-op. `sweepLabels` picks up recent threads with a person's message
 after their label. `labeled_through` means that Clef read the thread, so nothing else writes it: a
 thread whose files are missing is recorded in `dead_jobs`, and the sweep leaves it for a day.
-A label written before migration 0059 has no `tech` (null, not `{}`): the thread view then goes by
-`channel_tech.thread` until the thread is labeled again.
+A label written before migration 0059 has no `tech` (null, not `{}`): the thread view then shows no
+technologies until the thread is labeled again (`POST /api/admin/relabel`).
 
-**Label review.** applies to the current label → history only. A review holds while its
-`labeled_through` matches the label's (`src/review.js`).
+**What a thread shows, by index.** `thread_tech` (migration 0072, `src/follows.js`) is derived from
+`labels.tech`: one row per technology, written in the same `db.batch` as the label (all of the
+thread's rows deleted, then what the label shows inserted), so the two never disagree, and the
+migration fills it from the labels there were. A label without `tech` has no rows, as above. It is
+what following a technology reads (below); a relabel that changes it says what it gained and lost,
+and the label job tells the rooms of the teams that follow those (`announceFollowed` in
+`src/normalizer.js`), best effort, as every room's.
+
+**Following a technology.** not followed → followed → not followed: a row in `team_follows` or
+`person_follows` (migration 0072), nothing else. A team's area is the same, a row in
+`team_follows_by` (migration 0105), worked out with `thread_areas` each time as the technologies are
+with `thread_tech`; and so is what a person follows besides, a row in `person_follows_by` (a
+customer, a person, an area, an account, a thread: migrations 0087, 0107). A followed thread is its
+key: a re-threading that folds it into another entry brings that entry along, and taking the follow
+back is the only way out. Configuration, like the shares: whose inbox has a
+thread is worked out from it, its thread's `thread_tech` and its group each time
+(`followingTeams`, `followersOf`), never stored, so a relabel, a re-threading or a follow taken back
+moves the thread in or out of the inboxes at once, and nothing has to be undone. A person's row
+counts for them whenever they are signed in, on an ops team or not (`COUNTED_PERSON_FOLLOWS`); one
+who may no longer sign in (off every team, outside `SIGNIN_DOMAINS`) keeps the row, which opens
+nothing, as nothing of theirs is asked for, and `entryFollowers` leaves them out. A relabel's room event names the technologies it gained or lost (`tech`), so
+a person whose thread no longer shows what they follow still hears of it, and their inbox lets it go.
+
+**Customer marks.** none → unstarred and/or muted → (undone, or acted on) none (`customer_marks`,
+migration 0099, `setMark` in `src/standing.js`). One row per person and customer, each mark the time
+it was last set: setting it again moves it on, an undo puts back the time it answered (`was`), an
+unmute (`PUT /api/follows { mute: false }`) clears it, and a row with neither left goes. Nothing is
+cleared by what happens later; what a mark does is worked out from its time each time.
+`unstarred_at`: their messages there before it do not count toward their regulars (they may become
+one again by what they post after). `muted_at`: the mute holds until they act on the customer, a
+message of theirs in any of its threads after it (`mutedOrgs`); while it holds, none of the
+customer's threads are in their personal view's list, neither by their channels nor by what they
+follow (`inPersonalInbox` in `src/shares.js`), whoever else posts or mentions them. Their messages
+before it do not count toward their regulars or being active. Muting changes the list only, not what
+they may see or work (`inPersonalView`, `mayWork`). A mute and their follow of the customer are one
+or the other (`changeFollow` in `src/following.js`): following it clears `muted_at`, and muting it
+deletes the follow, in the same request; the Undo of either puts back both.
 
 **Resolution.** Clef decides → resolved → reopened → Clef decides. Not stored: `resolution` in
-`src/resolve.js` works it out from the staff ✅ on the root, the latest customer message and
+`src/resolve.js` works it out from the staff ✅ on the root, the thread agent's resolution (an
+`agent_labels` row, which counts as a ✅ from its `at`), the latest customer message and
 `labeled_through`. A reopened thread stays open until Clef has read that message. `isResolved` is the
-rule for everyone but the page, which has its own copy.
+rule for everyone but the page, which has its own copy. The ✅ button's undo deletes the agent's
+row as well as the person's ✅, so a thread only the agent resolved can be opened again by anyone
+on the team.
+
+**The agent's labels.** none → set → no longer held (`agent_labels`, `src/agentlabels.js`): one
+row per platform thread and question, replaced by the agent's next answer, never stored as
+expired. Whether a row holds is worked out on each read (`holds`): a kind always, the urgency and
+the next actor while no person has posted after its `at` (`threads.last_at`, which bots do not
+move, so the agent's own posts keep them). A row is written on the entry's latest member, and the
+same question is deleted on the others in the same batch, so one row speaks for the group.
 
 **Status pile.** critical, hot, you, waiting, silent, team, quiet. Not stored: `statusOf` in
 `ui/inbox.js`, from the thread, the viewer and the clock (for normal and low urgency, a clock
@@ -102,11 +155,251 @@ was queued with and the row's. A rename event older than the channel's row (`fet
 order, or a replay of pile 1) changes nothing, and the write says so again, so of two handled at
 once the later wins. A job from `followChange` carries the classification it moved from (`was`):
 a thread a newer message already re-filed in its row still gets its derived data redone.
+One job at a time moves a channel: a lease on its row (`channels.refile_by`, `refile_until`, 15
+minutes at most), taken before the job reads the rules and given back when it is done, before it
+queues the threads it did not get to. A job that finds it taken goes back to the queue for 30
+seconds and reads the rules then, so the last rule change files the channel; one that dies keeps
+it until it runs out. Two at once, each with the rules as they were when it started, once left
+rows pointing at folders whose files the other had moved elsewhere.
+
+**A follow rule's share.** wanted → shared → gone (`channel_teams` rows with `added_by`
+`rule:<id>`; `src/followrules.js`). Not stored as a state: `syncFollowRules` works out what the
+follow rules want from the rules and `channels` and writes the difference, after every rule change
+(`applyRules` in `src/admin.js`, once the rules are saved) and on the cron, which also catches a
+channel seen or renamed since and a sync that failed. It only adds where no row is (a share by hand
+of the same channel and team stays a share by hand) and only deletes `WHERE added_by = 'rule:<id>'`,
+so it never takes away a share by hand. A channel filed under the rule's team is not shared with it.
+`DELETE /api/admin/share` refuses a rule's share: the cron would add it again. A team that follows
+a customer is a follow rule of field `org` (`PUT /api/admin/org-follows` writes and deletes it): its
+shares come and go with the channels the rules file under that customer, as a merge or a manual
+assignment to another org changes them.
+
+**Rule conflict.** open → settled or kept → open again (`src/ruleconflicts.js`). Computed from the
+team rules and the channels on every read, never stored; a settled one is gone because the rules
+changed, or because a manual assignment now decides each of its channels. A kept one is a row of `rule_conflict_keeps` (migration 0086) with the conflict's
+`fingerprint` (its rules and the channels both match): it is hidden while the fingerprint holds, and
+open again once a rule or a channel of it changes. Settling names what it started from: the
+fingerprint the page showed, or 409.
 
 **Channel request.** open → confirmed, declined or withdrawn (`src/requests.js`). The one real status
 column, and `CHECK` keeps it to those four; a partial unique index allows one open request per channel
 and team. Every close is `WHERE status = 'open'`. Confirming claims the request first, then assigns;
-a failed assignment opens it again, unless the rule was saved by then.
+a failed assignment opens it again, unless the rule was saved by then. `move` (migration 0071) is fixed when the
+request is made: a move request confirms as a move whoever holds the channel, the others move it
+only out of the admin team and share it otherwise.
+
+**Merged org.** an org of its own ⇄ merged into another (`org_merges`, migration 0091;
+`src/orgmerge.js`). Whether the row exists is the state, and the rules carry it: `loadRules` adds
+each row as a rule of target `merge`, and `classify` files what the other rules give a merged slug
+under the one it went into (`mergedOrg`), so every caller of the rules agrees, the normalizer too.
+The merge is a rule change (`applyRules`, `only` the merged org's channels): planned with the
+merge among the rules, its row written, then the moves queued, so a failure before the row moves
+nothing and one after it leaves the moves to the queue, as any rule change. A merge into an org that
+was itself merged is refused (409); what was merged into the merged org is pointed at the new one in
+the same batch, so there is never a chain to follow. Undoing it deletes the row (and gives the org
+its `orgs` row back, kept on the merge's); its channels move back the same way. What moved with it
+(servers, secrets, follows, knowledge-base entries) stays.
+
+**Duplicate pair.** unasked → Clef's verdict → stale → asked again; and dismissed ⇄ not
+(`org_pairs`, src/orgmerge.js). A verdict is kept with the `fingerprint` of what Clef was shown
+(both orgs' names, channels, domains and the signals): while it holds, Clef is not asked again; once
+it changes, the old verdict is shown (`stale`) until the next list asks, at most `ASK_PER_LIST` a
+load. A verdict Clef did not give (an error, a timeout) is no row: the next load asks. Dismissed
+(`dismissed_at`) takes a pair off everyone's list but the admin team's until somebody asks for its
+merge.
+
+**Partner domain.** found ⇄ not found, and over either the admin team's row: set by hand
+(a name, a partner org) or excluded, ⇄ none (`partner_domains`, migrations 0013 and 0109;
+src/partners.js). Found is no row: an isolate derives the domains from every message and keeps
+them an hour (`DERIVED_MS`), and with them each customer's mail domains (`customerMail`, whose
+own domain `customerDomains` picks with the partner domains of the moment); the first request after the hour derives them again and waits for it
+(a refresh nobody awaits could be cancelled with the response, and the old domains trusted for
+another hour). A request shares only its own derivation (src/isolatecache.js: in Workers, one
+request may not await another's I/O); while another's is on its way, it answers what was found
+before, and the first time derives them itself. Whatever changes what they are
+derived from in this Worker forgets them in its isolate (`forgetPartnerDomains`, as `forgetFacts`
+for the duplicate search): an org's name, type or icon saved or reset, a portal customer's org
+made, a merge or its undoing, and every edit of `partner_domains`; its next request derives them
+anew. **The other isolates lag up to an hour**, as they do for a change of the threads themselves.
+A derivation that fails, or takes longer than `LOOK_MS`, is not an answer: the request gets what
+was found before (none, the first time), the time it was found stays, and after a failure the
+requests of the next minute (`RETRY_MS`) get that too, without asking D1 (an overloaded D1 is not
+asked for every message by each of them); the first request after the minute derives them again. The admin team's rows are read on every request and win over what is found,
+so an override shows at once everywhere; deleting one (`DELETE /api/admin/partner-domains`) is the
+way back to found, an `excluded` row the way to say no. A domain that stops being found keeps its
+row, which then stands alone.
+
+**Partner pair.** candidate → Clef's verdict → stale → asked again; confirmed or dismissed ⇄
+neither; and gone (`org_partners`, migration 0110, src/orgpartners.js). A candidate's row is written
+by a list load or a cron run (`sync`) with its signals and score; Clef's verdict is kept with the
+`fingerprint` of what it was shown, and asked again once that changes, `ASK_PER_LIST` a load or a
+run; one Clef did not give leaves `p` null, for the next. Confirmed (`confirmed_at`) and dismissed
+(`dismissed_at`) exclude each other: one replaces the other, and `undo` clears only its own. A
+decided pair is not asked about and stays whatever its signals; one nobody decided is deleted by the
+first `sync` that does not find it a candidate (its signals fell under `CANDIDATE` or to one
+`kb` or `place` signal alone, a partner's mail domains changed, an org was retyped or merged). Likely, for everyone at Adobe (`partnersOf`, `customersOf`), is confirmed, or not
+dismissed with `p` at least `LIKELY`. A merge copies the merged org's decided rows to the org kept
+(`merged_from`), not over a decision of its own: a row it adds is `merged_new`, and on a candidate
+the kept org had only the decision is written. Undoing it deletes the rows it added, clears the
+decision it wrote on the others (their signals, Clef's verdict and fingerprint stay), and the merged
+org's own rows, kept all along, count again. A decision by hand since makes the row the kept org's.
+A verdict Clef did not give (a timeout, an error, no number) is not written: `p` and the
+`fingerprint` stay as they were, and the next load or run asks again. Without the partner domains
+(src/partners.js `partnerDomainLookup` not `found`: no look succeeded in the isolate yet, D1 failed
+or was slow) a `sync` writes, deletes and asks nothing and answers the rows as they are
+(`skipped`): the partners' people would be nobody's, and every pair would drop and lose its
+verdict. What a look found before counts as found while the next one fails.
+
+A pair's span (`first_at`, `last_at`, migration 0112) is what the threads show: every `sync` writes
+it where it changed, a decided pair's too. Over the decision: confirmed → ended (`until`, with
+`ended_by` and `ended_at`: a former partner; `POST /api/admin/org-partners/end`, which confirms
+one nobody had) → confirmed again (a confirmation clears `until`; `/end` with `undo` too). A
+confirmation keeps `since` unless it gives one; a dismissal clears `since` and `until`.
+
+**Partner request.** open → confirmed, ended or dismissed (the pair decided), declined (the pair
+left as it is) or withdrawn (`org_partner_requests`, migration 0112, src/partnerrequests.js), a
+thread of the admin team's inbox (`request:partner:<id>`) in either. One waits per pair and action
+(`link`, `end`: a partial unique index): asking again answers 409 with the one that waits. A
+decision on the pair, from the thread or the pair's page, closes the requests it settles
+(`settleRequests`): a confirmation the `link` ones (`confirmed`), an end the `end` ones (`ended`), a
+dismissal both (`dismissed`); an `end` that waits stays open over a confirmation, and a `link` over
+an end. Whoever asked takes theirs back, the admin team any; a merge withdraws the merged org's
+that wait, saying into which org (an undo does not bring them back). Clef's (`requested_by` `clef`, filed by
+each `sync` from `partnerWants`) carry the `fingerprint` of what they were found on: one waits per
+pair and action as any; one declined or withdrawn is not filed again on the same fingerprint; and
+Clef withdraws its own that wait once the sync does not want them (a pair no longer likely or a
+candidate, a lapsed partner posting again), with why in `reason`. Without the partner domains, a
+`sync` files and withdraws nothing. Filing one announces it to the admin team's room (Clef's, once
+a sync).
+
+**Org overview kept.** not kept → kept → stale or forgotten (`cache`, `forgotten` in
+src/orgprofile.js). A customer's, vendor's or partner's overview (`orgNumbers`) is kept per isolate
+by the D1 binding for `CACHE_MS` (five minutes). A decision on a pair of a customer and a partner
+(`POST /api/admin/org-partners/confirm`, `/dismiss`, `/end`, with `undo` too) forgets both orgs' once it is
+written (`forgetOrgProfiles`): each counts its forgets, and numbers read before the last forget of
+their org are not used, so one read while the decision was written is not kept as fresh. The other
+isolates keep theirs up to `CACHE_MS` (five minutes), as they do for a new thread, and show the
+decision after that; nothing else forgets them.
+
+**Thread org.** found → found again (its `p` and `via` move) or gone; dismissed ⇄ shown
+(`thread_orgs`, migration 0111, src/threadlinks.js). A row per inbox entry (its key at the time),
+org and role (`about`: the customer a partner's thread is about; `partner`: a partner whose people
+post in a customer's or a public thread; `customer`: a customer whose people post in a public
+thread, migration 0113, which puts the thread where the customer's followers have its threads).
+Every link job (`{ link }`, a minute after a `labeled` result) writes
+what it finds for its roles and deletes the rows of those roles it no longer finds, unless dismissed,
+and every row of a role the thread's org type has not (`ROLES`: an org retyped, a channel filed under
+another org; all of them for a vendor's or an internal org's thread). Until then a row of role
+`customer` counts only while the thread's org is public (`PUBLIC_NOW`, src/follows.js), so a retyped
+org's threads leave the customers' followers at once;
+`found_at` moves only when `p` or `via` changed. Shown is not dismissed, `p` at least `ABOUT_MIN`,
+and an org not merged. A dismissed row (`dismissed_at`, by whoever may work the thread) is kept
+through every job, so the org stays off the thread until `undo` clears it. Nothing else writes
+them: a change of the pairs (`org_partners`) or of the partner domains shows at the thread's next
+labelling, and a thread re-threaded into another keeps its rows under its old key, which the entry
+still reads (every member's key).
+
+**Thread link.** candidate → asked (`p`) → shown or not; dismissed ⇄ shown (`thread_links`,
+migration 0111). A pair of entries (`a` < `b`), written by the link job of either: a candidate's row
+with its `score` (the highest seen), Clef asked once (`checked_at`) for at most `RELATED_ASK` new
+ones a job, a failed ask leaving `p` null for the next; `owner` set once both threads' facts name
+the same rare owner, and kept. A row is never deleted: one no longer found (older than
+`RELATED_DAYS`, its vector changed) keeps its verdict. Shown is not dismissed and `owner`, or `p` at
+least `RELATED_P`, or `p` null and `score` at least `RELATED_SURE`. A link that becomes shown
+tells the agents of both threads once (`relatedUpdate`); a dismissed one is not asked about again
+and tells nobody.
+
+**Org merge request.** open → merged, declined or withdrawn (`org_merge_requests`, migration 0091).
+One open request per pair, either way round (checked before the insert). Every close is `WHERE status
+= 'open'`, and the merge closes every open request of its pair in the batch that writes the merge.
+
+**Request thread.** waiting → decided, and for a conflict → gone (src/requestthreads.js). What a
+request is in the admin team's inbox follows from its own row (a channel, membership, portal or
+merge request: its `status`) or, for the kinds without one, from what they are now (a bot's `ours`,
+an account's `person`, a pair of accounts' `account_pairs` row, a conflict's `kept`, or whether it is a conflict still); nothing here is a
+state of its own but two tables. `request_threads` (migration 0100) has a row for each request of
+those kinds from the first listing that found it waiting (`opened_at`, its thread's start, as such a
+request has no time of its own; one decided before that has none, and starts at its decision); a
+conflict the listing no longer finds is closed (`closed_at`), and kept with its title as a resolved
+thread, and one found again is open again from then on. A listing where a kind's list failed closes
+nothing, so a failure is not taken for a settlement. `request_log` is the decision log, only ever
+added to: the notes, and the decisions taken from the thread of a kind without a row to say them;
+a kind with a row shows the row's decision, so one taken elsewhere (a manager withdraws it, an
+assignment answers it) shows too. A decision is taken by the request's admin route, as the person,
+only when the request still offers it (the action is looked up in what it offers now), so a request
+decided meanwhile refuses it as the route does (`WHERE status = 'open'`). Whoever decides has the
+thread read up to the decision (their watermark, written before the room is told), as a note of
+theirs is: it does not come back unread for them.
+
+**Question.** open → answered, passed or unknown; open → expired (`questions.status`, migration
+0104, `src/questions.js`, `src/agent/question.js`). The agent asks (`ask_teammate`), and only the
+person it asks closes it, from its thread in their inbox (src/requestthreads.js, kind `question`);
+`CHECK` keeps the status to those five, and the close is `WHERE status = 'open' AND deadline > now`,
+so of two answers, or an answer at the deadline, one wins. Expired is read off the clock (an open one
+past its `deadline`, three days) and written only when the agent asks the same person on the same
+thread again, which closes it first so that the partial unique index (one open per thread and
+person) makes room. `told_at` is written after the agent took the answer (`ThreadAgent.answered`);
+one it could not be told stays closed, untold, and its thread says so.
+
+**Membership request.** open → confirmed (added, or member: on the team already), declined or
+withdrawn (`member_requests`, migration 0096; `src/memberrequests.js`). One open request per team and
+address (a partial unique index). Confirming claims it first (`WHERE status = 'open'`), then adds the
+person: a failure opens it again, unless they are on the team by then, and if someone asked again
+meanwhile the reopened one is closed as withdrawn instead, so the newer stands (`UPDATE OR IGNORE`).
+Adding the person on the team's page confirms their open requests (`member`).
+
+**Adobe's bot.** undecided → Adobe's ⇄ external (`identities.ours`: NULL, 1, 0; `src/ourbots.js`).
+While undecided, a bot that posted is an open request, a thread of the admin team's inbox
+(`unreviewedCount`); the answer resolves it. Only the admin team writes it, from that thread, never back to NULL, and the identity's refresh (`getIdentity`) leaves
+it out of its upsert. The bot's messages are not rewritten: a message's frontmatter keeps the side it
+was written with, and the thread view follows the flag over it once it is decided (`accountAuthor` in
+`src/api.js`); `messages.staff` is set to match on every change.
+
+**Alert bot.** conversations ⇄ alerts only (`identities.alerts`: NULL or 0, 1; `src/alertbots.js`),
+independent of the side. Only the admin page writes it, and the identity's refresh leaves it out of
+its upsert. A thread's kind follows from it and its root's author (`threadKind`, `kindOf`): written
+with every message, and again by a re-filing, which a change of the flag queues for every channel
+the bot started threads in. Until those jobs ran, the threads keep the kind they had; `plan`
+lists those channels as moving.
+
+**A bot's name and picture.** the platform's ⇄ an admin's (`identities.display_name`,
+`display_avatar`: NULL or set; `src/ourbots.js`). Only the admin page writes them, and the
+identity's refresh leaves them out of its upsert. Setting or clearing the name rewrites
+`messages.author` of the bot's messages (and `threads.last_author` where it was the bot's old
+name); their frontmatter keeps the name they were written with, which `accountAuthor` replaces in
+the thread view.
+
+**An account that is staff by itself.** a customer's (a host tenant's admin account, before
+migration 0097) → staff → linked ⇄ unlinked (`identities.staff`, `person`, `linked_by`,
+`linked_at`; `src/lookup.js`, `src/accountlinks.js`). Two kinds: a host tenant's admin account,
+which the Teams lookup says is staff (`isHostAdmin`: a member, not a guest, of the host tenant,
+its user name `owner_…`) on every refresh, as the migration said of the ones seen before; and a
+Discord account with one of the `DISCORD_STAFF_ROLES`, which the Discord lookup says on every
+refresh. Unlinked, it waits in the admin team's inbox (`unlinkedCount`): a Teams one always, a
+Discord one once it wrote a message. Linking is the admin team's, in the account's thread of its
+inbox, and only of an account that is staff by itself and that no mail address links (on
+Discord: that its person did not connect, `person` set with `linked_at` NULL, which stays
+theirs), to a staff person; on Discord the link is of the user's rows in every guild that are staff
+by themselves and nobody connected, or that the admin team linked. The refresh keeps a link
+(`linked_at` set: `person` is not looked up by mail address), whatever the role says later, and
+the person's disconnecting Discord leaves it (`disconnect` in `src/post.js` takes back only what
+connecting made); only the admin team takes it back (all three NULL), which it can as long as the
+link is there, staff or not. Nothing else links one: not a candidate the thread offers, not an
+agent's proposal (below), not a mail address or a merge key. A change of side or person rewrites
+`messages.person`, `staff` and, from the admin page, `author` of its messages, and `last_staff`
+and `last_author` of the threads they are in (`relabelAccount`); their frontmatter keeps what
+they were written with, which `accountAuthor` replaces in the thread view, until a replay writes
+them again: there its name is the one `toAuthor` gives the account now (its person's while
+linked, its own once unlinked), the messages written while it was linked too.
+
+**A proposal of whose a staff account is.** none → proposed → answered (deleted) | declined
+(`account_proposals`, migration 0116; `proposeAccountLink` in `src/accountlinks.js`). A thread
+agent's `request_account_link` files one, of an account that waits to be linked (above) and a
+staff person in D1, once per account and person, with a note in the account's thread
+(`request_log`); it links nothing. Linking the account, to whomever, deletes its open proposals
+(the decision is in the log). Declining one sets `declined_at` and `declined_by` and keeps the row:
+the same person is neither proposed for the account again nor suggested. A person's row deleted
+takes theirs with it. Unlinking the account later brings no proposal back.
 
 ## Drafts and replies
 
@@ -123,6 +416,28 @@ event and the draft goes on with its `created_at` and `origin`, as if it had not
 draft that is not its `origin_body` keeps that in `draft_undo` until the Undo takes it or its
 minute is over (pruned at the next discard and by the cron).
 
+**A draft's files.** stored → named by a version → sent, or gone (`drafts.files`, `src/draftfiles.js`).
+A picture is put into `FILES` (`drafts/<id>`) before the save that names it, so a version never
+names one that is not there; a save that fails leaves it unnamed, and the bucket's 30-day rule
+deletes it. A save keeps the files it does not name (`files` left out) or the ones it lists by id,
+and the agent's replace them. Nothing deletes a file when its draft is sent or discarded: the rule
+does. A discard keeps the draft's files on its event (`draft_events.files`), and its Undo gives
+them back with the text. A draft over 30 days old names files that are gone (the inbox says so,
+and sends nothing). Taken into the reply box, they are in its tray, each knowing its id
+(`draftFile`): taking the draft in again adds only those not there, and a save from the box
+keeps on the draft only those still in the tray. Sent, they go as the reply's own files, checked against the channel's rule
+then.
+
+**Offer to let the agent post.** not asked → asked → switched on, or declined (`src/postoffer.js`,
+`offerPosting` in `ui/inbox.js`). Nothing is stored for it but its end: it is worked out on every
+send of a draft whose `origin` is the agent, from the person's `sent` events in the channel
+(`OFFER_AFTER`, three), whether they may switch **Post messages** there, and the switches. Asked is
+a note in the inbox that stays until it is answered; a yes is the channel's switch on, which ends it
+for everyone, a no is the channel in the person's `postingDeclined` (`person_settings`), for them
+only. A note that goes any other way (the next note replaces it, the page is left) is no answer: the
+next of the agent's drafts they send asks again. Any switch row for the channel, on or off, ends it
+too: the channel was decided on.
+
 **Reply send.** sending → sent → delivered → settled, or failed → retried or discarded, or unknown →
 retried or sent again (`state.sending`, `ui/inbox.js`; `src/postkeys.js`). The same key on every retry
 makes a retry safe: `post_keys` goes claimed → answered, or is removed when the platform refused. A
@@ -130,17 +445,36 @@ claim with no answer means nobody knows, and then only the person can decide to 
 lasts a day, so after that Retry turns into Send again. A reply as the bot (`sendAsApp`) shows the same
 way, looking like the bot's replies, from sending to sent; one that did not go out leaves the thread
 and the draft line says why. Once sent it waits up to three minutes to come back, not one.
+A reply the platform took and named (`postedId`) settles only when a message with that id is in the
+thread: after a minute (three as the bot) it says it is sent and not back yet, with Hide, and it goes
+after a day. One the platform did not name (Slack's uploads) still goes after the minute. Every
+reply in a thread the inbox has is kept in localStorage meanwhile (`opspile.sending.<person>`, by id;
+`saveSending`): the next page restores it, a reply that was sending as unknown under the same key
+(one as the bot keeps its key too, and its Retry goes as the bot), one that was sent as delivered and
+waiting. A reply with files keeps their names only: restored
+unsent, it cannot be retried (`filesLost`), only discarded. Not-sent replies expire after a week.
+Tabs share the store: one gone in another tab (arrived, discarded) goes, one that moved on there
+takes its state. ↑ (⌘↑) in the empty reply box while your last reply is sending or sent and not
+back is that reply, not the one before: it is asked for (`state.editArriving`) and opens to edit
+when it settles, unless the thread changed, an edit or typing started, or a minute passed (three
+as the bot). One that did not go out (failed, unknown) is put in focus instead, not the one before.
 
 **Reaction made here.** asked → taken → settled, or refused (`state.reacting`, `ui/inbox.js`). It
 shows on the message at once. It goes once the thread's reactions agree after the platform took it,
 when the platform refused it, or after a minute. A second click on the same emoji replaces it.
 
 **Reply box.** empty, own text, holds the draft, diverged (`boxState` in `ui/inbox.js`, from
-`{ text, from, base }`). Only a box that holds the draft unchanged follows it.
+`{ text, from, base }`). Only a box that holds the draft unchanged follows it. A part of the
+draft taken in (Edit selection, Add selection to reply) is the draft diverged, cut down to that
+part: it names the version, so a reply with it uses the draft up, as a part sent from the line
+does.
 
 **Draft line.** closed → open → closed (`draftOpen`, `ui/inbox.js`): **View draft**, a click, shows
 all of the draft on its line, rendered; a mouse resting on the line for `HOVER_DELAY_MS` opens it
-too (`draftPeek` names the thread it opened), and leaving closes only what it opened. Hide draft and
+too (`draftPeek` names the thread it opened), and leaving closes only what it opened, unless text
+is selected in it: then it stays open, as View draft leaves it, so the selection is there to copy.
+While the pointer's is open its button is Keep draft open, which makes it View draft's (`draftPeek`
+cleared): it stays open wherever the pointer goes, the sidebar too. Hide draft and
 Escape close either; a new line not under the pointer, or another thread's, drops the pointer's. The
 open line grows upwards from the pane's bottom edge, so it stays under the pointer. The state changes
 at once; only the line's height follows, growing or shrinking (`resizeDraft`), and a re-render while
@@ -174,13 +508,57 @@ comes back, or after a minute.
 `idle` in storage, `src/agent/delivery.js`). The schedule is armed before the mark moves, because a
 retry finds nothing unseen afterwards. Deliveries run one at a time.
 
+**Agent wake-up.** set → due → told, or dropped (`wakeups` in the agent's storage,
+`src/agent/wakeups.js`). One the agent set with `wakeup_after` is due at its time; one set with
+`wakeup_after_idle` is armed again from every later message, by `armIdle` when the wrap-up is,
+before the mark moves, and a schedule whose `mark` is not the wake-up's is stale and does nothing.
+Due, it leaves the list before the agent is told, so it wakes it once; an agent turned off since
+drops it unsaid. At most five wait.
+
+**Agent watch.** set → told (again and again) → unwatched or ran out (`agent_watches`, migration
+0104, `src/agent/watches.js`, `src/watches.js`). `seen` is the watermark: the latest message's time
+of a watched thread, a GitHub item's `updated_at`. An update moves it first, and only from the value
+it read (`WHERE COALESCE(seen, '') = ?`), so two jobs of one burst, or two polls, tell the agent
+once. An update its agent did not take (its object did not answer, or could not check its access)
+puts `seen` back where it was, conditional on what it wrote: the queue delivers a thread's job again,
+and the next poll tells a GitHub item's. A GitHub watch is due at `poll_after`, which every poll
+moves (later for a quiet item, a failing one by `failures`, and past GitHub's reset when it limits
+the installation); its `etag` makes the poll conditional. One whose channel surely no longer reads
+the account (`githubAccess` answers an error) is deleted before anything of the item is read; one
+whose access could not be checked (D1 or GitHub did not answer: it throws) is kept, and backs off. Past
+`expires_at` the cron deletes the row and tells the agent; `unwatch_related` deletes it at once. The
+isolates keep the watched threads' keys a minute (`watchedKeys`): a new watch can miss what is posted
+in that minute elsewhere.
+
+**Agent feedback.** kept → filed, or given up (`agent_feedback`, `src/agent/feedback.js`). The
+row is written before GitHub is asked, with that try counted in `attempts`; `filed_at` (and the
+issue it went to) is written last, after the issue or comment exists. A failed try keeps its
+`error` and the row stays open: the cron (`sweepFeedback`) tries again the rows over five minutes
+old, each claimed first by the `attempts` it read (`WHERE attempts = ?`), up to five tries and
+for a week; after that it stays kept, unfiled. A row given an `issue` that is no longer an open
+feedback issue when it is filed becomes a new issue instead. A crash between the issue and
+`filed_at` files it twice; the footer's `fb_…` says which.
+
+**Computer's browser session.** none → made → ended (`browser-session` in the agent's storage,
+`browserHost` in `src/agent/browser.js`). The first CDP connection of a computer's program makes
+a Chromium session on Browser Run and keeps its id; every later one connects to it, after an
+eviction too. Browser Run ends it ten minutes after its last connection, which nobody is told:
+the next connection it refuses forgets the id and makes another, once, and a second refusal
+fails the connection. Connections at once share one making (the promise is set before anything
+is awaited). A new image ends it (`DELETE`, and the id goes), also one an evicted object left in
+storage without a host to end it (`computerBrowser`'s `end`): else the next kernel, back on the
+browser image while it lives, would find its tabs. A kernel that fails to boot only lets its host
+go (`detach`): the image is the same, and the next one finds the tabs, as after an eviction.
+
 **Agent turn.** working → done or failed. Worked out from the transcript (`src/agent/turn.js`). A turn
 that stopped half way with no run pending counts as failed after 15 minutes. A finished one is kept
 in D1 (`agent_turns`, one row per entry, `src/agent/kept.js`) for `GET /api/thread`: written a moment
 after the answer, or by `status()` when it differs from the last one kept (in the agent's storage,
 `kept-turn`). An older turn never replaces a newer one; no turn (a reset) deletes the row. A turn in
 progress is never kept there. A turn that answers a sidebar message is kept as its answer instead
-(`sidebar_messages`, below), and the row stays the turn before it.
+(`sidebar_messages`, below), and the row stays the turn before it. A compaction that summarized the latest
+turn's input leaves no turn in the transcript: that is not a reset, and the kept turn stays
+(`cut` from `latestTurn`, `keepTurn` in `src/agent/agent.js`).
 
 **Agent live turn.** absent → kept, then replaced by every newer reading (`agent_live`, one row per
 entry, `keepLive` in `src/agent/kept.js`): the latest turn as `latestTurn` reads it, in any state,
@@ -201,16 +579,32 @@ the new reason. Fulfilled is not stored: the person is in the thread (a message 
 theirs), so the row stays but the header and `list_experts` leave it out, and it no longer counts
 toward the three a thread may have. Both go by the person, whichever of their accounts was named.
 
+**Renderer kernel.** none → booting → booted (src/graphviz/worker.js, one per isolate of the
+renderer Worker). The first layout boots it; a failed boot leaves none, and the next layout
+tries again. A layout that runs past its ten seconds ends the kernel, back to none: whatever it
+was stuck in goes with it.
+
 **Stack drawing.** none → drawn → drawn again (`stack.md` of a customer's knowledge base,
 `src/stack.js`). Whether the file exists is the state; its `generated` stamp says who drew it last
 and when. The first drawing is a create (refused when one appeared meanwhile); every later one
 names the `base` it was drawn from, so an agent never draws over a colleague's or a person's newer
 one unseen. A write that cannot be drawn is refused, so `drawn` always parses. Deleting the file
-in the editor goes back to none; the inbox then draws what Clef saw instead. The inbox keeps an
+in the editor goes back to none; the inbox then draws nothing. `org_stacks` follows every write
+of the file (its parts, or `[]`); one missing is filled in by the cron. The inbox keeps an
 answer of `GET /api/kb/stack` for a minute (`stackOf`, `ui/inbox.js`).
 
 **Agent polling.** idle → polling → due while hidden (`loadAgent`, `ui/inbox.js`). A failed request
-asks again; after five in a row the spinner goes.
+asks again; after five in a row the spinner goes. It polls also where the agent's note is hidden
+(`traces` off): only drawing the note depends on that setting.
+
+**Sidebar's tab.** at rest → pressed → pulling → let go (`wireSideTab`, `ui/inbox.js`). A press
+that moves less than `PULL_SLOP` is a click, which opens or closes the panel as `a` does. Pulling
+takes the panel's motion over (`side.pulling`; `sideMotion.p` follows the pointer, and a thread
+drawn again meanwhile leaves it there, `placeSidePanel`); a pull on a closed panel enters the
+sidebar first. Let go, the panel opens or goes from where it is (`moveSide`, `exitSide`): by the
+flick's direction when it was quick, else by whether it was more than half out. Its wiggle is
+`tabSaw`: the open thread's agent as the tab last knew it (the latest turn's start and whether it
+works); a change wiggles it, the thread just opened sets it without one.
 
 **Injection verdict.** unchecked → passed or flagged (`verdict:<id>`, `src/agent/delivery.js`). A
 failed check is not a verdict: it is not stored, the queue retries the delivery, and reading the
@@ -219,16 +613,17 @@ thread asks again.
 **Agent uploads.** empty → mounted → expired (`uploads`, `uploads-expiry`). The schedule is armed
 before the list is stored, so a failure tries again.
 
-**Computer shell.** just-bash ⇄ slicc-kernel, and with the kernel one image or another
-(`agent_tool_options`, the team's `runtime` and `image`; `runtime` and `image` in the agent's
-storage, the ones its Workspace was made for; `src/agent/kernel.js`). A team without a row, or
-with a value this deployment does not know (written by a later one, read after a rollback), has
-just-bash, and `base`. The agent compares them before each delivery (`syncTools`), as it does its
-tools: a change ends the kernel if one runs, drops the Workspace, and is stored before the next
-command makes a new one, over the same files. An image the bucket does not have is still the
-team's choice: the kernel does not boot, the command fails saying why, and nothing falls back. A command still running in the old shell is ended. The
-kernel's own root stays in the agent's SQLite when the team goes back (`slicc_*`, the image and
-`/tmp`): nothing reads it until the team chooses the kernel again.
+**Computer image.** one image ⇄ another (`agent_tool_options`, the team's `image`; `image` in
+the agent's storage, the one its Workspace was made for; `src/agent/kernel.js`). A team without
+a row, or with a value no image can have, has `base`. The agent compares them before each
+delivery (`syncTools`), as it does its tools: a change ends the kernel if one runs, drops the
+Workspace, and is stored before the next command makes a new one, over the same files. A command
+still running in the old kernel is ended. An image the bucket does not have is still the team's
+choice: the kernel does not boot, the command fails saying why, and nothing falls back. The
+kernel's own root stays in the agent's SQLite from one image to the next (`slicc_*`: `/root`,
+`/etc`, `/tmp`). The shell itself was a choice too, just-bash ⇄ slicc-kernel (`runtime`), until
+just-bash was removed: migration 0076 deleted the teams' rows, and an agent's stored `runtime` is
+read by nothing.
 
 **Kernel image.** Not a state of the agent: a kernel mounts its team's image from the bucket at
 every boot, read-only, and keeps nothing of it (`src/agent/image.js`). What has an order is the
@@ -239,8 +634,9 @@ older manifest goes on reading its layers after an upload. A running kernel keep
 booted with until it boots again.
 
 **Command request.** pending → running → done, timeout or failed; pending → denied or expired
-(`bash_requests.status`, `src/bashrequests.js`, `src/agent/bashrequest.js`). The agent asks
-(`request_bash`), and a person runs or denies it; `CHECK` keeps the status to those seven, and every
+(`bash_requests.status`, `src/bashrequests.js`, `src/agent/bashrequest.js`). A script request
+(`kind: 'codemode'`, `request_codemode`, `src/agent/scriptrequest.js`) is one too, with the same
+lifecycle. The agent asks (`request_bash`, `request_codemode`), and a person runs or denies it; `CHECK` keeps the status to those seven, and every
 transition is `WHERE status = …`, so of two clicks, or a click at the deadline, one wins and the
 other is told who did. The deadline's schedule is armed before the request is stored (a deadline
 with no request does nothing), and a request past its deadline reads as expired before the schedule
@@ -253,7 +649,29 @@ took its whole timeout: the shell says it stopped a run no other way, and a comm
 124 by itself. The kernel's shell says it with the signal that ended bash (143, or 137), under the
 same condition. `told_at` is written last, after the agent was
 told how the request ended; one that ended untold (the agent's storage failed) is told at its
-deadline, without what the command printed, which is kept nowhere.
+deadline, without what the command printed, which is kept nowhere. A script runs as the person
+who clicked only while that click's request lasts: each of its tool calls goes back to the Worker
+that serves it, so the object claims it, runs it and tells the agent before it answers; one whose
+object or click went away under it is lost, as a command whose object restarted, and the watchdog
+settles it as failed. A script that threw is `done`, with its `error`, as a nonzero exit is.
+`sidebar`, the sidebar message a request was asked in answer to, is written with it and never
+changes: where the inbox shows it follows from whether that conversation shows, not from state.
+
+**Tool request.** pending → granted → revoked; pending → denied (`tool_requests.status`,
+`src/toolrequests.js`, `src/agent/toolrequest.js`, `decideTool` in `src/agent/stub.js`). The agent
+asks (`request_tool`) only while it answers a sidebar message, whose id the request keeps, and a
+person who may work the thread decides; `CHECK` keeps the status to those four, and every
+transition is `WHERE status = …` with its clock (`deadline` for a decision, `expires_at` for an
+end), so of two clicks one wins and the other is told who did. Two states are read off the clock
+and never written: a pending request past its `deadline` (24 hours) is `expired`, a grant past its
+`expires_at` (24 hours after it was granted) has `ended`; both let the agent ask again, and nothing
+wakes up for them. A grant is not installed by the decision: the agent reads its grants with its
+switches (`toolsFor`, `serversFor`, `serverWithHeaders`) before each input, and the person's
+sidebar message that says it was granted is one, so the agent has it from the turn that answers
+it. An ending is noticed the same way, at the next input (`revoke` also asks the agent to read
+them at once); a turn running across an ending keeps the tool until it ends. Granted or denied
+says so as a sidebar message of the person's; when the agent cannot be told, the message is
+deleted and the decision stands.
 
 **Sidebar message.** asked → answered (or failed → answered) (`sidebar_messages`, `src/sidebar.js`,
 `src/agent/sidebar.js`). The person's row is written before the agent is told, and deleted when the
@@ -266,7 +684,43 @@ while it is, and when the transcript cannot be read. A delivery follows a pendin
 instead of steering into it (`whenBusy`), so no other input becomes its turn's; one that did anyway
 ends it as failed (`sidebarTurns`). Answers are kept from every sidebar turn of the transcript, each
 once per state and text (`sidebar-kept` in the agent's storage, written after them, and only when it changed), so a turn
-queued right behind one does not hide it.
+queued right behind one does not hide it. Answered, a message may be followed up (→ followed up,
+up to three times, within a week of it: `addSidebarFollowup`), by a later turn's `sidebar_followup`:
+`<id>:followup:<n>`, `n` one more than the follow-ups it has, never while a sidebar turn runs.
+
+**Knowledge base's sidebar.** asked → answered (or failed → answered), in a conversation that is
+one person's (`kb_chat_messages`, migration 0104, `src/kbchat.js`, `src/agent/kbchat.js`). As a
+thread's sidebar message: the person's row is written before the agent is told and deleted when it
+did not take it; the answer's id is the message's with `:answer`, written only for a message of
+that conversation (the insert selects it), replaced only while it is failed, never dated before
+its message. A conversation (`kc_…`) exists once it has a row, and is only ever the person's who
+wrote it: the API finds it by knowledge base and person (`isChatOf`), so an id someone else knows
+is none. Its session in the knowledge-base agent (`chat-session:<chat>`, `chat-of:<session>` and
+`seed-pin:<session>` in its storage) is made and pinned before the first input is submitted, as a
+seed's is, so no turn of it writes another knowledge base. Which conversations have an answer not
+kept yet is `chats-open` (added before the input is submitted, left once nothing of the
+conversation is pending or working); what was kept of each is `chat-kept:<chat>`, written after the
+answers, so a failed write is tried again. They are kept at every round of tools and answer
+(`keepTurn`, a knowledge-base agent's), and whenever the page asks while an answer waits
+(`chatState`), so a missed timer is no lost answer. A new conversation is only the page's until
+its first message (`fresh`). Whether its person may have the knowledge base changed is not a state
+of the conversation: it is asked at every message (`mayWrite`) and kept with the session for the
+turns it starts (`write` in `chat-of:<session>`), so someone who joins or leaves the team counts
+from their next message. A command its agent asks for there is a command request as any (below),
+with `chat` set: only that conversation's person decides it, on the page, and how it ended is told
+to that session as a sidebar message of theirs, with a line of theirs in the conversation, written
+before it is submitted and taken back when it could not be.
+
+**Sidebar answer seen.** unseen → seen, and unseen again when a failed answer is replaced
+(`sidebar_messages.seen_at`, migration 0078, `seeSidebar` in `src/sidebar.js`). Only the person it
+answers (`person` on the agent's row) has it unseen, and only they mark it, by id: the inbox does
+when the answer shows to them (the panel beside the thread, or its conversation unfolded in it),
+on screen and not viewing as someone else (`seeSide`, `ui/inbox.js`). The write is conditional
+(`seen_at IS NULL`), so an answer that came after what was shown stays unseen, and the replace of
+a failed one clears it, since that is a new answer. The page hides what it marked at once
+(`sideSeen`), whatever a reload in between brings, and gives it back if the write failed; the
+answers kept before the migration count as seen. Unseen answers are the list's purple badge
+(`sideNew`), and keep the thread in unread only.
 
 **Sidebar mode.** off → on → off (`side.key`, `ui/inbox.js`): one thread at a time, left by ✕,
 Esc, or opening another thread. What was typed in the sidebar box stays per thread in the tab, and
@@ -280,12 +734,27 @@ The panel's motion is not a state either: as you enter or leave the sidebar (`si
 while that render runs) it moves from gone (`sideMotion.p` 0) to open (1) or back, out of the
 line that was picked (`side.joined`, kept until the panel is gone) where that line is in sight,
 else sliding in from the edge; otherwise, and with reduced motion, it is there or gone at once.
-Gone is only when the motion back ends (`goneSidePanel`): a render while it goes does not cut it
-short, and entering again turns it around.
+Another thread opened (or the thread closed) while it is open, it is leaving (`sideMotion.leaving`):
+it slides out to the edge in the shorter `--side-leave`, joined to no line, `inert` so that its box
+is not wired to the thread that opens (`wireSide`); going back into its line already, it slides
+out from where it is. Gone is only when the motion back ends (`goneSidePanel`, which clears
+`leaving` and `inert`): a render while it goes does not cut it short, and entering again turns it
+around. Open, the line it is joined to and the bridge to it (`#side-join`) close it, as ✕ does.
 
 **Seed session.** none → pinned to a knowledge base (`seed-pin:*`, `src/agent/seed.js`). The pin is
 written before the pointer, and before anything is submitted, so two seeds at once make two pinned
 sessions and never an unpinned one.
+
+**Dream.** due → started → taken → ended (done, unanswered or timeout) (`kb_dreams`, `src/dreams.js`;
+the session in the knowledge-base agent, `src/agent/dream.js`). The row is written before the agent
+is asked, in one statement with the check that there is no open dream for the customer and none
+started since its latest message, so a quiet spell dreams once. Then the agent is asked
+(`submitted_at`); a refusal keeps the error and leaves the row open, and every cron run asks an
+unsubmitted row again, the same dream (its session and operation, `dream-session:<id>` and
+`dream:<id>`, accepted once). A taken row is asked where it stands; settled, it ends with the
+knowledge base's entries. A row open for three hours ends as `timeout`, whatever the agent still
+does. The session's pin (`seed-pin:<session>`) and what it is (`dream-of:<session>`) are written
+before its pointer, as a seed's.
 
 **Agent experiment arm.** before → in an arm → after (`src/experiments.js`). Not stored: worked
 out from the clock and the agent's name at every model request (the retention and model it asks
@@ -299,6 +768,15 @@ delivered or metered (`mark`, `cogs:usage`) inside the window gets its thread's 
 none. Kept in storage first, then written to D1 (`agent_arms`), then marked `recorded`: a failed
 write is tried again at the next open, and the pin is never decided twice, so a thread never
 changes model. A draft counts for the arm of its thread's pin.
+
+**Idle compaction.** none → armed → compacted, or skipped (`compact-idle` in the agent's storage,
+`src/agent/idlecompact.js`; the compaction experiment's `idle` arm only). Every turn that ends
+cancels the wait and arms a new one 65 minutes out, the schedule's payload naming the token kept
+with it, so an older schedule finds another token and does nothing. Due, the key is deleted before
+anything else, so it compacts at most once per idle stretch; then it skips an agent out of the arm
+or with work pending (that work's end arms it again) and a context under 100k tokens. The summary is
+pi-durable's, placed at once: the transcript (`harness.messages()`, the trace) starts at it after,
+and older entries stay in pi's storage.
 
 **Arm model unusable.** usable → unusable for ten minutes → usable (`unusable` in
 `src/agent/model.js`, per isolate). A request the arm's model refuses before any answer (`unusableModel`)
@@ -321,6 +799,12 @@ switches.
 lease, which gives back only its own lease. Disconnecting and signing in do not wait for it, so a
 refresh writes only over the sealed grant it started from. One that lost revokes what it got, unless
 the grant is still the same one.
+
+**FluffyJaws grant.** none → signing in → connected → rejected → signing in → connected
+(`grantState` in `src/agent/fluffyjaws.js`, from the row of `mcp_global_grants`). The same rules as
+the MCP OAuth grant: one refresh at a time under `refresh_lock`, a refresh writes only over the
+sealed tokens it started from, and one that lost revokes what it got unless the grant is the same.
+Connecting again revokes the grant before once the new one is kept; disconnecting deletes the row.
 
 **Computer secret.** none → set → changed → deleted (a row in `agent_secrets`,
 `src/secretadmin.js`). Not stored anywhere else: the shell has only a placeholder, and the gateway
@@ -352,14 +836,80 @@ itself: a sweep would apply today's rules to every channel.
 that may pass leaves it open, for the queue and then `sweepBackfills`, until the thread has been quiet
 for a week.
 
+**History import.** requested → page by page → done, or ended by an error that stays
+(`history_imports`, `src/history.js`). A page moves the row on only from the cursor and skip it
+started from (`WHERE cursor IS ? AND skip = ?`), so a duplicate does nothing and sends no next
+page; a newer `run` replaces the row and stops the older one's pages. An error that may pass is
+kept on the open row and thrown for the queue; one that outlives the retries is left open for
+`scripts/import.mjs --resume`, which nothing runs by itself.
+
+**Imported thread.** imported → live (`messages.imported`, `threads.imported`, src/threads.js).
+A message is imported while every pile-1 object of it is the import's (`MIN` on upsert), a thread
+while all its messages are, so the same in any order; once live, never imported again.
+
 **Derived-data sync.** behind → caught up, per pipeline (`vectorized_through`, `indexed_through`,
 `exported_through`). A sweep compares each with the thread. An edit does not move `any_at`, so a dead
-job for an edit is not swept; it is in `dead_jobs`.
+job for an edit is not swept; it is in `dead_jobs`. Imported threads stay behind on vectors and
+full-text items until asked for (`scripts/replay.mjs`); they are exported.
+
+**Translation.** none → kept → stale → kept again, or pruned (`translations`, src/translate.js).
+A row is a message's translation into one language, with the hash of the body it is of: an edit
+makes it stale, and the next request that reads the message translates it again and replaces the
+row. A failed call writes nothing (rule 2: the page asks again a minute later), and a null `body`
+is an answer ("in that language already"), not a failure. Two pages asking at once both translate
+and the later write wins; either is a translation of the same body. The cron deletes rows older
+than 90 days, which the next request makes again. In the page, a thread's translation
+(`translations` in ui/inbox.js) is per page load: shown as written is not kept.
 
 **Topic map.** none → built → a week old → built again (`topic_maps`, `src/topicmap.js`). No state in
 between: the cron or Rebuild builds one in a single request, a row when it is done, and the newest
 five are kept. A build that fails (too few threads, no index) writes nothing and leaves the last map
 on the page; two at once both write a row, and the newer is shown.
+
+**Mention model.** none → fit → a day old → fit again (`mention_models`, `src/mentionmodels.js`).
+The cron fits one in a single run and writes a row when it is done; the newest three are kept. A
+fit that finds no mention whose week is over writes an empty model (`model` is `null`), so the
+next runs wait a day too, and the finder says nothing of how people answer while it is the newest.
+An isolate keeps the newest it read for an hour, so a new fit reaches the finder within an hour of
+it; two cron runs at once both write a row, and the newer is
+used.
+
+**Trend topics.** none → assigned → stale → assigned again (`trend_threads`, `src/trends.js`).
+A topic map writes its own threads' rows when it is built, along with its space
+(`topic_maps.vectors`, which only the newest keeps). A row is stale when its `map` is not the
+newest or its `embedded` is not the thread's. The cron assigns the newest threads first, a batch
+per run. A thread whose vector is gone gets no topic, instead of being asked for again. Until
+every thread is assigned again after a build, the page counts only those in the newest map. With
+no map that has a space, nothing is assigned, and the cron's topic map sweep builds one.
+
+**Catalog compile.** files → compiled → behind → compiled again (src/catalog.js, src/catalogsync.js).
+A team's `products/` is the source; its `tech_stack` rows (`path` set) and `tech_moves` are replaced
+together in one batch, with `knowledge_bases.catalog_commit` the watermark, written in the same batch.
+A write compiles from what it pushed; a compile that fails (a catalog file the cron could not read
+counts: it is no file deleted) leaves the rows and the watermark as they were, so the cron, which compiles every team whose head is not the watermark, takes it again. A move
+(`moved_from`) rewrites what D1 keeps under the old id only when it is new against the team's moves
+before, so compiling twice rewrites nothing; an old id that is still a file somewhere is only mapped.
+
+**Technology conflicts.** open → kept → open again (src/techconflicts.js). Computed from
+`tech_stack` on every read, so settling one by changing the definitions closes it with no state of
+its own. Kept is the only stored state: a row in `tech_conflict_keeps` with the fingerprint of the
+definitions it was kept with; once one of them changes, the fingerprint no longer matches and it is
+open again. A merge deletes the files of the technology that goes before the other lists it in
+`moved_from`, so the compile sees a new move (src/catalog.js) and rewrites D1.
+
+**Knowledge search rows.** unread → read → behind → read again, per knowledge base
+(`knowledge_bases.search_commit`, `kb_concepts`, src/kbindex.js); per concept, unembedded →
+embedded (`kb_concepts.embedded`). The watermark is the commit the rows were last read from in
+full, `''` for a knowledge base that had no commit then (a new one starts there: nothing to read),
+and NULL for unread, which the cron takes, 30 a run. A full read writes the rows of the changed
+blobs, deletes those of files that are gone and records the watermark in the same batches, the
+watermark last, so a read cut short leaves it NULL; a blob that cannot be read fails the read. A
+write updates the rows of the files it changed after its push and leaves the watermark be; if
+that fails it sets the watermark NULL, so the cron reads the whole tree again. A row whose blob
+changes loses `embedded`; the cron embeds the rows without it, 100 a run, and marks a row only
+`WHERE hash` is still the blob it embedded, so a write in between is embedded again. A deleted
+concept's vector is deleted too, and one left behind is harmless: the search keeps only what
+`kb_concepts` has.
 
 **Lazy fill-ins.** NULL means "not done yet" (`threads.last_text`, `messages.author_kind`,
 `knowledge_bases.entries`). Each has a batch on the cron. NULL must not also mean "nothing there", or
@@ -382,8 +932,38 @@ a week; for a mention suggestion that matches nobody (`src/post.js` `mentionable
 seconds, so someone just added is found. Whoever moves `members_at` lists it: one listing at a
 time.
 
+**Channel archive.** live → archived → restored, i.e. live (`channels.archived_at`, `src/lookup.js`
+`getChannel`). Only a lookup writes it, from what the platform says now (Slack `is_archived`, Teams
+`isArchived` of the channel or its team; a Slack channel the app can no longer read at all,
+`channel_not_found` or `team_access_not_granted`, as a disconnected Slack Connect channel is, counts
+as archived, except in a message's lookup, since a channel that sends messages is there), so a
+replay cannot set it back; `archived_at` is when a lookup first saw it, not when it happened. What asks: a notice of an archive or a restore (Slack's
+`channel_archive` and `channel_unarchive` messages, Teams' team notices) looks the channel up at
+once; a message from after `archived_at` does too, since an archived channel gets none; and
+`sweepChannels` (`src/channelsweep.js`) looks up every channel not looked up for a week, 25 a cron
+run, writing `checked_at` after each try, answered or not, so one the platform no longer shows
+does not stay at the head (a sweep's lookup that finds it again restores it). A Teams team seen archived archives all its channels' rows; one seen
+restored does not restore them (a channel can be archived on its own), their own lookups do. The
+admin pages and Clef leave archived channels out.
+
 **Channel label.** unlabeled → labeled → stale (`channel_labels`, `src/suggest.js`). Due when the
 channel has activity, the ops teams change, or the label is a week old.
+
+**Team wizard group.** suggested → dismissed → suggested again → gone (`team_prefix_dismissals`,
+`src/teamwizard.js`). A group is computed on every read from the admin team's channels, so it has no
+state of its own: it is gone once a rule files its channels elsewhere, or they are renamed or
+archived. Dismissed is the only stored state, a row with the group's channel count then; a group
+with more channels than that is suggested again (the row stays, and a later dismissal writes the new
+count). Making the group a team deletes the row, so a prefix that comes back later starts afresh.
+
+**Suggested member.** suggested → added, dismissed or gone → suggested again
+(`member_suggestion_dismissals`, migration 0095, `src/membersuggest.js`). A suggestion is computed on
+every read from the team's threads, channels and topics, so it has no state of its own: it is gone
+once the person is on the team or stops working its threads. Dismissed is the only stored state, a
+row per team and mail address, written by Dismiss on the team's page (`why` `dismissed`) and by
+taking someone off the team (`why` `removed`), so neither comes straight back. Suggest again deletes
+the row, and so does adding the person to the team; deleting the team deletes its rows. The admin
+team gets no suggestions, nor rows.
 
 **GitHub mirror.** absent → importing → ready → refreshing → ready, or given up after an hour
 (`repo_mirrors`, `src/agent/repos.js`). Reads stay on the old mirror until the new one is readable. A
@@ -408,18 +988,197 @@ storage, `modelUsage` in `src/cogs/meter.js`). The first reading only sets the s
 held before is not counted on one day. Readings are one at a time, so a round is counted once; a
 ledger that went back (a new session) counts from nothing.
 
+## The customer portal
+
+The portal is a Worker of its own with its own database (`portal/migrations`, `src/portal/`); the
+inbox keeps what it heard of it. Each side's state is its own, and the events between them are the
+only thing both see.
+
+**Lobby.** `draft` → `requested` → `open`, or → `declined` → `requested` again (`lobbies.status`
+in the portal, `src/portal/store.js`). The first of a mail domain to sign in founds it (the insert
+decides who: `ON CONFLICT DO NOTHING`); asking is conditional on `draft` or `declined`, declining on
+`requested`, so each happens once. Opening a channel makes it `open` from any state, and it stays
+open: more channels change nothing. Nothing is told of a `draft`.
+
+**Lobby member.** absent → invited → joined (`members.joined_at`). Only a member invites, only an
+address of the lobby's domain; an invitation nobody used can be taken back, a member who signed in
+stays. Someone of the domain who is neither is told whom to ask, and reads nothing.
+
+**Portal request.** absent → `open` → `opened`, or → `declined` → `open` again
+(`portal_requests.status` in the inbox, `src/portalrequests.js`). The row follows the lobby: every
+`lobby` event is a snapshot with its number in the portal's outbox (`seq`), and the row takes one
+only when it is newer (`WHERE excluded.seq > portal_requests.seq`), so a replay of pile 1, or two
+events out of order, end where the latest says. The inbox's own decisions are written before the
+portal is asked: a decline is conditional on `open` (whoever comes second gets 409), and is taken
+back when the portal did not take it (`reopenDeclined`), unless the portal says the lobby is not
+waiting any more. Opening is not claimed: the portal makes a channel per call, so a second call
+makes a second channel, which the request allows on purpose (a lobby may get more than one), and
+the page does not send it again by itself. If filing the new channel fails after the portal made
+it, the answer says so and names it: it is in the inbox under the admin team (the rule of last
+resort), to be assigned on a team's page.
+
+**Integration access request.** pending → approved | declined → (30 days) pending
+(`integration_requests.status` in the portal, `src/portal/integration-requests.js`; the inbox keeps
+nothing of it, `src/integrationrequests.js`). A verified caller of a user-token host with no member
+row in its tenant's channel is recorded on a `not_enrolled` (one row per host, tenant and subject,
+`UNIQUE`), refreshed at most every 15 minutes, and only within the bounds (1,000 pending per host,
+100 per tenant, 120 new per host and hour, all in the `INSERT … WHERE NOT EXISTS` itself). A
+member row of any state, or an approved row, stops capture: those are an operator's. Approving is
+claimed by the row's status in the same batch that inserts the actor and the member and enables
+a mapping the flow reserved, each conditional on the claim, so a decision made meanwhile inserts
+nothing. A new tenant's mapping is reserved first (`integration_customers.approved_by`, disabled),
+then routed in the inbox, then enrolled and enabled (`enabled_at`, set by trigger on the first
+enable): a routing failure leaves it reserved, and approving again finishes it; a mapping enabled
+once and disabled since, or made by hand and never enabled, is never re-enabled from here. A
+decline is conditional on `pending`, and a later call after 30 days makes the row pending again,
+with the decision cleared. Decided rows and pending rows not seen for 180 days are pruned by the
+cron, a thousand at a time.
+
+**Auto-approval of an integration channel.** off ⇄ on (`integration_customers.auto_approve`,
+who and when in `auto_by`, `auto_at`; what else lands there in `integration_catches`, primary key
+`(host, kind, value)`, so an org ID or domain is one channel's per host, and triggers refuse a
+catch of a mapped tenant and a mapping of a caught one). On, a verified caller with no member row
+on the host whose tenant, extra org ID or, failing both, exact verified mail domain lands in the
+enabled channel is enrolled in one batch: the actor only if the channel is still enabled and on
+and fewer than 30 were auto-approved in the last hour, the member only if that actor exists, and
+their request approved only if that member exists. Anything that stops it (off, disabled, cap, a
+uniqueness conflict) leaves a pending request instead. Off stops new ones; members stay. A
+provider host's subject is one member per host (trigger `integration_member_host`), resolved by
+subject; a domain-caught member (`via` `domain:…`) is bound to its verified address.
+
+**Channel audience.** shared ⇄ individual (`channel_audiences` in the portal, portal migration
+0008, `src/portal/store.js`). No row is shared, as every channel was before, so the migration
+changes no channel; a row says who set it and when (`set_by`, `set_at`), and setting writes it
+again whatever it was. It is keyed by the channel's id, which an integration mapping reserves
+before its channel exists, so an approval that makes a new organization's channel individual
+writes the row in the batch that reserves the mapping, before it is enabled: its first thread is
+already its author's alone. Setting it tells the inbox with a `channel` event when the channel
+exists, and every event of an individual channel says so (`channel.audience`); one that does not
+is of a shared channel. Switching moves no thread and rewrites nothing: who is in a thread decides.
+
+**Thread member.** absent → in (`thread_members` in the portal). A customer is in a thread from
+their first message in it (a trigger on `messages`, `INSERT OR IGNORE`), and the migration put
+everyone who wrote before in theirs, so a channel switched to individual later keeps each person
+their threads and those they took part in; Adobe adds one with `addToThread` (`added_by`), which
+writes a viewer-only `added` change for an integration member. Nothing takes a member out: a
+person revoked from the channel reads nothing anyway. In an individual channel every customer read
+asks it (`theirs`): the lists, a thread, its status, typing, files, reactions, replies, whom one
+mentions, the badge, the unread counts and the feed with its watermark; in a shared one nothing
+does. Staff and the app are never rows, and read everything.
+
+**Embedded account's merge key.** none → an address → another address (`users.verified_email` in
+the portal, portal migration 0009; `identities.merge_email` in the inbox, migration 0114). Written
+on an admitted call whose provider (or signed assertion) verified the address, when it differs
+from the one kept; a call without one keeps it, so a profile that stops saying it is not split
+off. The inbox takes it from the account's next message, and a reference that names none keeps
+the row's. The portal keeps when it was last presented (`verified_at`, written again at most
+daily), and joins two profiles in an individual channel only while both presented it in the last
+30 days. It is read for "is this one person" only (an individual channel's `people`, the
+inbox's `sameAccounts`), never for admission, a person of D1 or staff.
+
+**Managed channel and member.** Reserved → enabled ⇄ suspended (`integration_customers`).
+Reserve the channel ID, pre-file it by that ID in the inbox, then enable the tenant. The first
+create materializes its lobby and channel with the root and its events; racing creates reuse
+it. A member maps one subject to one customer actor of that channel; revoke by disabling the
+member, not by recycling its actor. Every operation checks both mappings, including a retry.
+The single-use assertion nonce lasts through expiry; a host passing user tokens gets a fresh
+nonce per admitted operation, for the same rate limits. A write's receipt lasts with the history.
+A host has one mode (`integration_hosts.identity` or assertion keys, never both), and a user
+token's verification and profile are cached at most five minutes and one minute.
+A receipt, its message and the inbox outbox event commit or roll back together.
+
+**Managed viewer.** Snapshot → following changes → relist on expiry. Public mutations write
+`integration_changes` in the same transaction; an inbox resend writes no change. Only advancing
+a viewer's read position emits a viewer-only change. Pruning the week-old rows advances the
+channel's floor: a cursor below it cannot silently skip changes. A stale collection page must
+restart, never continue a different snapshot. See [the host contract](PORTAL-INTEGRATION.md).
+
+**Portal message.** absent → posted → edited (any number of times) → deleted (`messages.rev`,
+`edited_at`, `deleted_at` in the portal). `rev` counts the changes and is the version of the
+message's file in pile 2 (`normalizePortal`), so a file only moves to a later change whatever
+order the events arrive in, also for two changes in one millisecond; a deletion is the last one.
+Telling of a thread again (`resend`, for a backfill) sends each message as it is, with the `rev`
+it has: nothing moves.
+
+**Portal file.** uploaded → attached → deleted with its message; or uploaded → deleted after a day
+(`files.message`, `src/portal/files.js`). A file is uploaded before the message that carries it, by
+whoever writes it, and is nobody's until then: only its uploader's message takes it, in the batch
+that writes the message, and only once (`WHERE message IS NULL`). One that no message took (the
+composer was left, the file removed from it) is an orphan the cron deletes after a day, the row
+conditional on it still being one. A deleted message loses its files after its tombstone is
+written, so a failure between the two leaves files no thread shows, not a message without the
+files it says it has.
+
+**Picture and logo.** none → uploaded → replaced or removed (`users.avatar_key`,
+`lobbies.logo_key`). Each upload is a new object under a new key, which the row then names, and
+the one before is deleted: an address with the old version (`?v=`) answers with the new picture,
+which is what a cached page wants. The inbox learns of a picture with its owner's next message
+(`author.picture`), of a logo with the lobby's next event; a picture taken away is their Gravatar
+again from their next message on.
+
+**Portal event.** written → delivered → deleted after a week (`events.delivered_at`,
+`src/portal/events.js`). An event is written in the same batch as the change it tells of, so
+there is no change without its event; a lobby's is written after the change, and is a snapshot,
+so a lost one is made up for by the next. Delivery is at least once: two deliveries at once may
+send the same events, and one that failed is sent again by the cron (`attempts`, `error`); the
+inbox keys each by its `seq`, so both are one object in pile 1. An unbound portal delivers
+nothing and keeps everything.
+
+**Writing in a portal thread.** absent → writing → absent (`typing.at` in the portal,
+`src/portal/store.js`). The inbox says that someone types a reply every four seconds while they
+do (`POST /api/typing`), and each word writes the row's `at` again; a row counts for eight seconds
+after it (`TYPING_MS`), so someone who stops is gone without anything saying so, and a lost word
+is made up for by the next. Their message deletes the row in the batch that writes it; rows ten
+times older than that are deleted with the next one written. Nothing of it is an event: the
+inbox's pile 1 never hears who typed.
+
+**Adobe's side of a thread.** asked → kept for ten seconds → asked again (`statuses` in
+`src/portal/api.js`, per isolate). What the inbox says of a thread (how many listen, the typical
+wait, whether the agent works, whether a draft waits) is the present, read from the inbox's own
+tables when asked and stored nowhere; an inbox that does not answer leaves the page without
+it, and with what the portal knows itself (who writes, the thread's `stamp`). The **wait model**
+behind the estimate is absent → fitted → stale → fitted again, per isolate of the inbox
+(`src/portalstatus.js`): fit from the last 180 days by the first status asked, one read however
+many ask at once; an hour old it is stale, still answered with, and fitted again behind that
+answer. A fit that fails leaves the one there is. No wait at all is no estimate.
+
+**Portal technologies.** the built-in list → the inbox's, an hour old at most (`tech`, `meta.tech_at`
+in the portal, `src/portal/tech.js`). An empty or failed answer leaves the list as it is: "the
+inbox said nothing" is not "there are none". A lobby's picks are checked against the list when
+they are saved, not after, so one the inbox no longer offers stays picked, and shows in the
+request by its id.
+
 ## In the page
 
 **Socket.** connecting → open → reconnecting → banner (`listen`, `ui/inbox.js`). A socket that comes
-back has missed what its room said, so the inbox and the open thread reload.
+back has missed what its room said, so the inbox and the open thread reload. Open → asked → open,
+or replaced (`probeSockets`, `ws.probe`): when the inbox is back on screen, or the network or a
+frozen tab is, each open socket sends `ping`, which the room's runtime answers with `pong`
+(`src/room.js`, without waking it). One that has not answered after `PROBE_MS` is gone without the
+browser knowing (a computer that slept): it is dropped and connected again, which reloads as any
+socket that comes back. Reads go over HTTP while a socket is asked.
 
 **Background catch-up.** live ↔ collecting changes (`changed`, `reload`). A hidden tab notes what
-changed and reloads when it is shown.
+changed and reloads when it is shown. Back after `AWAY_MS` (tab hidden or window not focused), or
+from a frozen tab (`resume`), it reloads whether or not anything was noted (`GAP`), since what the
+rooms said meanwhile may never have arrived.
 
 **Thread list.** fresh → held in place → re-sorted (`state.list`). While `listKey` is the same, the
 rows stay where they are. Unread only lets go of the read threads it holds once the inbox has been
 away (tab hidden or window not focused) for `AWAY_MS` (`forgetRead`, `away`): never the open thread,
-and not after a shorter look elsewhere.
+and not after a shorter look elsewhere. The filter cards hold the same rows, in the same order, but
+count what is unread now (`unreadNow`, `facetRows`): a read thread the list still holds is not
+counted, so a row's count goes down as you read, without its row moving.
+
+**Customer column.** placed → held → let go (`state.column`, `columnPlace` and `forgetColumn` in
+`ui/inbox.js`). The simple personal view's customers go by their place: the highest they have had
+(unread mentions of you, then unread, then the rest) since the inbox was last away; within a place,
+your regulars, the others and the inactive ones (`sectionOf`, from the `standing` of the inbox's
+first page, so a reload moves a customer between them). Something new
+moves a customer up at once; reading it moves it down only once the inbox has been away for
+`AWAY_MS`, as the thread list does, but never the open thread's customer. Its badge and bold are
+what it has now. Another view, the expert view, viewing as someone and a reload start afresh;
+excluding a customer puts it at the end at once and drops its place.
 
 **List row.** shown → leaving → kept aside, or shown again (`.leaving` and `__leave` on the row's
 node, `leaveRow` in `ui/inbox.js`). While the list is the same (`state.list`), a row on screen whose
@@ -436,17 +1195,73 @@ once it is out, or once the slide is cut short (the screen grown past the phone'
 over, and `paneLeave` tells the slide that ended it is not the latest. No slide (reduced motion,
 `main.instant`, a wider screen): emptied at once.
 
+**Favicon.** loading → shown, or failed → its stand-in → loading again (`favImg`, `favFailed`,
+`keepFavicons` and `wireFavicons` in `ui/inbox.js`). Drawn again, a favicon keeps the image it had
+(the same address, one per domain from `GET /api/favicon`), so a click does not fetch or flash it.
+One that does not load (an error event, or found complete without an image when its place is
+drawn again, as one that failed out of the page) gives way to the stand-in its place has (an
+initial, an empty slot, nothing), and every favicon of its address is drawn as that stand-in for
+`FAV_RETRY_MS`: a failure may pass (the Worker answers a Google that failed with a 502 for a minute,
+src/favicons.js), so it is not final, and the next drawing after that asks again.
+
+**Open thread's fetch.** shown → asked again → shown, or failed (`openThread`, `refetchLater`,
+`refetchDone` in `ui/inbox.js`). Opening a thread shows the copy it was fetched ahead into, and
+fetches it again behind it; so do its live updates. A fetch that fails in a way asking again may
+mend (`transient`: D1 busy, the Worker's 5xx, the network) leaves what the pane shows of that thread
+as it is, and asks again after 1, 2, 4… s (30 s at most, plus up to a second at random), for as
+long as it stays open; with nothing of it on screen yet the pane says the inbox is busy meanwhile.
+A fetch that succeeds ends the retries; another thread opened lets them lapse. A 4xx (gone, not
+allowed) still replaces the pane, and a sign-in that expired keeps it under the banner.
+
+**D1 session.** anywhere → at least as new as a bookmark (src/d1session.js, `D1Bookmark` in
+`ui/app.js`). With D1's read replication on, each `/api/*` request is one session: a read
+(`GET`, `HEAD`) starts from the bookmark the page sent (`x-d1-bookmark`), else at any copy of the
+database (`first-unconstrained`); anything else starts at the primary (`first-primary`), so what
+it reads before it writes is the latest. Every answer says the session's bookmark, and every room
+event carries the primary's at the time it was sent (`notifyRoom`, one `SELECT 1` there, only
+with `D1_READ_REPLICAS` set), so the reads an event sets off see what it is about. The browser keeps the newest bookmark it has seen,
+in `localStorage`, for every tab: bookmarks are hex fields of fixed width, and of two as long the
+greater is the newer, so an older one never replaces it. Anything that is not a bookmark is not
+passed to D1. The queue, the crons and the Durable Objects read and write at the primary, as
+without replication; so does everything when it is off.
+
 **Search.** idle → loading → results or error (`state.search`). `seq` drops the answer to anything but
 the latest question.
 
 **Knowledge-base editor.** clean → editing → saving → saved, or conflict, unnamed or problem
-(`fileState` in `ui/kb.js`). One save at a time, and a save names the blob it was written from.
+(`fileState` in `ui/agent.js`). One save at a time, and a save names the blob it was written from.
+Leaving the file (another section of the page, another team or customer, another page) waits for
+the save, and asks only when it could not be made, once however many ways out were taken meanwhile
+(`Agent.leave`); staying keeps the address on the file.
 
 **Knowledge-base prefetch.** not here → in flight → text, or not here again (`blobs` in
-`ui/kb.js`). Kept by blob hash, so a text is never stale for its hash; the listing (`state.files`)
+`ui/agent.js`). Kept by blob hash, so a text is never stale for its hash; the listing (`state.files`)
 says which hash a path has, and is the watermark: a save relists (unless another save started while
 it was read), and so does showing the tab again after `RELIST_MS`. A failed batch leaves its hashes
 not here, and opening one reads it by its path.
+
+**Review row.** absent, or there → counted (`state.reviewHas`, `reviewCounts` in `ui/admin.js`,
+`ui/review.js`). Whether a list of Teams or Customers has its Review row is decided once, at its
+first paint, and holds until the page loads again: the admin team's always, an ops team member's in
+Customers when `review.duplicates` of `GET /api/admin/orgs` (what `org_pairs` and
+`org_merge_requests` keep) is above 0, nobody else's. Its count is the sum of its queues', shown
+once none of them is still unread (`total` null until then): the unassigned channels are read with
+the list, the duplicates, the partners and the suggested teams after it. A queue that fails to load
+counts 0. A later round of Clef's (`loadDups`, `loadLinks`) changes the count, and the open queue's
+note offers to show what it said; its rows stay where they are until then.
+
+**Teams and Customers read ahead.** not read → in flight → kept → forgotten (`ahead`, `cached`,
+`forget` in `ui/admin.js`). What a team's or a customer's overview and Manage section read (their
+profile, `/api/admin/team` or `/org`, the member suggestions, the stack drawing) is asked for once
+what is picked is shown (`readAhead`), or when the pointer rests on, or the focus is on, a section's
+tab, a row of the list or a link to one (`warm`), and kept for `KEEP_MS`. Every change the page
+makes (`call` with another method than GET, and the agent's, `onWrite`) forgets all of it, when it
+is sent and again when it is done, and an answer asked for before a change is not kept: nothing is
+shown from before a change made here. A failed read is not kept. What the agent of the picked one
+counts (its channels, tools, servers, extraction rules: `loadMeta` in `ui/agent.js`) is read once
+for its sections, and again after `META_MAX_AGE`, when it is picked again, or after a change
+(`Agent.stale`). It is kept only when all four reads succeeded, and the knowledge base's listing
+(`loadFiles`) only when it did: after a failure, the next section shown reads again.
 
 **Code highlighter.** not loaded → loading → loaded, or failed → loading again (`highlighter` in
 `ui/inbox.js`). The first code block rendered starts the import; until it has loaded, code is plain
@@ -479,8 +1294,25 @@ it stays so for the thread in the tab. Those that wait or run always show.
 
 **Notification permission.** unasked → asked → granted or denied (`Notification.permission` and
 `opspile.notify.asked`). The browser's own state is the record, and the first visit asks once.
+While the tour is offered it waits: it asks once the tour is over, or on the next load.
+
+**The tour.** unoffered → offered → toured (`toured` in `person_settings`, src/settings.js; false
+until set). The first load of the inbox with `toured` false offers the tour (ui/tour.js) in a
+toast, after the inbox is on screen; Show me around or No thanks sets it true, on the server, so
+no device offers it again. A load whose toast is taken (an account just connected) does not
+offer it: the next one does. Your menu's Show me around, and `/inbox?tour`, start it whatever
+`toured` says. Not offered while viewing as someone else.
+
+**Notification welcome.** unsent → sent, for a tab and for the installed app on this device
+(`opspile.notify.welcomed` in `ui/inbox.js`, a list of `tab` and `app`). Once the browser allows
+notifications (and one of mentions, your threads or a bell is on), the first load in each sends
+"Notifications are on" with a toast asking whether it popped up; the installed app shares the
+tab's permission and storage, so it never asks but is welcomed once on its own. The browser
+allowing them just now (default → granted) sends it again; so does clearing the key. The menu's
+test notification counts as the welcome. Not while viewing as someone else.
 
 **Notification sound.** silent → unlocked → loaded or tone (`audio` and `chime` in `ui/inbox.js`). A
 page plays sound only after a click or key press in it, so the first one creates the audio and
 fetches `/notify.mp3`; a reload starts silent again. A sound that does not load plays a short tone.
-On unless `opspile.notify.sound` is `off`, per device; one tab plays it (the `opspile:chime` lock).
+Off unless `opspile.notify.sound` is `on`, per device (the menu's "Play a sound"; whoever never
+chose hears none); one tab plays it (the `opspile:chime` lock).

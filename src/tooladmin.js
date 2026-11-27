@@ -14,12 +14,10 @@ import {
   AGENT_TOOLS, agentTool, internalChannel, isAgentTool, platformsOf, setToolSwitch, toolProblem,
 } from './agent/agenttools.js';
 import { listImages } from './agent/image.js';
-import {
-  isRuntime, RUNTIMES, setTeamImage, setTeamRuntime, teamImage, teamRuntime,
-} from './agent/kernel.js';
+import { setTeamImage, teamImage } from './agent/kernel.js';
 import { json } from './http.js';
 import { channelOwner, ownerOf } from './mcpadmin.js';
-import { isAdmin, managesTeam } from './review.js';
+import { isAdmin, managesTeam } from './roles.js';
 import { secretAdmin, secretsOf } from './secretadmin.js';
 
 /**
@@ -34,18 +32,16 @@ import { secretAdmin, secretsOf } from './secretadmin.js';
  *   managers of the team (of the team that owns the channel). An `internal` tool only for
  *   the admin team, per channel, and it turns on only in an internal channel.
  *
- * - `PUT { tool: 'computer', team, runtime }` chooses the shell of a team's computers
- *   (src/agent/kernel.js: `just-bash`, or `slicc-kernel`, which is experimental), and
- *   `PUT { tool: 'computer', team, image }` the image of its kernels (src/agent/image.js: a
- *   stack of layers), one of those in the `IMAGES` bucket. For the admin team only.
+ * - `PUT { tool: 'computer', team, image }` chooses the image of a team's computers (the
+ *   programs of their SLICC kernel, src/agent/image.js: a stack of layers), one of those in the
+ *   `IMAGES` bucket. For the admin team only.
  *
  * Agents notice at their next message.
  *
  * The Computer tool comes with the secrets of the team or the customer (`secrets`: names and
  * hosts, never values), which `/api/kb/tools/secrets` changes (src/secretadmin.js), and, in a
- * team's knowledge base, with its shell (`runtime`: `{ runtime, by, at }`), the shells there
- * are (`runtimes`), its image (`image`: `{ image, by, at }`), the images the bucket has
- * (`images`), and whether `me` chooses (`mayRuntime`).
+ * team's knowledge base, with its image (`image`: `{ image, by, at }`), the images the bucket
+ * has (`images`), and whether `me` chooses (`mayImage`).
  */
 
 const bad = (error) => json({ error }, 400);
@@ -57,20 +53,20 @@ async function list(env, me, repo) {
     return json({ error: 'no such knowledge base' }, 404);
   }
   const column = owner.scope === 'team' ? 'team' : 'org';
-  const { results } = await env.DB.prepare(`SELECT * FROM agent_tool_switches
-    WHERE (scope = 'team' AND target = ?) OR (scope = 'channel' AND target IN
-      (SELECT DISTINCT channel_id FROM threads WHERE ${column} = ?))`)
-    .bind(owner.scope === 'team' ? owner.slug : '', owner.slug).all();
+  const team = owner.scope === 'team';
+  // Asked together: /api/* sends the reads of one tick to D1 as one batch (src/d1batch.js).
+  const [{ results }, secrets, image, images] = await Promise.all([
+    env.DB.prepare(`SELECT * FROM agent_tool_switches
+      WHERE (scope = 'team' AND target = ?) OR (scope = 'channel' AND target IN
+        (SELECT DISTINCT channel_id FROM threads WHERE ${column} = ?))`)
+      .bind(team ? owner.slug : '', owner.slug).all(),
+    secretsOf(env, owner),
+    // The computer's image is a team's: a customer's knowledge base has none to show.
+    team ? teamImage(env, owner.slug) : null,
+    team ? listImages(env.IMAGES) : null,
+  ]);
   const rows = results || [];
-  const secrets = await secretsOf(env, owner);
-  // The computer's shell is a team's: a customer's knowledge base has none to show.
-  const shell = owner.scope === 'team' ? {
-    runtime: await teamRuntime(env, owner.slug),
-    runtimes: RUNTIMES,
-    image: await teamImage(env, owner.slug),
-    images: await listImages(env.IMAGES),
-    mayRuntime: isAdmin(me),
-  } : {};
+  const shell = team ? { image, images, mayImage: isAdmin(me) } : {};
   return json({
     repo,
     tools: AGENT_TOOLS.map((t) => ({
@@ -93,18 +89,17 @@ async function list(env, me, repo) {
   });
 }
 
-/** The admin team chooses the shell of a team's computers, or the image of its kernels. */
-async function chooseShell(env, me, body) {
+/** The admin team chooses the image of a team's computers. */
+async function chooseImage(env, me, body) {
   if (!isAdmin(me)) {
-    return json({ error: 'only the admin team chooses the computer\'s shell and image' }, 403);
+    return json({ error: 'only the admin team chooses the computer\'s image' }, 403);
   }
-  const runtime = body.runtime === undefined ? null : String(body.runtime || '');
-  const image = body.image === undefined ? null : String(body.image || '');
-  if (body.tool !== 'computer' || (runtime !== null && !isRuntime(runtime))) {
-    return bad(`give tool: computer and runtime: ${RUNTIMES.map((r) => r.runtime).join(' or ')}`);
+  const image = String(body.image || '');
+  if (body.tool !== 'computer') {
+    return bad('give tool: computer and image');
   }
-  const images = image === null ? [] : (await listImages(env.IMAGES)).map((i) => i.name);
-  if (image !== null && !images.includes(image)) {
+  const images = (await listImages(env.IMAGES)).map((i) => i.name);
+  if (!images.includes(image)) {
     return bad(images.length ? `give image: ${images.join(' or ')}`
       : 'there are no images in the images bucket (IMAGES): npm run computer:images');
   }
@@ -113,21 +108,12 @@ async function chooseShell(env, me, body) {
     return json({ error: 'no such team' }, 404);
   }
   const by = me.name || me.email || String(me.id);
-  const chosen = {
-    ...(runtime !== null ? { runtime: await setTeamRuntime(env, { team, runtime, by }) } : {}),
-    ...(image !== null ? { image: await setTeamImage(env, { team, image, by }) } : {}),
-  };
+  const chosen = await setTeamImage(env, { team, image, by });
   console.log(JSON.stringify({
-    route: 'kb',
-    action: 'shell',
-    tool: 'computer',
-    team,
-    ...(runtime !== null ? { runtime } : {}),
-    ...(image !== null ? { image } : {}),
-    by: me.id,
+    route: 'kb', action: 'image', tool: 'computer', team, image, by: me.id,
   }));
   return json({
-    ok: true, tool: 'computer', team, ...chosen,
+    ok: true, tool: 'computer', team, image: chosen,
   });
 }
 
@@ -201,8 +187,7 @@ export async function toolAdmin(request, env, url, me) {
   }
   if (request.method === 'PUT') {
     const body = await request.json().catch(() => ({}));
-    return body.runtime === undefined && body.image === undefined
-      ? switchTool(env, me, body) : chooseShell(env, me, body);
+    return body.image === undefined ? switchTool(env, me, body) : chooseImage(env, me, body);
   }
   return json({ error: 'not found' }, 404);
 }

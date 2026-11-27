@@ -23,6 +23,7 @@ import {
 } from '../src/agent/secrets.js';
 import { agentToolsExtension } from '../src/agent/tools.js';
 import { kbAdmin } from '../src/kbadmin.js';
+import { devEnv, devSecrets } from '../scripts/dev-computer/secrets.mjs';
 import { d1 } from './d1.js';
 import { quiet } from './fakes.js';
 
@@ -303,6 +304,32 @@ describe('the secret gateway', () => {
       },
     }).pipeThrough(scrubber([[KEY, '<K>']]));
     assert.equal(await new Response(stream).text(), 'abc <K> and <K> end');
+  });
+
+  it('takes the secrets from elsewhere when told, as the dev computer\'s without D1', async () => {
+    const none = {};
+    const net = network(async (r) => new Response(`you sent ${atob(r.headers.get('authorization').slice(6))}`));
+    const run = { GITHUB_TOKEN: 'made-up-run-token' };
+    const git = devEnv(run);
+    assert.equal(git.GIT_CONFIG_KEY_0, 'http.https://github.com/.extraHeader');
+    const header = git.GIT_CONFIG_VALUE_0.replace(/^Authorization: /, '');
+    // What git sends: the placeholder, which the gateway replaces for github.com only.
+    assert.equal(atob(header.slice(6)), `x-access-token:${placeholder('GITHUB_TOKEN')}`);
+    const ask = (url) => quietly(() => forward(none, { agent: 'dev:x' }, new Request(url, {
+      headers: { authorization: header },
+    }), { fetch: net.fetch, secrets: devSecrets(run) }));
+    const res = await ask('https://github.com/acme/repo.git/info/refs');
+    const sent = atob(net.sent[0].request.headers.get('authorization').slice(6));
+    assert.equal(sent, 'x-access-token:made-up-run-token');
+    assert.equal(await res.text(), `you sent x-access-token:${placeholder('GITHUB_TOKEN')}`);
+    assert.equal((await ask('https://api.acme.example/')).status, 403);
+    assert.equal(net.sent.length, 1);
+    // Without a token, git is told nothing, and a placeholder is refused.
+    assert.deepEqual(devEnv({}), {});
+    const refused = await quietly(() => forward(none, {}, new Request('https://github.com/', {
+      headers: { authorization: header },
+    }), { fetch: net.fetch, secrets: devSecrets({}) }));
+    assert.equal(refused.status, 403);
   });
 });
 

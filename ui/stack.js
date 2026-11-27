@@ -45,7 +45,7 @@ globalThis.Stack = (() => {
       const i = n;
       n += 1;
       const t = p.tech && seen.get(p.tech);
-      const tip = [p.name, t ? `${t.name}: ${pct(t.p)} sure from their threads` : ''].filter(Boolean).join('\n');
+      const tip = [p.name, t ? `${t.name}: ${pct(t.p)} confidence` : ''].filter(Boolean).join('\n');
       return `<div class="stk-part${t ? ' stk-seen' : ''}" tabindex="0" data-part="${i}" title="${esc(tip)}"><b>${esc(p.name)}</b>`
         + `${p.note ? `<small>${inline(md, p.note)}</small>` : ''}</div>`;
     };
@@ -53,7 +53,7 @@ globalThis.Stack = (() => {
       + `<div class="stk-parts">${l.parts.map(part).join('')}</div></div>`).join('');
     const drawn = new Set(view.layers.flatMap((l) => l.parts.map((p) => p.tech)).filter(Boolean));
     const rest = detected.filter((t) => !drawn.has(t.tech));
-    const more = rest.length ? `<div class="stk-more"><span class="stk-mh">Also in their threads</span>${rest.map((t) => `<span class="stk-chip" title="${esc(`${pct(t.p)} sure from their threads`)}">${esc(t.name)}</span>`).join('')}</div>` : '';
+    const more = rest.length ? `<div class="stk-more"><span class="stk-mh">Also in their threads</span>${rest.map((t) => `<span class="stk-chip" title="${esc(`${pct(t.p)} confidence`)}">${esc(t.name)}</span>`).join('')}</div>` : '';
     return `<div class="stk">${view.summary ? `<div class="stk-sum">${md(view.summary)}</div>` : ''}`
       + `<div class="stk-draw" aria-busy="true"><div class="stk-svg"></div><div class="stk-rows">${layers}</div></div>`
       + `<div class="stk-cap" aria-live="polite"></div>${more}`

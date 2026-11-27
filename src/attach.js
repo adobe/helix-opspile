@@ -58,6 +58,11 @@ const SLACK = {
   count: MAX_FILES, file: 20 * MB, total: 25 * MB, types: null, other: true,
 };
 
+/** The customer portal keeps any file, handed over through its Worker, one call a file. */
+const PORTAL = {
+  count: MAX_FILES, file: 10 * MB, total: 25 * MB, types: null, other: true,
+};
+
 /** The rule for posting as the person on `platform`, with a token granted `scope` (or none). */
 export function personRule(platform, scope) {
   if (platform === 'slack') {
@@ -79,6 +84,9 @@ export function personRule(platform, scope) {
       why: 'on Teams the inbox attaches images (PNG, JPEG, GIF) only, until you connect your Microsoft account again with access to the channel\'s files',
       reconnect: 'teams',
     };
+  }
+  if (platform === 'portal') {
+    return { ...PORTAL };
   }
   return { count: 0, why: 'the inbox cannot post to Discord as you' };
 }
@@ -102,6 +110,9 @@ export function appRule(platform) {
     return {
       count: MAX_FILES, file: 10 * MB, total: 10 * MB, types: null, other: true,
     };
+  }
+  if (platform === 'portal') {
+    return { ...PORTAL };
   }
   return { count: 0, why: `the inbox cannot attach files on ${platform}` };
 }
@@ -136,7 +147,7 @@ export function checkFiles(rule, files) {
     total += f.size;
   }
   if (total > rule.total) {
-    return `the files are ${size(total)} together: up to ${size(rule.total)} per message`;
+    return `the files are ${size(total)}. The limit is ${size(rule.total)} per message`;
   }
   return null;
 }

@@ -154,6 +154,7 @@ export function suggestMentions({ accounts = [], bots = [] } = {}, q = '') {
     avatar: r.avatar || null,
     here: Boolean(r.here),
     member: Boolean(r.member),
+    ...(r.outside ? { outside: true } : {}),
     staff: Boolean(r.staff),
     ...(r.affinity > 0 ? { expert: true } : {}),
     kind: 'person',

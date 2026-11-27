@@ -11,13 +11,14 @@
  */
 
 import { fileRef } from './agent/files.js';
+import { agentLabelsFor, applyAgentLabels } from './agentlabels.js';
 import { threadMessages } from './label.js';
 import { withoutQuotes } from './markdown.js';
 import { relationOf } from './profiles.js';
+import { partnerDomains } from './partners.js';
 import {
   isResolved, mergeFacts, resolution, resolutionFacts, signalFacts,
 } from './resolve.js';
-import { effectiveLabel, reviewsFor } from './review.js';
 import { latestMember, waitingOn } from './threads.js';
 
 /**
@@ -32,8 +33,8 @@ import { latestMember, waitingOn } from './threads.js';
  *
  * `threads.exported_through` is the thread row's `updated_at` the export read (it changes
  * with every message written, edits and deletions too) and `threads.exported_at` when the
- * export started. The sweep exports what changed since: new messages, labels, reviews and
- * re-threading; a re-file clears the watermark. A failed insert leaves it alone.
+ * export started. The sweep exports what changed since: new messages, labels, the agents'
+ * answers and re-threading; a re-file clears the watermark. A failed insert leaves it alone.
  *
  * Off unless CLICKHOUSE_URL, CLICKHOUSE_DATABASE, CLICKHOUSE_USER and CLICKHOUSE_PASSWORD are set.
  */
@@ -164,23 +165,30 @@ async function threadsOf(env, keys) {
 
 /**
  * What the inbox shows for each group (src/api.js): the latest member's label (else the first
- * thread's), reviewed; the first thread's title; resolved by a staff ✅ on a member's root
- * (reopened by a customer), else by Clef; who it waits on (`waitingOn`, over the group as the
- * inbox folds it: the latest member's last speaker, every member's 🙏); the facts of every member.
+ * thread's), with its agent's answers; the first thread's title; resolved by a staff ✅
+ * on a member's root or its agent (reopened by a customer), else by Clef; who it waits on
+ * (`waitingOn`, over the group as the inbox folds it: the latest member's last speaker, every
+ * member's 🙏); the facts of every member.
  */
 async function entries(env, groups) {
   const all = [...groups.values()].flat().map((t) => t.thread);
-  const [{ results: labels }, reviews, { results: facts }, checks, signals] = await Promise.all([
+  const [
+    { results: labels }, { results: facts }, checks, signals, agent, { results: orgs },
+  ] = await Promise.all([
     env.DB.prepare('SELECT * FROM labels WHERE thread IN (SELECT value FROM json_each(?))')
       .bind(list(all)).all(),
-    reviewsFor(env.DB, all),
     env.DB.prepare(`SELECT DISTINCT thread, field, value FROM facts
       WHERE thread IN (SELECT value FROM json_each(?)) ORDER BY field, value`).bind(list(all)).all(),
     resolutionFacts(env, all),
     signalFacts(env, all),
+    agentLabelsFor(env.DB, all),
+    // A vendor's thread waits on the vendor (src/threads.js waitingOn).
+    env.DB.prepare('SELECT slug, type FROM orgs WHERE slug IN (SELECT value FROM json_each(?))')
+      .bind(list([...groups.values()].flat().map((t) => t.org).filter(Boolean))).all(),
   ]);
+  const typeOf = new Map((orgs || []).map((o) => [o.slug, o.type]));
   const labelOf = new Map((labels || []).map((l) => [l.thread, l]));
-  const reviewsOf = by(reviews, 'thread');
+  const agentOf = by(agent, 'thread');
   const factsOf = by(facts, 'thread');
   const out = new Map();
   for (const [g, members] of groups) {
@@ -188,7 +196,7 @@ async function entries(env, groups) {
     const latest = latestMember(members);
     const labelKey = labelOf.has(latest.thread) ? latest.thread : anchor.thread;
     const model = labelOf.get(labelKey) || null;
-    const label = effectiveLabel(model, reviewsOf.get(labelKey) || []);
+    const label = applyAgentLabels(model, agentOf.get(labelKey) || []);
     const anchorLabel = labelOf.get(anchor.thread);
     const verdict = resolution(mergeFacts(members.map((m) => checks.get(m.thread))), label, null)
       ?.verdict;
@@ -202,6 +210,8 @@ async function entries(env, groups) {
       any_at: latestOf('any_at'),
       label,
       signals: members.flatMap((m) => signals.get(m.thread) || []),
+      imported: members.every((m) => Number(m.imported)),
+      org_type: typeOf.get(anchor.org) || null,
     });
     out.set(g, {
       title: (anchorLabel && anchorLabel.title) || (label && label.title) || anchor.title || '',
@@ -242,7 +252,7 @@ async function rowsOf(env, emit, groups, version) {
   await fillFromPile2(env, emit, all);
   const persons = all.map((m) => m.person).filter(Boolean);
   const [{ results: rx }, { results: mentions }, { results: members }, { results: shares },
-    { results: orgs }, { results: partnerRows }, entryOf] = await Promise.all([
+    { results: orgs }, partners, entryOf] = await Promise.all([
     env.DB.prepare(`SELECT message, COUNT(*) AS n FROM reactions
       WHERE thread IN (SELECT value FROM json_each(?)) GROUP BY message`).bind(list(keys)).all(),
     env.DB.prepare(`SELECT message, COUNT(*) AS n FROM mentions
@@ -254,7 +264,7 @@ async function rowsOf(env, emit, groups, version) {
       .bind(list(emit.map((t) => t.channel_id))).all(),
     env.DB.prepare('SELECT slug, name, type FROM orgs WHERE slug IN (SELECT value FROM json_each(?))')
       .bind(list(emit.map((t) => t.org))).all(),
-    env.DB.prepare('SELECT domain, name FROM partner_domains').all(),
+    partnerDomains(env),
     entries(env, groups),
   ]);
   const count = (rows) => new Map((rows || []).map((r) => [r.message, r.n]));
@@ -263,8 +273,6 @@ async function rowsOf(env, emit, groups, version) {
   const teamsOfPerson = new Map([...by(members, 'person')].map(([p, rs]) => [p, rs.map((r) => r.team)]));
   const sharesOf = by((shares || []).map((s) => ({ ...s, k: `${s.source}:${s.channel_id}` })), 'k');
   const orgOf = new Map((orgs || []).map((o) => [o.slug, o]));
-  const partners = new Map((partnerRows || [])
-    .map((r) => [String(r.domain).toLowerCase(), r.name]));
   const threadOf = new Map(emit.map((t) => [t.thread, t]));
   const origin = String(env.PUBLIC_ORIGIN || '').replace(/\/+$/, '');
   return all.map((m) => {
@@ -401,8 +409,8 @@ export async function queueExport(env, thread, { delaySeconds = EXPORT_DELAY_SEC
 
 /**
  * Cron: enqueues the threads that changed since they were exported (a message written, a
- * label, a review or re-threading since; a re-file clears the watermark), the most recently
- * active first, once they have been quiet for a few minutes. The first runs after the
+ * label, an agent's answer or re-threading since; a re-file clears the watermark), the most
+ * recently active first, once they have been quiet for a few minutes. The first runs after the
  * exporter is turned on export everything there is.
  */
 export async function sweepExports(env, now = new Date()) {
@@ -413,8 +421,8 @@ export async function sweepExports(env, now = new Date()) {
     LEFT JOIN labels l ON l.thread = t.thread
     WHERE t.updated_at < ?1 AND (t.exported_through IS NULL OR t.exported_through != t.updated_at
       OR l.labeled_at > t.exported_at OR t.rethreaded_at > t.exported_at
-      OR EXISTS (SELECT 1 FROM label_reviews r WHERE r.thread = t.thread
-        AND r.created_at > t.exported_at))
+      OR EXISTS (SELECT 1 FROM agent_labels a WHERE a.thread = t.thread
+        AND a.at > t.exported_at))
     ORDER BY COALESCE(t.any_at, t.updated_at) DESC LIMIT ?2`)
     .bind(new Date(now.getTime() - SETTLE_MS).toISOString(), SWEEP).all();
   const keys = (results || []).map((r) => r.thread);

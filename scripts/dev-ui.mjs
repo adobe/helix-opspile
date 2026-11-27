@@ -20,19 +20,26 @@
  *   node scripts/dev-ui.mjs --no-sim   # no simulated incoming messages
  *   node scripts/dev-ui.mjs --admin    # signed in as a member of the admin team
  *   node scripts/dev-ui.mjs --manager  # signed in as the manager of Edge ops, not an admin
- *   node scripts/dev-ui.mjs --member   # signed in as a member of her teams: Agents read-only
+ *   node scripts/dev-ui.mjs --member   # signed in as a member of her teams: their agents read-only
  *   node scripts/dev-ui.mjs --no-team  # signed in on no team (no-team mode): Personal only
+ *   node scripts/dev-ui.mjs --new      # as --no-team, signed in for the first time: nothing yet
  *   node scripts/dev-ui.mjs --big      # a prod-sized inbox (some 250 threads, long ones too)
  *   node scripts/dev-ui.mjs --latency=400  # every /api answer waits 400 ms, as production's do
+ *   GRAPHVIZ_ORIGIN=http://localhost:8789 npm run ui:dev  # diagrams drawn by `npm run graphviz:dev`
  *   node scripts/dev-ui.mjs --send=4000    # a reply takes 4 s to send (default: 900 ms, as in
  *                                          # production), and arrives some 8 s after that
  *
  * `POST /__dev/signout` ends the sign-in, as Cloudflare Access's session ends: `/api/*` then
  * redirects to a sign-in page on another origin (127.0.0.1 for localhost), which signs in again.
+ * `POST /__dev/busy?n=<count>&thread=<key>` has the next `count` (6 by default) `GET /api/thread`
+ * (of `thread` only, if given) answer as an overloaded D1 makes the Worker answer (503,
+ * `Retry-After`, src/api.js): the open thread stays on screen while the inbox asks again.
  *
  * For scripts/perf-ui.mjs, `POST /__dev/simulate?thread=<key>` posts a message into a thread
  * (a random one without `thread`) and sends the live update, as the simulation does; with
  * `&mention=1` the message mentions Dana, who gets a notification (once the browser allows it).
+ * `GET /__dev/notify` has a button for each way the inbox notifies (the page's own, the service
+ * worker's, a mention in the inbox) and opens the inbox's notification troubleshooter.
  * `POST /__dev/rethread?into=<key>&after=<ms>` starts a thread in the channel of `into` and
  * folds it into `into`'s group `after` ms later (30 s by default), as re-threading does.
  *
@@ -73,6 +80,7 @@ import { cleanPick } from '../src/rankevents.js';
 import { suggestMentions } from '../src/mention-match.js';
 import {
   fmcScript, fromPreview, highlightScript, inboxPage as servedInbox, page as servedPage,
+  threeScript,
 } from '../src/page.js';
 import {
   askClef, candidates, rankEmoji, resolveShortcodes,
@@ -82,24 +90,54 @@ import { resolution } from '../src/resolve.js';
 import { statsFor } from '../src/klickhaus.js';
 import { vocab } from '../src/label.js';
 import { snippet, terms } from '../src/search.js';
+import { conceptOf } from '../src/kbindex.js';
+import { bestHits, conceptHit } from '../src/kbsearch.js';
 import { mergeSettings, withDefaults } from '../src/settings.js';
 import { slackMessageRefs } from '../src/slackurl.js';
 import { previewOf, readState, waitingOn } from '../src/threads.js';
 import {
-  fold, orgStacks, readMembers, threadTech,
+  fold, readMembers, threadTech,
 } from '../src/api.js';
+import { stackParts, storeOrgStack } from '../src/orgstacks.js';
+import {
+  REGULAR_DAYS, QUIET_DAYS, setMark, standingOf,
+} from '../src/standing.js';
 import { parseStack, STACK_PATH, stackView } from '../src/stack.js';
-import { createAdmin } from './dev-ui-admin.mjs';
+import { createAdmin, devFavicon } from './dev-ui-admin.mjs';
+import { isRequestKey } from '../src/requestkeys.js';
+import { openQuestions } from '../src/questions.js';
+import { faviconProxy } from '../src/favicons.js';
 import { createKnowledgeBases } from './dev-ui-kb.mjs';
+import { compileCatalog, inCatalog, storeCatalog } from '../src/catalog.js';
+import { areaFile, compileAreas, isArea } from '../src/areas.js';
+import { topicsPage } from '../src/topicsapi.js';
+import { techInfo } from '../src/techinfo.js';
+import { teamDirectory, teamProfile } from '../src/teamprofile.js';
+import { teamVendors } from '../src/vendors.js';
+import { orgDirectory, orgProfile } from '../src/orgprofile.js';
+import { orgPartnerLinks } from '../src/orgpartners.js';
+import { personCard } from '../src/person.js';
+import { weeksTo } from '../src/trends.js';
+import { latestTopicMap } from '../src/topicmap.js';
+import { trendsFixture } from './dev-ui-topics.mjs';
 import { findPerson } from '../src/kbpeople.js';
-import { createStore } from './dev-ui-fixtures.mjs';
+import { pathOwner } from '../src/agent/kbwrite.js';
+import {
+  AGENT, createStore, kbChats, TRANSLATIONS,
+} from './dev-ui-fixtures.mjs';
+import { targetOf } from '../src/translate.js';
+import { OFFER_AFTER } from '../src/postoffer.js';
+import { followable, followsOfTeams } from '../src/follows.js';
+import { changeFollow, followState } from '../src/following.js';
+import { followOrg } from '../src/admin.js';
+import { cleanQuery, suggestionsOf, TREND_DAYS } from '../src/followsuggest.js';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 const uiDir = join(root, 'ui');
 const PORT = Number(process.env.PORT) || 8787;
 const SIMULATE = !process.argv.includes('--no-sim');
-// Dana in the admin team: the inbox shows the switch to the knowledge-base editor, "View as"
-// (read-only) and label review.
+// Dana in the admin team: the inbox shows the switch to the knowledge-base editor and "View as"
+// (read-only).
 const ADMIN = process.argv.includes('--admin');
 // Dana manages Edge ops and is in no admin team: what team managers see.
 const MANAGER = process.argv.includes('--manager');
@@ -107,7 +145,10 @@ const MANAGER = process.argv.includes('--manager');
 const MEMBER = process.argv.includes('--member');
 // Dana on no team, signed in from one of SIGNIN_DOMAINS (no-team mode): the personal view only,
 // of every team's channels she posted or was mentioned in.
-const NO_TEAM = process.argv.includes('--no-team');
+const NO_TEAM = process.argv.includes('--no-team') || process.argv.includes('--new');
+// Dana on no team, and new: signed in for the first time, never posted or mentioned in a channel
+// the inbox follows, so her personal view is empty.
+const NEWCOMER = process.argv.includes('--new');
 const SIM_EVERY_MS = 25 * 1000;
 // A new root is re-threaded this long after it arrives (src/rethread.js: 30 s).
 const RETHREAD_MS = 30 * 1000;
@@ -120,7 +161,10 @@ const ARRIVE_MS = Number(process.argv.find((a) => a.startsWith('--arrive='))?.sl
 // Pages of the inbox, as the Worker serves them (`before` cursor, `page.next`).
 const INBOX_PAGE = Number((process.argv.find((a) => a.startsWith('--page=')) || '').slice(7)) || 100;
 // What the admin team would say about the fake orgs (src/api.js: customer unless set).
-const ORG_TYPES = { initech: 'vendor', opspile: 'internal' };
+const ORG_TYPES = {
+  initech: 'vendor', opspile: 'internal', agency: 'partner', public: 'public',
+};
+const ORG_NAMES = { acme: 'ACME', agency: 'Agency Co', public: 'Public' };
 const SESSION_FILE = join(root, '.dev-ui-session.json');
 const VALIDATE_MS = 60 * 1000;
 
@@ -134,18 +178,195 @@ if (NO_TEAM) {
   store.me = { ...store.me, teams: [] };
 }
 const kb = await createKnowledgeBases();
-const adminApi = createAdmin(store, { manager: MANAGER, member: MEMBER, bases: kb.list() });
+const adminApi = createAdmin(store, {
+  manager: MANAGER, member: MEMBER, noTeam: NO_TEAM, bases: kb.list(),
+});
+/** Compiles a team's catalog into the admin pages' D1, as a write of it does (src/catalog.js). */
+const compileKb = async (repo) => {
+  const b = kb.list().find((x) => x.repo === repo);
+  if (b) {
+    if (b.kind === 'team') {
+      const where = { team: b.slug, repo };
+      const files = await kb.catalog(repo);
+      await storeCatalog(adminApi.env, where, {
+        ...compileCatalog(files.filter((f) => inCatalog(f.path))),
+        areas: compileAreas(files.filter((f) => isArea(f.path))),
+      });
+    }
+    // Its concepts, as src/kbindex.js keeps them: a team's and a customer's overview count them
+    // by type.
+    const db = adminApi.env.DB.sqlite;
+    db.prepare('DELETE FROM kb_concepts WHERE repo = ?').run(repo);
+    for (const f of await kb.files(repo)) {
+      // eslint-disable-next-line no-await-in-loop
+      const c = conceptOf(f.path, (await kb.read(repo, f.path)).text);
+      if (c) {
+        db.prepare(`INSERT INTO kb_concepts (repo, path, hash, type, title, description, tags, aliases, body)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(repo, f.path, f.hash, c.type, c.title, c.description, c.tags, c.aliases, c.body);
+      }
+    }
+  }
+};
+for (const b of kb.list()) {
+  // eslint-disable-next-line no-await-in-loop
+  await compileKb(b.repo);
+}
+/** Each customer's stack, from its stack.md, as src/orgstacks.js keeps it in D1. */
+const orgStacks = {};
+const readOrgStack = async (repo) => {
+  const b = kb.list().find((x) => x.repo === repo);
+  if (b && b.kind === 'org') {
+    const f = await kb.read(repo, STACK_PATH);
+    const parts = stackParts(f.error ? null : f.text);
+    if (parts.length) {
+      orgStacks[b.slug] = parts;
+    } else {
+      delete orgStacks[b.slug];
+    }
+    // And in D1, where a customer's overview reads them (src/orgprofile.js).
+    await storeOrgStack(adminApi.env, b.slug, f.error ? null : f.text);
+  }
+};
+for (const b of kb.list()) {
+  // eslint-disable-next-line no-await-in-loop
+  await readOrgStack(b.repo);
+}
 // The names of tech stack and topic ids (src/label.js vocab), from the teams' configuration on
 // the admin pages: read again on every request, so a change there shows on the next one.
 let vocabNames = { tech: {}, topics: {} };
 const ME = store.me.id;
+// The agent's drafts Dana sent, by channel, as src/postoffer.js counts them: she sent all but
+// one before, so the next of the agent's she sends asks whether it may post there itself, where
+// she may switch it (--admin, or --manager in Edge ops) and it does not yet.
+const agentDraftsSent = new Map();
+const postingOfferFor = (entry) => {
+  const channel = entry.ch.channelId;
+  const sent = (agentDraftsSent.get(channel) ?? OFFER_AFTER - 1) + 1;
+  agentDraftsSent.set(channel, sent);
+  const may = ADMIN || (MANAGER && entry.row.team === 'edge');
+  return may && !entry.ch.appPosting && sent >= OFFER_AFTER
+    // eslint-disable-next-line no-use-before-define
+    && !settings.postingDeclined.includes(channel)
+    ? { postingOffer: { channel, team: entry.row.team, sent } } : {};
+};
 const sockets = new Map(); // team slug -> Set of WebSocket-ish sockets
-// Dana's notification settings (src/settings.js): mentions and threads on, and a bell on Edge ops'
-// incidents, so the user menu lists one.
+// Dana's notification settings (src/settings.js): mentions and threads on, and bells on Edge ops'
+// incidents, on Platform ops' and on her personal view, so the user menu lists a few (and is as
+// long as someone's who uses them).
 let settings = withDefaults(store.me, {
-  bells: [{ view: 'edge', sel: { type: ['conversation'], kind: ['incident'] } }],
+  bells: [
+    { view: 'edge', sel: { type: ['conversation'], kind: ['incident'] } },
+    { view: 'platform', sel: {} },
+    { view: '~personal', sel: {} },
+  ],
+});
+// What Dana follows and mutes, and what her teams follow (src/following.js): in the admin pages'
+// D1, as production keeps them, and changed by the same code (PUT /api/follows). She follows
+// Document Authoring, and a colleague; Edge ops follows a topic (`--manager` changes it).
+const fdb = adminApi.env.DB.sqlite;
+const followAt = new Date().toISOString();
+if (!NO_TEAM) {
+  fdb.prepare('INSERT OR IGNORE INTO person_follows (person, tech, added_at) VALUES (?, ?, ?)').run(ME, 'da', followAt);
+  const colleague = [...store.people.values()].find((x) => x.id !== ME && x.staff);
+  if (colleague) {
+    fdb.prepare(`INSERT OR IGNORE INTO person_follows_by (person, kind, target, added_at)
+      VALUES (?, 'person', ?, ?)`).run(ME, String(colleague.id), followAt);
+  }
+  const area = fdb.prepare('SELECT id FROM areas WHERE enabled = 1 ORDER BY id LIMIT 1').get();
+  if (area && store.teams.some((t) => t.slug === 'edge')) {
+    fdb.prepare(`INSERT OR IGNORE INTO team_follows_by (team, kind, target, added_by, added_at)
+      VALUES ('edge', 'area', ?, ?, ?)`).run(area.id, store.me.email, followAt);
+  }
+}
+/** The technologies Dana follows. */
+const follows = () => fdb.prepare('SELECT tech FROM person_follows WHERE person = ? ORDER BY tech').all(ME)
+  .map((r) => r.tech);
+/** What Dana follows besides technologies (src/follows.js `person_follows_by`). */
+const followsBy = () => {
+  const out = {
+    org: [], person: [], area: [], account: [], thread: [],
+  };
+  for (const r of fdb.prepare('SELECT kind, target FROM person_follows_by WHERE person = ?').all(ME)) {
+    out[r.kind].push(r.kind === 'person' ? Number(r.target) : r.target);
+  }
+  return out;
+};
+// The Trends view's made-up data (dev-ui-topics.mjs), made when it is first asked for.
+let trends = null;
+/** Whether a request is the admin team's, as /api/me says (Dana is, on the admin pages). */
+const adminFor = (req) => !MANAGER && !MEMBER && !NO_TEAM
+  && (ADMIN || store.me.admin || /\/inbox\/(kb|admin|cogs|topics)\b/.test(req?.headers.referer || ''));
+/** Dana as src/following.js takes her: her teams, and their roles (and the admin team's). */
+const followMe = (req) => ({
+  id: ME,
+  email: store.me.email,
+  teams: [...store.me.teams.map((t) => ({ slug: t.slug, role: MANAGER && t.slug === 'edge' ? 'manager' : 'member' })),
+    ...(adminFor(req) && !store.me.teams.some((t) => t.slug === 'admin') ? [{ slug: 'admin', role: 'member' }] : [])],
+});
+/**
+ * GET /api/follows, as src/following.js answers it; the mutes as the fake data lifts them: by
+ * what Dana posted in the fake threads (`mutedNow`), which the admin pages' D1 does not have.
+ */
+const followsNow = async (req) => ({
+  ...await followState(adminApi.env, followMe(req)),
+  // eslint-disable-next-line no-use-before-define
+  muted: { org: mutedNow() },
 });
 const reloadClients = new Set();
+
+/** An area's file as its fields (src/areas.js), for the preview's changes. */
+const parseArea = (text) => {
+  const [row] = compileAreas([{ path: 'areas/x.md', text }]);
+  return row ? { title: row.name, what: row.what, enabled: row.enabled } : {};
+};
+
+/** Dana as src/topicsapi.js sees her: the admin team's, a manager or a member (`--member`). */
+function topicsViewer() {
+  // As /api/me on the admin pages: the admin team's, unless --manager or --member.
+  const teams = store.me.teams.map((t) => ({ slug: t.slug, role: MANAGER ? 'manager' : 'member' }));
+  if (!MANAGER && !MEMBER && !NO_TEAM) {
+    teams.push({ slug: 'admin', role: 'member' });
+  }
+  return { ...store.me, teams };
+}
+
+/** POST, PUT or DELETE /api/areas in the preview: `[body, status]`, as src/topicsapi.js. */
+async function previewArea(method, b) {
+  if (MEMBER) {
+    return [{ error: 'the admin team changes every team\'s areas, a team\'s managers their team\'s' }, 403];
+  }
+  const repo = `kb-team-${b.team}`;
+  const path = `areas/${String(b.id || '')}.md`;
+  if (!kb.has(repo)) {
+    return [{ error: `no team ${b.team}` }, 400];
+  }
+  const now = await kb.read(repo, path);
+  let change;
+  if (method === 'DELETE') {
+    change = { path, delete: true, base: now.hash };
+  } else if (method === 'POST') {
+    change = { path, content: areaFile({ title: b.title, what: b.what }), create: true };
+  } else {
+    const old = parseArea(now.text || '');
+    const area = {
+      title: b.title ?? old.title, what: b.what ?? old.what, enabled: b.enabled ?? old.enabled,
+    };
+    change = { path, base: now.hash, content: areaFile(area) };
+  }
+  const w = await kb.write(repo, [change], {
+    message: `Area ${path}`,
+    by: `human:${store.me.email}`,
+    at: new Date().toISOString(),
+    logEntry: `**Update**: ${path}`,
+    author: { name: store.me.name, email: store.me.email },
+  });
+  if (w.error || w.conflict) {
+    return [{ error: w.error || w.conflict }, 400];
+  }
+  await compileKb(repo);
+  const r = await topicsPage(adminApi.env, topicsViewer(), await followsNow());
+  return [{ ok: true, areas: (await r.json()).areas }, 200];
+}
 
 // Which backend answers: the presence of a session file selects production, read-only.
 let backendState = { mode: 'fake' };
@@ -193,7 +414,80 @@ const text = (res, body, status = 200) => {
   return true;
 };
 
+/** The channels of ME's personal view: those she posted or was mentioned in. */
+function myChannels() {
+  // A newcomer has posted nowhere and been mentioned nowhere yet.
+  if (NEWCOMER) {
+    return new Set();
+  }
+  const { name } = store.people.get(ME);
+  const at = (e) => `${e.ch.source}:${e.ch.channelId}`;
+  const mentioned = new Set(store.mentions.filter((m) => m.person === ME).map((m) => m.thread));
+  return new Set([...store.threads.values()]
+    .filter((e) => mentioned.has(e.key) || e.messages.some((m) => m.author.name === name))
+    .map(at));
+}
+
+/** Dana's marks on customers (customer_marks, in the admin pages' D1): by org. */
+const customerMarks = () => new Map(fdb.prepare(`SELECT org, unstarred_at, muted_at FROM customer_marks
+  WHERE person = ?`).all(ME).map((r) => [r.org, r]));
+const mutedAt = (org) => customerMarks().get(org)?.muted_at || '';
+/**
+ * As src/standing.js `mutedOrgs`: the customers Dana muted and has not posted in since, in any
+ * of their threads.
+ */
+function mutedNow() {
+  const { name } = store.people.get(ME);
+  return [...customerMarks().values()].filter((u) => u.muted_at && ![...store.threads.values()]
+    .some((e) => e.row.org === u.org
+      && e.messages.some((m) => m.author.name === name && m.at > u.muted_at)))
+    .map((u) => u.org).sort();
+}
+
 const inTeam = (team) => store.teams.some((t) => t.slug === team && t.members.includes(ME));
+
+/** What entry `e` shows and is about, as `thread_tech` and `thread_areas` would have it. */
+function showsOf(e) {
+  const label = store.labels.get(e.row.thread);
+  return {
+    tech: label?.tech ? Object.keys(label.tech) : (e.ch.tech || []),
+    areas: label?.topics || [],
+  };
+}
+/**
+ * Whether Dana follows entry `e` (src/follows.js): a technology it shows, its customer, an area
+ * it is in. Conversations only.
+ */
+function followedByMe(e) {
+  if (e.row.kind === 'alert' || e.row.kind === 'ignore') {
+    return false;
+  }
+  const { tech, areas } = showsOf(e);
+  const by = followsBy();
+  return tech.some((t) => follows().includes(t)) || by.org.includes(e.row.org)
+    || areas.some((a) => by.area.includes(a))
+    || e.messages.some((m) => by.person.some((id) => store.people.get(id)?.name === m.author.name))
+    // A thread she follows, and the threads of a customer's person she follows, by their account.
+    || by.thread.includes(e.row.thread) || by.thread.includes(e.row.logical_thread)
+    || e.messages.some((m) => by.account.some((k) => [...store.people.values()]
+      .some((p) => p.name === m.author.name && k === `${e.ch.source}:T-FAKE:${p.key}`)));
+}
+/** As src/shares.js `mayPost`: her teams' channels, and those she posted or was mentioned in. */
+const mayPost = (entry) => inTeam(entry.row.team)
+  || myChannels().has(`${entry.ch.source}:${entry.ch.channelId}`);
+/** As src/shares.js `mayWork`: and what she follows. */
+const mayWork = (entry) => mayPost(entry) || followedByMe(entry);
+/**
+ * As src/shares.js `maySee`: who may work the entry (`mayWork`), admins, and whoever talked in
+ * its sidebar before see it and talk to its agent; only the first work it.
+ */
+const maySee = (entry) => mayWork(entry) || ADMIN
+  || (store.sidebars.get(entry.row.logical_thread || entry.row.thread) || [])
+    .some((m) => m.role === 'person' && m.by?.id === ME);
+/** As src/agent/stub.js `notTheirs`: a 403 that names the team the thread is filed under. */
+const notTheirs = (res, entry, what) => json(res, {
+  error: `the thread is filed under ${store.teams.find((t) => t.slug === entry.row.team)?.name || entry.row.team}, and only its team may ${what}`,
+}, 403);
 
 // ---- reactions, as D1's `reactions` would hold them ---------------------------------------
 
@@ -204,6 +498,8 @@ const PICKER_TEAMS = {
   thumbsup: '👍', heart: '❤️', joy: '😂', open_mouth: '😮', eyes: '👀', pray: '🙏', tada: '🎉', white_check_mark: '✅',
 };
 const CHECKS = new Set(['white_check_mark', '✅']);
+// Threads their agent resolved, and when (src/agentlabels.js: in the inbox only, no ✅).
+const agentResolved = new Map();
 /**
  * Clef for the preview: the first candidate for an emoji name nobody has
  * (src/shortcodes.js), when its keywords have the name.
@@ -249,10 +545,14 @@ const personNamed = (name) => [...store.people.values()].find((p) => p.name === 
       reactions.set(k, [...list, { emoji: r.emoji, person: who.id, at: entry.row.any_at }]);
     }
   }
-  const done = [...store.threads.values()]
-    .find((e) => (store.labels.get(e.key)?.resolved_p ?? 0) >= 0.5 && e.row.root_at);
+  const [done, byAgent] = [...store.threads.values()]
+    .filter((e) => (store.labels.get(e.key)?.resolved_p ?? 0) >= 0.5 && e.row.root_at);
   if (done && tom) {
     reactions.set(`${done.key}|${done.row.root_id}`, [{ emoji: 'white_check_mark', person: tom.id, at: done.row.any_at }]);
+  }
+  // The next one its agent resolved: the ✅ button opens it again.
+  if (byAgent) {
+    agentResolved.set(byAgent.key, byAgent.row.any_at);
   }
 }
 
@@ -286,6 +586,11 @@ function resolutionOf(entry) {
   const checks = (reactions.get(`${entry.key}|${entry.row.root_id}`) || [])
     .filter((r) => CHECKS.has(r.emoji) && store.people.get(r.person)?.staff)
     .map((r) => ({ at: r.at, person: r.person, name: store.people.get(r.person).name }));
+  if (agentResolved.has(entry.key)) {
+    checks.push({
+      at: agentResolved.get(entry.key), person: null, name: 'opspile agent', agent: true,
+    });
+  }
   const customerAt = entry.messages
     .filter((m) => m.author.kind === 'person' && !m.author.staff && !m.deletedAt)
     .map((m) => m.at).sort().pop() || null;
@@ -364,6 +669,10 @@ function profiles(keys) {
     const p = [...store.people.values()].find((x) => x.key === who);
     const domain = p ? p.email.split('@').pop() : null;
     const partner = partnerOf(domain, store.partners);
+    const relation = p && relationOf({}, { kind: 'person', staff: p.staff, email: p.email }, store.partners);
+    // As src/partners.js `customerDomains`: a customer's person by their org's own domain.
+    const customer = relation === 'customer' && p.org && ORG_TYPES[p.org] === undefined
+      ? { org: p.org, name: ORG_NAMES[p.org] || p.org } : null;
     out[k] = p ? {
       name: p.name,
       avatar: faceOf(p),
@@ -372,8 +681,9 @@ function profiles(keys) {
       title: p.title || null,
       company: p.company || null,
       domain,
-      relation: relationOf({}, { kind: 'person', staff: p.staff, email: p.email }, store.partners),
+      relation,
       partner: partner ? partner.name : null,
+      customer,
       teams: store.teams.filter((t) => t.members.includes(p.id)).map((t) => t.name),
     } : {
       name: 'Alertmanager', avatar: null, platform: source, kind: 'bot', relation: 'bot', teams: [],
@@ -430,13 +740,47 @@ function invitedFor(entry, mentions) {
   };
 }
 
-function myChannels() {
-  const { name } = store.people.get(ME);
-  const at = (e) => `${e.ch.source}:${e.ch.channelId}`;
-  const mentioned = new Set(store.mentions.filter((m) => m.person === ME).map((m) => m.thread));
-  return new Set([...store.threads.values()]
-    .filter((e) => mentioned.has(e.key) || e.messages.some((m) => m.author.name === name))
-    .map(at));
+/**
+ * Whom a post in `entry` mentions who may never see it, as src/reminders.js says (fixtures:
+ * `quiet`, days since their last post; `answers`, the mention model's odds), and the post's
+ * link on its platform.
+ */
+function remindersFor(entry, mentions, id) {
+  const ids = new Set((mentions || []).map((m) => String(m.id || m)));
+  const source = entry ? entry.row.source : null;
+  // The odds are for people not in the thread yet.
+  const here = new Set((entry ? entry.messages : []).map((m) => m.author && m.author.name));
+  const reminders = [...store.people.values()]
+    .filter((p) => p.staff && p.id !== ME && ids.has(`${source}-${p.key}`)
+      && (p.quiet || (p.answers && !here.has(p.name))))
+    .map((p) => (p.quiet ? {
+      id: `${source}-${p.key}`, name: p.name, why: 'quiet', said: `has not posted for ${Math.round(p.quiet / 7)} weeks`, days: p.quiet, odds: null,
+    } : {
+      id: `${source}-${p.key}`, name: p.name, why: 'unlikely', said: 'answers about a third of mentions', days: 1, odds: p.answers,
+    }));
+  if (!reminders.length) {
+    return {};
+  }
+  const link = source === 'slack'
+    ? `https://example.slack.com/archives/${entry.ch.channelId}/p${String(id).replace('.', '')}`
+    : `https://teams.microsoft.com/l/message/${encodeURIComponent(entry.ch.channelId)}/${encodeURIComponent(id)}`;
+  return { reminders, permalink: link };
+}
+
+/**
+ * As src/post.js `mentionedOutside` answers a Teams post: the people it mentions who are not in
+ * the Teams team, where its members are listed (`CHANNELS[…].members`).
+ */
+function outsideFor(entry, mentions) {
+  if (!entry || entry.row.source !== 'teams' || !entry.ch.members) {
+    return {};
+  }
+  const inChannel = channelMember(entry);
+  const ids = new Set((mentions || []).map((m) => String(m.id || m)));
+  const outside = [...store.people.values(), ...store.members]
+    .filter((p) => ids.has(`teams-${p.key}`) && !inChannel(p))
+    .map((p) => ({ name: p.name, ...(p.email ? { email: p.email } : {}) }));
+  return outside.length ? { outside } : {};
 }
 
 /** The channels ME may start a thread in, latest activity first, as src/post.js lists them. */
@@ -487,7 +831,7 @@ function elsewhereCounts() {
   })).filter((t) => t.unread > 0);
 }
 
-/** The channel's tech stack (channel_tech), likeliest first. */
+/** What the fake channel's threads show, likeliest first (thread_tech, in production). */
 const channelTech = (entry) => (entry.ch.tech || [])
   .map((tech, i) => ({ tech, p: 0.95 - i * 0.05 }));
 
@@ -526,14 +870,93 @@ function unreadInYours(rows) {
   return out;
 }
 
+/**
+ * Dana's standing with the customers (src/standing.js): her messages of the last REGULAR_DAYS
+ * by customer, and the customers of the mentions of her of the last QUIET_DAYS.
+ */
+function standing() {
+  const { name } = store.people.get(ME);
+  const day = 24 * 60 * 60 * 1000;
+  const since = new Date(Date.now() - REGULAR_DAYS * day).toISOString();
+  const quiet = new Date(Date.now() - QUIET_DAYS * day).toISOString();
+  const posted = new Map();
+  const marks = customerMarks();
+  for (const e of store.threads.values()) {
+    for (const m of e.row.org ? e.messages : []) {
+      const mark = marks.get(e.row.org) || {};
+      if (m.author.name === name && !m.deletedAt && m.at >= since && m.at > (mark.muted_at || '')) {
+        const r = posted.get(e.row.org) || { org: e.row.org, n: 0, last: '' };
+        r.n += m.at > (mark.unstarred_at || '') ? 1 : 0;
+        if (m.at > r.last) {
+          r.last = m.at;
+        }
+        posted.set(e.row.org, r);
+      }
+    }
+  }
+  // The mentions of her of the last QUIET_DAYS, since she muted their customer if she did.
+  const named = store.mentions.filter((m) => m.person === ME && m.at >= quiet)
+    .map((m) => ({ at: m.at, org: store.threads.get(m.thread)?.row.org }))
+    .filter((m) => m.org && m.at > mutedAt(m.org)).map((m) => m.org);
+  return standingOf([...posted.values()], named);
+}
+
+/**
+ * As src/threadlinks.js: the orgs the fixtures link threads `keys` with (`linkedOrgsOf`), and the
+ * threads possibly about the same issue (`entryLinks`), those the viewer may not see unnamed.
+ */
+function linkedOf(keys) {
+  const rows = store.threadOrgs.filter((r) => keys.includes(r.thread) && !r.dismissed);
+  const shape = (r) => ({
+    slug: r.org, name: r.name, icon: r.icon, role: r.role, p: r.p, via: r.via,
+  });
+  const about = rows.filter((r) => r.role === 'about').map(shape);
+  const withs = rows.filter((r) => r.role !== 'about').map(shape);
+  return about.length || withs.length ? { about, with: withs } : null;
+}
+function relatedOf(keys) {
+  return store.threadLinks.filter((l) => !l.dismissed && (keys.includes(l.a) || keys.includes(l.b)))
+    .map((l) => {
+      const other = store.threads.get(keys.includes(l.a) ? l.b : l.a);
+      if (!other) {
+        return null;
+      }
+      const r = other.row;
+      const seen = maySee(other);
+      return {
+        thread: r.thread,
+        score: l.score,
+        p: l.p,
+        via: l.via || [],
+        org: r.org,
+        org_name: ORG_NAMES[r.org] || null,
+        org_icon: { agency: 'agency.example', acme: 'acme.example' }[r.org] || null,
+        org_type: ORG_TYPES[r.org] || 'customer',
+        team: r.team,
+        source: r.source,
+        channel_name: r.channel_name,
+        last_at: r.last_at,
+        can_see: Boolean(seen),
+        ...(seen ? {
+          title: store.labels.get(r.thread)?.title || r.title, permalink: r.permalink,
+        } : {}),
+      };
+    }).filter(Boolean);
+}
+
 /** A team's inbox, or with `personal` (no team) the personal view, as src/api.js's `inbox`. */
-function inbox(team, before = null, personal = false, only = null) {
+function inbox(team, before = null, personal = false, only = null, limit = null) {
+  // `limit`, as the Worker takes it: 1 to 300, the page size without one.
+  const size = Math.max(1, Math.min(300, Number(limit) || INBOX_PAGE));
   const latest = (r) => r.last_at || r.any_at || '';
   const mine = store.teams.filter((t) => t.members.includes(ME)).map((t) => t.slug);
   const channels = personal ? myChannels() : null;
-  // Whichever team the channels are filed under.
+  const muted = personal ? new Set(mutedNow()) : null;
+  // Whichever team the channels are filed under; none of a customer she muted (src/shares.js
+  // `inPersonalInbox`).
   const inScope = (r) => (personal
-    ? r.kind !== 'alert' && channels.has(`${r.source}:${r.channel_id}`)
+    ? r.kind !== 'alert' && !muted.has(r.org) && (channels.has(`${r.source}:${r.channel_id}`)
+      || followedByMe(store.threads.get(r.thread)))
     : r.team === team);
   // Paged by inbox entry, as src/api.js's: a re-threaded group counts once, by its latest member.
   const groupOf = (r) => r.logical_thread || r.thread;
@@ -546,9 +969,9 @@ function inbox(team, before = null, personal = false, only = null) {
   const [at, key] = before ? String(before).split('|') : [null, null];
   const after = at === null ? groups
     : groups.filter((x) => x.latest < at || (x.latest === at && x.g < key));
-  const pageGroups = only ? after : after.slice(0, INBOX_PAGE);
+  const pageGroups = only ? after : after.slice(0, size);
   const lastGroup = pageGroups[pageGroups.length - 1];
-  const page = { next: after.length > INBOX_PAGE && lastGroup ? `${lastGroup.latest}|${lastGroup.g}` : null };
+  const page = { next: after.length > size && lastGroup ? `${lastGroup.latest}|${lastGroup.g}` : null };
   const onPage = new Set(pageGroups.map((x) => x.g));
   const rows = entries.filter((r) => onPage.has(groupOf(r)))
     .map((r) => ({
@@ -590,10 +1013,22 @@ function inbox(team, before = null, personal = false, only = null) {
       resolution: resolutionOf(store.threads.get(t.thread)),
       draft: draftSummary(drafts.get(t.thread)) || null,
     })))
+    // As src/api.js: the agent's answers to the viewer in a sidebar they have not seen.
+    .map((t) => {
+      const sideNew = [t.thread, ...(t.members || []).map((m) => m.thread)]
+        .flatMap((k) => store.sidebars.get(k) || [])
+        .filter((m) => m.role === 'agent' && m.unseen && m.to === ME).map((m) => m.id);
+      return sideNew.length ? { ...t, sideNew: [...new Set(sideNew)] } : t;
+    })
     // src/api.js's `resolution` is made from these; here `resolutionOf` did it already.
     .map(({ resolutionFacts: _, ...t }) => ({
       ...t, waiting_on: waitingOn(t), title: nameIds(t.title), last_text: nameIds(t.last_text),
-    }));
+    }))
+    // As src/api.js: what a thread is linked with across a partner and its customers.
+    .map((t) => {
+      const linked = linkedOf([t.thread, ...(t.members || []).map((m) => m.thread)]);
+      return linked ? { ...t, linked } : t;
+    });
   return {
     team: personal ? null : team,
     personal,
@@ -607,12 +1042,13 @@ function inbox(team, before = null, personal = false, only = null) {
       .map((t) => [t.slug, { name: t.name, members: t.members }])),
     members: members(...scope),
     vocab: vocabNames,
-    // Each customer's stack over its channels here, as src/api.js `orgStacks` makes it.
-    stacks: orgStacks(threads.flatMap((t) => channelTech(store.threads.get(t.thread))
-      .map((x) => ({ org: t.org, ...x })))),
+    // Each customer's stack, from its drawing (src/orgstacks.js).
+    stacks: Object.fromEntries([...new Set(threads.map((t) => t.org))]
+      .filter((org) => orgStacks[org]).map((org) => [org, orgStacks[org]])),
     threads,
     page,
     ...(personal && !only && !page.next ? { elsewhere: elsewhereCounts() } : {}),
+    ...(personal && !only && !before ? { standing: standing() } : {}),
   };
 }
 
@@ -678,6 +1114,32 @@ function search(team, q, personal = false) {
   return {
     ...view, q: query, words, hits: hits.filter((h) => shown.has(h.thread)).slice(0, 30),
   };
+}
+
+/**
+ * GET /api/search's `kb`, made up: the concepts of the fake knowledge bases of `teams` and of
+ * the customers of their threads with every word somewhere, as src/kbsearch.js finds them by
+ * their words (the preview has no vectors).
+ */
+async function searchKb(teams, q) {
+  const words = terms(String(q || '').replace(/\s+/g, ' ').trim());
+  const orgs = new Set([...store.threads.values()].map((e) => e.row)
+    .filter((r) => teams.includes(r.team)).map((r) => r.org));
+  const bases = words.length ? kb.list()
+    .filter((b) => (b.kind === 'team' ? teams.includes(b.slug) : orgs.has(b.slug))) : [];
+  const hits = [];
+  for (const b of bases) {
+    // eslint-disable-next-line no-await-in-loop
+    for (const f of await kb.files(b.repo)) {
+      // eslint-disable-next-line no-await-in-loop
+      const c = conceptOf(f.path, (await kb.read(b.repo, f.path)).text);
+      const hay = c && `${c.title} ${c.aliases || ''} ${c.type || ''} ${c.tags || ''} ${c.description || ''} ${c.body}`.toLowerCase();
+      if (hay && words.every((w) => hay.includes(w))) {
+        hits.push(conceptHit({ ...c, repo: b.repo, path: f.path }, b, words, { all: true }));
+      }
+    }
+  }
+  return bestHits(hits);
 }
 
 function editableOf(meta, source) {
@@ -794,7 +1256,7 @@ function sidebarTurn(entry) {
   const answer = answered ? answered.body : sidebarAnswer(asked.body);
   if (!answered) {
     list.push({
-      id: `${asked.id}:answer`, role: 'agent', by: null, body: answer, state: 'done', reply_to: asked.id, at: endedAt,
+      id: `${asked.id}:answer`, role: 'agent', by: null, body: answer, state: 'done', reply_to: asked.id, at: endedAt, to: asked.by?.id ?? null, unseen: true,
     });
     broadcast(entry.row.team, { type: 'sidebar', thread: key });
   }
@@ -818,7 +1280,7 @@ const agentAsked = new WeakMap();
  * comes with the thread.
  */
 function agentTurn(entry, { asked = false } = {}) {
-  if (entry.row.channel_id !== 'C0ACMEAEM') {
+  if (entry.row.channel_id !== 'C0ACMEAEM' && !entry.ch.agent) {
     return undefined;
   }
   // A sidebar message waits for its answer: the agent works on it, then answers.
@@ -826,7 +1288,8 @@ function agentTurn(entry, { asked = false } = {}) {
   if (side) {
     return side;
   }
-  const latest = [...store.threads.values()].filter((e) => e.row.channel_id === 'C0ACMEAEM')
+  const latest = [...store.threads.values()]
+    .filter((e) => e.row.channel_id === entry.row.channel_id)
     .sort((a, b) => String(b.row.last_at).localeCompare(String(a.row.last_at)))[0];
   if (entry !== latest) {
     const end = Date.parse(entry.row.last_at) + 75000;
@@ -860,7 +1323,7 @@ const DEV_READ_MEMBERS = 8;
 function thread(asked) {
   const own = store.threads.get(asked);
   const entry = own && store.threads.get(own.row.logical_thread || asked);
-  if (!entry || !inTeam(entry.row.team)) {
+  if (!entry || !maySee(entry)) {
     return null;
   }
   const key = entry.row.thread;
@@ -880,7 +1343,10 @@ function thread(asked) {
     .map(({ meta, body }) => ({
       ...meta,
       body,
-      avatar: faceOf([...store.people.values()].find((p) => p.name === meta.author.name)),
+      // The bot an admin gave a picture (scripts/dev-ui-admin.mjs, seedBots), as src/api.js
+      // shows it: Teams gives a bot's messages none.
+      avatar: meta.author.kind === 'bot' && meta.author.name === 'Provisioning Agent' ? '/icon-192.png'
+        : faceOf([...store.people.values()].find((p) => p.name === meta.author.name)),
       authorKey: meta.author.kind === 'system' ? null : keyOf(
         [...store.people.values()].find((p) => p.name === meta.author.name),
         entry.row.source,
@@ -905,6 +1371,14 @@ function thread(asked) {
   const { ch } = entry;
   const teamName = ch.teamId
     ? ch.groupName || store.teams.find((t) => t.slug === ch.team)?.name : null;
+  const named = mentionCandidates(messages.map((m) => m.body))
+    .map((name) => [name, [...store.people.values(), ...store.members]
+      .find((p) => p.name === name)])
+    .filter(([, p]) => p);
+  // Channel members who never posted have no card here.
+  const mentionKeys = Object.fromEntries(named
+    .filter(([, p]) => [...store.people.values()].includes(p))
+    .map(([name, p]) => [name, keyOf(p, entry.row.source)]));
   return {
     thread: { ...entry.row, channel_group: teamName || null },
     members: group.map(({ row: m }) => ({
@@ -917,33 +1391,43 @@ function thread(asked) {
     })),
     messages,
     earlier_posts: group.length - read.length,
-    profiles: profiles([...messages.map((m) => m.authorKey), ...links.map((l) => l.authorKey)]),
-    // As src/profiles.js's mentionKinds: who the people the messages mention are, people and
-    // the platform's accounts (a channel member who never posted) alike.
-    mentioned: Object.fromEntries(mentionCandidates(messages.map((m) => m.body))
-      .map((name) => [name, [...store.people.values(), ...store.members]
-        .find((p) => p.name === name)])
-      .filter(([, p]) => p)
+    profiles: profiles([
+      ...messages.map((m) => m.authorKey),
+      ...links.map((l) => l.authorKey),
+      ...Object.values(mentionKeys),
+    ]),
+    // As src/profiles.js's mentionedPeople: who the people the messages mention are, people and
+    // the platform's accounts (a channel member who never posted) alike, and their accounts.
+    mentioned: Object.fromEntries(named
       .map(([name, p]) => [name, relationOf({}, p, store.partners)])),
+    mention_keys: mentionKeys,
     channels: channelRefs(entry.row.source, [...messages.map((m) => m.body), entry.row.title]),
     channel_links: channelLinksFor(messages.filter((m) => !m.deletedAt).map((m) => m.body)),
     links,
+    linked: linkedOf(group.map(({ row: m }) => m.thread)) || { about: [], with: [] },
+    related: relatedOf(group.map(({ row: m }) => m.thread)),
     watermarks,
     label: store.labels.get(key) || null,
     model: store.labels.get(key) || null,
-    tech: channelTech(entry),
-    // As src/api.js: what the members' labels say the thread shows (labels.tech).
-    thread_tech: threadTech(group.map(({ row: m }) => ({
-      thread: m.thread, tech: store.labels.get(m.thread)?.tech ?? null,
-    })), channelTech(entry), group.map(({ row: m }) => m.thread)),
+    tech: [],
+    // As src/api.js: what the members' labels say the thread shows (labels.tech), else, in the
+    // preview, what the fake channel lists.
+    thread_tech: (() => {
+      const shows = threadTech(group.map(({ row: m }) => ({
+        thread: m.thread, tech: store.labels.get(m.thread)?.tech ?? null,
+      })));
+      return shows.length ? shows : channelTech(entry);
+    })(),
     topics: store.labels.get(key)?.topics || [],
+    // As src/api.js: the customer's stack drawing's parts (src/orgstacks.js).
+    stack: orgStacks[entry.row.org] || [],
     vocab: vocabNames,
-    reviews: [],
     facts: store.facts.get(key) || [],
     resolution: resolutionOf(entry),
     draft: drafts.get(key) || null,
     // As src/api.js: the commands the agent asked a person to run (src/bashrequests.js).
     bash_requests: store.bashRequests.get(key) || [],
+    tool_requests: store.toolRequests.get(key) || [],
     // As src/api.js: the agent's latest finished turn, kept when it ended; one of the
     // sidebar's is not.
     agent_turn: (() => {
@@ -952,8 +1436,79 @@ function thread(asked) {
     })(),
     // As src/api.js: whether the thread has an agent, and what the sidebar said to it.
     agent: agentTurn(entry) !== undefined,
+    // As src/api.js: whether Dana may work it, or only see it and talk to its agent.
+    can_work: mayWork(entry),
+    // As src/api.js: whether she replies in it as herself (not in the portal by a follow alone).
+    can_post: mayWork(entry) && (entry.row.source !== 'portal' || mayPost(entry)),
     sidebar: store.sidebars.get(key) || [],
   };
+}
+
+/**
+ * GET /api/follows/suggest from the fake data, as src/followsuggest.js makes it from D1: what
+ * Dana's channels were about, what every team's were about in the last TREND_DAYS (and the
+ * TREND_DAYS before), and the customers whose name has the query.
+ */
+async function suggestNow(q) {
+  const query = cleanQuery(q);
+  const now = Date.now();
+  const day = 24 * 60 * 60 * 1000;
+  const split = new Date(now - TREND_DAYS * day).toISOString();
+  const from = new Date(now - 2 * TREND_DAYS * day).toISOString();
+  const trend = { tech: new Map(), area: new Map() };
+  const own = { tech: new Map(), area: new Map(), org: new Map() };
+  const add = (map, id, field) => {
+    const was = map.get(id) || { recent: 0, before: 0 };
+    map.set(id, { ...was, [field]: was[field] + 1 });
+  };
+  const mine = myChannels();
+  // Conversations, one an entry (a re-threaded group as its first thread).
+  const entries = [...store.threads.values()]
+    .filter((e) => !['alert', 'ignore'].includes(e.row.kind) && !e.row.logical_thread);
+  for (const e of entries) {
+    const at = e.row.last_at || e.row.any_at || '';
+    const { tech, areas } = showsOf(e);
+    if (at >= from) {
+      const field = at >= split ? 'recent' : 'before';
+      tech.forEach((t) => add(trend.tech, t, field));
+      areas.forEach((a) => add(trend.area, a, field));
+    }
+    if (mine.has(`${e.ch.source}:${e.ch.channelId}`)) {
+      tech.forEach((t) => own.tech.set(t, (own.tech.get(t) || 0) + 1));
+      areas.forEach((a) => own.area.set(a, (own.area.get(a) || 0) + 1));
+      own.org.set(e.row.org, (own.org.get(e.row.org) || 0) + 1);
+    }
+  }
+  const teamFollows = await followsOfTeams(adminApi.env, store.teams.map((t) => t.slug));
+  const teams = new Map();
+  for (const [slug, list] of Object.entries(teamFollows)) {
+    const name = store.teams.find((x) => x.slug === slug)?.name || slug;
+    for (const t of list) {
+      teams.set(t, [...(teams.get(t) || []), name]);
+    }
+  }
+  const areaTeams = new Map();
+  for (const r of fdb.prepare(`SELECT f.target, COALESCE(t.name, f.team) AS name FROM team_follows_by f
+    LEFT JOIN teams t ON t.slug = f.team WHERE f.kind = 'area' ORDER BY name`).all()) {
+    areaTeams.set(r.target, [...(areaTeams.get(r.target) || []), r.name]);
+  }
+  const { results: areaRows } = await adminApi.env.DB
+    .prepare('SELECT DISTINCT id, name FROM areas WHERE enabled = 1').all();
+  const slugs = [...new Set([...store.threads.values()].map((e) => e.row.org).filter(Boolean))];
+  const low = query.toLowerCase();
+  return suggestionsOf({
+    query,
+    techs: await followable(adminApi.env),
+    areaList: areaRows || [],
+    teams,
+    areaTeams,
+    trend,
+    own,
+    followed: follows(),
+    followedBy: followsBy(),
+    orgs: query ? slugs.filter((o) => o.includes(low)) : [...own.org.keys()],
+    names: new Map(),
+  });
 }
 
 async function readJson(req) {
@@ -1010,6 +1565,121 @@ async function proxyApi(req, res, url, b) {
   return true;
 }
 
+/**
+ * The knowledge base's sidebar (ui/kbchat.js, GET and POST /api/kb/chat, POST /api/kb/chat/bash):
+ * your conversations by knowledge base (the fixtures' `kbChats`, with a command the agent asks
+ * you to run), answered a few seconds after you ask, with what the agent is doing meanwhile.
+ */
+const chats = new Map(Object.entries(kbChats()));
+const CHAT_ANSWER_MS = 6000;
+function kbChat(req, res, url, listing, body) {
+  const list = chats.get(listing.repo) || [];
+  chats.set(listing.repo, list);
+  const write = listing.write ?? listing.may;
+  if (url.pathname === '/api/kb/chat/bash') {
+    const c = list.find((x) => x.chat === body.chat);
+    const r = c && (c.bash || []).find((x) => x.id === body.id);
+    if (!write) {
+      return json(res, { error: 'only the people on its team run commands on its agent\'s computer' }, 403);
+    }
+    if (!r || r.status !== 'pending') {
+      return json(res, { error: r ? 'It was decided already' : 'not found' }, r ? 409 : 404);
+    }
+    const at = new Date().toISOString();
+    Object.assign(r, { status: body.run ? 'running' : 'denied', by: { id: store.me.id, name: store.me.name }, decided_at: at });
+    // A line of yours, and a while later the agent's answer to it, as tellChat has it.
+    const said = (line) => {
+      const id = `sb_${crypto.randomUUID()}`;
+      c.messages.push({
+        id, role: 'person', state: 'done', reply_to: null, at: new Date().toISOString(), body: line,
+      });
+      setTimeout(() => c.messages.push({
+        id: `${id}:answer`,
+        role: 'agent',
+        state: 'done',
+        reply_to: id,
+        at: new Date().toISOString(),
+        body: body.run ? 'The active version is **42**, activated on 2026-11-20: after the October fix. I added that to `issues/cdn-purge-delay.md` as the newest source.'
+          : 'Understood: I left it. Without the service\'s history I kept `issues/cdn-purge-delay.md` as it was.',
+      }), CHAT_ANSWER_MS);
+    };
+    if (!body.run) {
+      said(`Denied the command (request ${r.id}).`);
+    } else {
+      setTimeout(() => {
+        Object.assign(r, { status: 'done', exit_code: 0, finished_at: new Date().toISOString() });
+        said(`Ran the command (request ${r.id}); it exited with code 0.`);
+      }, CHAT_ANSWER_MS / 2);
+    }
+    return json(res, { ok: true, request: r }, body.run ? 202 : 200);
+  }
+  const view = (c) => {
+    const last = c && c.messages[c.messages.length - 1];
+    const waits = Boolean(last && last.role === 'person');
+    const out = {
+      repo: listing.repo,
+      may: listing.may && !MEMBER,
+      write: Boolean(write),
+      chat: c ? c.chat : null,
+      messages: c ? c.messages : [],
+      bash: c ? c.bash || [] : [],
+      chats: list.map((x) => ({
+        chat: x.chat,
+        at: x.messages.at(-1).at,
+        messages: x.messages.length,
+        first: x.messages[0].body.slice(0, 200),
+      })),
+      working: null,
+    };
+    if (waits) {
+      const late = Date.now() - Date.parse(last.at) > CHAT_ANSWER_MS / 2;
+      out.working = late ? 'Reading another thread' : 'Reading your message';
+    }
+    return out;
+  };
+  if (req.method === 'GET') {
+    const asked = url.searchParams.get('chat');
+    return json(res, view(list.find((c) => c.chat === asked) || list[0] || null));
+  }
+  const asked = String(body.text || '').trim();
+  if (!asked) {
+    return json(res, { error: 'write what to ask the agent' }, 400);
+  }
+  const named = list.find((x) => x.chat === body.chat) || (body.chat ? null : list[0]);
+  let c = body.fresh ? null : named;
+  if (body.chat && !c) {
+    return json(res, { error: 'no such conversation' }, 404);
+  }
+  if (!c) {
+    c = { chat: `kc_${crypto.randomUUID()}`, messages: [] };
+    list.unshift(c);
+  } else {
+    list.splice(list.indexOf(c), 1);
+    list.unshift(c);
+  }
+  const message = {
+    id: `sb_${crypto.randomUUID()}`,
+    role: 'person',
+    state: 'done',
+    reply_to: null,
+    at: new Date().toISOString(),
+    body: asked,
+  };
+  c.messages.push(message);
+  setTimeout(() => {
+    c.messages.push({
+      id: `${message.id}:answer`,
+      role: 'agent',
+      state: 'done',
+      reply_to: message.id,
+      at: new Date().toISOString(),
+      body: 'This is the preview: no agent runs here. In production I would look this up in the'
+        + ` knowledge bases and the inbox's threads, and change \`${listing.repo}\` if you asked me to.`,
+    });
+  }, CHAT_ANSWER_MS);
+  return json(res, { chat: c.chat, message }, 202);
+}
+
 /** The fake `/api/kb*` (src/kbadmin.js), over the in-memory knowledge bases. */
 async function kbApi(req, res, url) {
   // Who reads and who changes a knowledge base's files: as src/kbadmin.js lists them (a
@@ -1018,10 +1688,16 @@ async function kbApi(req, res, url) {
     const list = await adminApi.kb({ method: 'GET' }, new URL('http://localhost/api/kb'), null);
     return (await list.json()).bases.find((b) => b.repo === repo);
   };
-  if (MEMBER && req.method !== 'GET') {
+  const open = ['/api/kb/file', '/api/kb/chat', '/api/kb/chat/bash'].includes(url.pathname);
+  if ((MEMBER || NO_TEAM) && req.method !== 'GET' && !open) {
     return json(res, { error: 'changing the agents is for the admin team and team managers' }, 403);
   }
   const body = req.method === 'GET' ? {} : await readJson(req);
+  if (url.pathname === '/api/kb/chat' || url.pathname === '/api/kb/chat/bash') {
+    const repo = req.method === 'GET' ? url.searchParams.get('repo') : body.repo;
+    const listing = kb.has(repo) && await listed(repo);
+    return listing ? kbChat(req, res, url, listing, body) : json(res, { error: 'no such knowledge base' }, 404);
+  }
   // The list (with its agent counts), the channels and their agents, the agents' MCP servers
   // and their switchable tools, and the teams' extraction rules: src/kbadmin.js itself.
   if (['/api/kb', '/api/kb/channels', '/api/kb/agent', '/api/kb/tools', '/api/kb/tools/secrets']
@@ -1039,6 +1715,14 @@ async function kbApi(req, res, url) {
       return true;
     }
     const out = await r.json();
+    // "Post messages" switched for a channel: the fixtures' channel lets the app post, or not.
+    if (url.pathname === '/api/kb/tools' && r.ok && body.tool === 'post_message' && body.channel) {
+      for (const e of store.threads.values()) {
+        if (e.ch.channelId === body.channel) {
+          e.ch.appPosting = body.enabled === true;
+        }
+      }
+    }
     if (url.pathname === '/api/kb') {
       const names = new Map(kb.list().map((b) => [b.repo, b.name]));
       out.bases = out.bases.map((b) => ({ ...b, name: names.get(b.repo) || b.name }));
@@ -1047,13 +1731,14 @@ async function kbApi(req, res, url) {
   }
   // A customer's stack drawing, as src/kbadmin.js draws it.
   if (url.pathname === '/api/kb/stack') {
-    const repo = `kb-org-${url.searchParams.get('org')}`;
+    const team = url.searchParams.get('team');
+    const repo = team ? `kb-team-${team}` : `kb-org-${url.searchParams.get('org')}`;
     const listing = kb.has(repo) && await listed(repo);
     if (!listing) {
       return json(res, { error: 'no such knowledge base' }, 404);
     }
     const out = {
-      org: listing.slug, repo, path: STACK_PATH, may: listing.may,
+      [team ? 'team' : 'org']: listing.slug, repo, path: STACK_PATH, may: listing.may,
     };
     const file = await kb.read(repo, STACK_PATH);
     if (file.error) {
@@ -1074,8 +1759,11 @@ async function kbApi(req, res, url) {
   if (!listing) {
     return json(res, { error: 'no such knowledge base' }, 404);
   }
-  if (req.method !== 'GET' && !listing.may) {
-    return json(res, { error: 'the admin team and the managers of the teams it belongs to change it' }, 403);
+  // Its files, but systemprompt.md, are everyone's on the team (src/kbaccess.js `mayWrite`).
+  const content = url.pathname === '/api/kb/file'
+    && pathOwner(String(body.path || '').replace(/^\/+/, '')) === 'member';
+  if (req.method !== 'GET' && !(content ? listing.write ?? listing.may : listing.may)) {
+    return json(res, { error: content ? 'the people on its team change it' : 'the admin team and the managers of the teams it belongs to change it' }, 403);
   }
   if (url.pathname === '/api/kb/files') {
     const files = await kb.files(repo);
@@ -1111,6 +1799,12 @@ async function kbApi(req, res, url) {
     if (r.conflict) {
       const current = await kb.read(repo, body.path);
       return json(res, { error: r.conflict, current: current.error ? null : current }, 409);
+    }
+    if (inCatalog(body.path)) {
+      await compileKb(repo);
+    }
+    if (body.path === STACK_PATH) {
+      await readOrgStack(repo);
     }
     const now = remove ? null : await kb.read(repo, body.path);
     return json(res, {
@@ -1167,8 +1861,39 @@ async function api(req, res, url) {
   if (as && req.method !== 'GET') {
     return json(res, { error: 'read-only while viewing as someone else' }, 403);
   }
+  // A diagram drawn by the renderer Worker (src/diagrams.js): `npm run graphviz:dev`'s, with
+  // GRAPHVIZ_ORIGIN; without it, none here (503), and the page draws it itself.
+  if (url.pathname === '/api/diagram' && req.method === 'POST') {
+    if (!process.env.GRAPHVIZ_ORIGIN) {
+      return json(res, { error: 'no renderer here' }, 503);
+    }
+    const body = await readJson(req);
+    const drawn = await (await fetch(`${process.env.GRAPHVIZ_ORIGIN}/render`, {
+      method: 'POST', body: JSON.stringify({ dot: body.dot, title: body.title }),
+    })).json();
+    return drawn.ok
+      ? json(res, {
+        svg: drawn.svg, width: drawn.width, height: drawn.height, ms: drawn.ms,
+      })
+      : json(res, { error: drawn.error }, 422);
+  }
   if (url.pathname === '/api/kb' || url.pathname.startsWith('/api/kb/')) {
     return kbApi(req, res, url);
+  }
+  if (url.pathname === '/api/favicon') {
+    // The fake customers' favicons (dev-ui-admin.mjs), and the platforms' from Google through
+    // the Worker's proxy (src/favicons.js).
+    const d = url.searchParams.get('domain') || '';
+    const r = /\.example$/.test(d) ? devFavicon(d) : await faviconProxy(d, { cache: null });
+    const headers = Object.fromEntries(['content-type', 'cache-control', 'etag'].map((k) => [k, r.headers.get(k)]).filter(([, v]) => v));
+    res.writeHead(r.status, headers).end(Buffer.from(await r.arrayBuffer()));
+    return true;
+  }
+  // The admin team's requests, threads of its inbox (src/requestthreads.js), over the admin D1.
+  if (url.pathname === '/api/requests' || url.pathname.startsWith('/api/requests/')
+    || (url.pathname === '/api/thread' && isRequestKey(url.searchParams.get('thread')))) {
+    const r = await adminApi.requests(req, url, req.method === 'GET' ? null : await readJson(req));
+    return json(res, await r.json(), r.status);
   }
   if (url.pathname.startsWith('/api/admin/')) {
     const body = req.method === 'GET' ? null : await readJson(req);
@@ -1194,24 +1919,39 @@ async function api(req, res, url) {
       readonly: true,
       connected: {},
       react: {},
+      follows: {
+        me: {
+          tech: [], area: [], org: [], person: [],
+        },
+        teams: {},
+        muted: { org: [] },
+        may: [],
+        names: {},
+        teamNames: {},
+      },
     });
   }
   if (url.pathname === '/api/me') {
     const {
-      id, name, email, teams,
+      id, name, email, teams, staff,
     } = store.me;
+    // The questions thread agents asked Dana (src/questions.js), on Inbox.
+    const questions = await openQuestions(adminApi.env, email);
     // Dana is not in the admin team (unless --admin), except on the admin pages (and COGS), so
-    // they can be tried.
-    const admin = !MANAGER && !MEMBER
+    // they can be tried; with --no-team, never, as staff on no team see them (Inbox and Topics).
+    const admin = !MANAGER && !MEMBER && !NO_TEAM
       && (ADMIN || store.me.admin || /\/inbox\/(kb|admin|cogs|topics)\b/.test(req.headers.referer || ''));
     // Fake mode: both accounts count as connected, so the composer can be tried out.
     return json(res, {
       id,
       name,
       email,
+      // Adobe's, on a team or not (src/api.js `personWhere`).
+      staff: Boolean(staff),
       teams: MANAGER || MEMBER ? teams.map((t) => ({ ...t, role: MANAGER && t.slug === 'edge' ? 'manager' : 'member' })) : teams,
       admin,
       manages: MANAGER ? ['edge'] : [],
+      questions: NO_TEAM ? { open: 0, team: null } : questions,
       // The header's Stats link (src/klickhaus.js): Dana is in Edge ops, unless --no-team.
       ...statsOf(teams),
       avatar: FACE,
@@ -1219,18 +1959,124 @@ async function api(req, res, url) {
       rooms: [...new Set([...teams.map((t) => t.slug), ...[...store.threads.values()]
         .filter((e) => myChannels().has(`${e.ch.source}:${e.ch.channelId}`))
         .map((e) => e.row.team)])].sort(),
-      connected: { slack: true, teams: true },
-      react: { slack: true, teams: true },
-      edit: { slack: true, teams: true },
+      connected: { slack: true, teams: true, portal: true },
+      react: { slack: true, teams: true, portal: true },
+      edit: { slack: true, teams: true, portal: true },
       // Slack takes any file; Teams only images, as before the Microsoft account is connected
       // again with access to the channel files, so the explanation can be seen too.
       attach: {
         slack: personRule('slack', 'chat:write,files:write'),
         teams: personRule('teams', 'ChannelMessage.Send'),
-        app: Object.fromEntries(['slack', 'teams', 'discord'].map((p) => [p, appRule(p)])),
+        portal: personRule('portal'),
+        app: Object.fromEntries(['slack', 'teams', 'discord', 'portal'].map((p) => [p, appRule(p)])),
       },
       settings,
+      follows: await followsNow(req),
     });
+  }
+  // The Topics page's Trends (src/trends.js): the made-up half year of dev-ui-topics.mjs, with
+  // its own answers to the words and phrases; there is no CONTENT index to build a map from.
+  if (url.pathname.startsWith('/api/topics/trends')) {
+    trends ||= trendsFixture(Date.now(), weeksTo(new Date()), await latestTopicMap(adminApi.env));
+    if (req.method === 'POST') {
+      return json(res, { error: 'the preview has no CONTENT index to find topics in' }, 503);
+    }
+    if (url.pathname === '/api/topics/trends/match') {
+      return json(res, trends.match(url.searchParams.get('term')));
+    }
+    if (url.pathname === '/api/topics/trends/threads') {
+      return json(res, { threads: trends.threads((url.searchParams.get('ids') || '').split(',')) });
+    }
+    return json(res, trends.data);
+  }
+  // A team's overview (src/teamprofile.js), over the admin pages' D1: its half year of made-up
+  // posts (dev-ui-team.mjs), as whoever the preview signs in as sees it.
+  if (url.pathname === '/api/teams') {
+    return json(res, { teams: await teamDirectory(adminApi.env) });
+  }
+  if (url.pathname === '/api/teams/profile') {
+    const r = await teamProfile(adminApi.env, topicsViewer(), url.searchParams.get('team'));
+    return json(res, r.error ? { error: r.error } : r, r.error ? r.status || 400 : 200);
+  }
+  // A team's vendors (src/vendors.js), the same way: Initech's half year (dev-ui-vendor.mjs).
+  if (url.pathname === '/api/teams/vendors') {
+    const r = await teamVendors(adminApi.env, topicsViewer(), url.searchParams.get('team'));
+    return json(res, r.error ? { error: r.error } : r, r.error ? r.status || 400 : 200);
+  }
+  // A customer's overview (src/orgprofile.js), the same way: the customers' half year of
+  // made-up posts (dev-ui-team.mjs, dev-ui-customer.mjs).
+  if (url.pathname === '/api/customers') {
+    return json(res, { orgs: await orgDirectory(adminApi.env) });
+  }
+  if (url.pathname === '/api/customers/profile') {
+    const { status, ...r } = await orgProfile(adminApi.env, topicsViewer(), url.searchParams.get('org'));
+    return json(res, r, r.error ? status || 400 : 200);
+  }
+  // Its partners, or the customers it works for (src/orgpartners.js).
+  if (url.pathname === '/api/customers/partners') {
+    const { status, ...r } = await orgPartnerLinks(adminApi.env, url.searchParams.get('org'));
+    return json(res, r, r.error ? status || 400 : 200);
+  }
+  // What the Topics page's panel says of a product (src/techinfo.js), over the admin pages' D1:
+  // the fake knowledge bases' catalogs and entries, rules, follows and customers' stacks.
+  if (url.pathname === '/api/topics/tech') {
+    return json(res, await techInfo(adminApi.env, topicsViewer(), {
+      tech: url.searchParams.getAll('tech'), name: url.searchParams.get('name'),
+    }));
+  }
+  // The Topics page (src/topicsapi.js), over the admin pages' D1: its map, the areas the fake
+  // knowledge bases have, and Dana's follows; areas are written to the fake knowledge bases.
+  if (url.pathname === '/api/topics') {
+    if (req.method === 'POST') {
+      return json(res, { error: 'the preview has no CONTENT index to build a map from' }, 503);
+    }
+    const r = await topicsPage(adminApi.env, topicsViewer(), await followsNow(req));
+    const body = await r.json();
+    // The made-up map's people are on no team in the preview's D1: on the map's.
+    for (const [p, who] of Object.entries(body.latest?.map?.peopleOf || {})) {
+      if (who.team && !body.members[p]) {
+        body.members[p] = [who.team];
+      }
+    }
+    return json(res, body, r.status);
+  }
+  if (url.pathname === '/api/areas') {
+    return json(res, ...await previewArea(req.method, await readJson(req)));
+  }
+  if (url.pathname === '/api/follows/suggest') {
+    return json(res, await suggestNow(url.searchParams.get('q')));
+  }
+  if (url.pathname === '/api/standing' && req.method === 'POST') {
+    // As src/api.js, src/standing.js `setMark`: her star and mute on a customer, or their undo.
+    const r = await setMark(adminApi.env.DB, ME, await readJson(req));
+    return r.error ? json(res, { error: r.error }, r.status)
+      : json(res, { was: r.was, standing: standing() });
+  }
+  if (url.pathname === '/api/follows') {
+    // As src/api.js: what Dana follows and mutes, and her teams (src/following.js).
+    if (req.method === 'PUT') {
+      const body = await readJson(req);
+      // A thread and a customer's account are the fake inbox's, not the admin pages' D1: checked
+      // here (a thread she may work, an account of its people), then kept as src/follows.js does.
+      if (['thread', 'account'].includes(body.kind) && !body.team && body.mute === undefined) {
+        const target = String(body.target || '');
+        const ok = body.kind === 'thread' ? Boolean(store.threads.get(target) && mayWork(store.threads.get(target)))
+          : [...store.people.values()].some((p) => !p.staff && target.endsWith(`:T-FAKE:${p.key}`));
+        if (body.follow === false) {
+          fdb.prepare('DELETE FROM person_follows_by WHERE person = ? AND kind = ? AND target = ?').run(ME, body.kind, target);
+        } else if (!ok) {
+          return json(res, { error: `no such ${body.kind}` }, body.kind === 'thread' ? 404 : 400);
+        } else {
+          fdb.prepare(`INSERT OR IGNORE INTO person_follows_by (person, kind, target, added_at)
+            VALUES (?, ?, ?, ?)`).run(ME, body.kind, target, new Date().toISOString());
+        }
+        return json(res, { ...await followsNow(req), changed: true });
+      }
+      const r = await changeFollow(adminApi.env, followMe(req), body, { followOrg });
+      return r.error ? json(res, { error: r.error }, r.status || 400)
+        : json(res, { ...await followsNow(req), changed: r.changed });
+    }
+    return json(res, { ...await followsNow(req), tech: await followable(adminApi.env) });
   }
   if (url.pathname === '/api/settings') {
     if (req.method === 'PUT') {
@@ -1251,16 +2097,12 @@ async function api(req, res, url) {
         .sort((a, b) => a.name.localeCompare(b.name)),
     });
   }
-  if (url.pathname === '/api/review/queue' && ADMIN) {
-    // No labels in the fake data, so nothing to review.
-    return json(res, { queue: [], answers: {} });
-  }
-  if (url.pathname.startsWith('/api/review') || url.pathname === '/api/people') {
-    // The fake user is not in the admin team, so the review API answers as it does for her.
-    return json(res, { error: 'label review is for the admin team' }, 403);
+  if (url.pathname === '/api/people') {
+    // The fake user is not in the admin team, so "View as" answers as it does for her.
+    return json(res, { error: 'viewing as someone is for the admin team' }, 403);
   }
   if (url.pathname === '/api/inbox' && url.searchParams.get('view') === 'personal') {
-    const view = inbox(null, url.searchParams.get('before'), true);
+    const view = inbox(null, url.searchParams.get('before'), true, null, url.searchParams.get('limit'));
     return json(res, as ? { ...view, me: { id: as.id, name: as.name, readonly: true } } : view);
   }
   if (url.pathname === '/api/inbox' && as) {
@@ -1268,28 +2110,60 @@ async function api(req, res, url) {
     if (!teamsOf(as.id).some((t) => t.slug === team)) {
       return json(res, { error: 'not a member of this team' }, 403);
     }
-    return json(res, { ...inbox(team, url.searchParams.get('before')), me: { id: as.id, name: as.name, readonly: true } });
+    return json(res, { ...inbox(team, url.searchParams.get('before'), false, null, url.searchParams.get('limit')), me: { id: as.id, name: as.name, readonly: true } });
   }
   if (url.pathname === '/api/inbox') {
     if (!inTeam(team)) {
       return json(res, { error: 'not a member of this team' }, 403);
     }
-    return json(res, inbox(team, url.searchParams.get('before')));
+    return json(res, inbox(team, url.searchParams.get('before'), false, null, url.searchParams.get('limit')));
   }
   if (url.pathname === '/api/search' && url.searchParams.get('view') === 'personal') {
-    return json(res, search(null, url.searchParams.get('q'), true));
+    const mine = store.teams.filter((t) => t.members.includes(ME)).map((t) => t.slug);
+    return json(res, {
+      ...search(null, url.searchParams.get('q'), true), kb: await searchKb(mine, url.searchParams.get('q')),
+    });
   }
   if (url.pathname === '/api/search') {
     if (!inTeam(team)) {
       return json(res, { error: 'not a member of this team' }, 403);
     }
-    return json(res, search(team, url.searchParams.get('q')));
+    return json(res, {
+      ...search(team, url.searchParams.get('q')), kb: await searchKb([team], url.searchParams.get('q')),
+    });
   }
   if (url.pathname === '/api/thread') {
     const result = thread(url.searchParams.get('thread'));
     // As src/api.js: where "Post messages" is on (the fixtures' `appPosting` channels).
     const entry = result && store.threads.get(result.thread.thread);
     return result ? json(res, { ...result, can_post_as_bot: Boolean(entry?.ch.appPosting) }) : json(res, { error: 'not found' }, 404);
+  }
+  if (url.pathname === '/api/translate') {
+    // As src/api.js `translation`, with a made-up model (the fixtures' TRANSLATIONS): a message
+    // without Japanese is in the browser's language already. A moment's wait, so the bar's
+    // "Translating…" shows.
+    const result = thread(url.searchParams.get('thread'));
+    if (!result) {
+      return json(res, { error: 'not found' }, 404);
+    }
+    const to = targetOf(url.searchParams.get('to'));
+    if (!to) {
+      return json(res, { error: '`to` is a language, as en or de-CH' }, 400);
+    }
+    await new Promise((r) => {
+      setTimeout(r, 700);
+    });
+    const messages = {};
+    for (const m of result.messages.filter((x) => !x.deletedAt && x.author?.kind !== 'system')) {
+      const ja = /[\u3040-\u30ff\u4e00-\u9fff]/.test(m.body);
+      messages[`${m.thread}|${m.id}`] = {
+        text: ja ? (TRANSLATIONS[m.body] || `(${to.name}) ${m.body}`) : null,
+        for: m.editedAt || m.at,
+      };
+    }
+    return json(res, {
+      to: to.lang, messages, more: 0, failed: 0,
+    });
   }
   if (url.pathname === '/api/media') {
     // Images of messages (src/api.js `media`), made up: a placeholder of the size the link
@@ -1324,6 +2198,21 @@ async function api(req, res, url) {
       'content-type': 'video/mp4', 'accept-ranges': 'bytes', 'content-range': `bytes ${start}-${end}/${size}`, 'content-length': end - start + 1,
     });
     return res.end(clip.video.subarray(start, end + 1));
+  }
+  // A file of the customer portal (src/fileview.js `openThreadFile`, `threadFile`): the portal
+  // is not here, so a made-up log stands in for whatever its link names.
+  const portalFile = /^portal:/.test(url.searchParams.get('t') || '')
+    && /\/api\/file\/f[0-9a-z]{16}\/([^/]+)$/.exec(url.searchParams.get('u') || '');
+  if ((url.pathname === '/api/file/open' || url.pathname === '/api/file') && portalFile) {
+    const name = decodeURIComponent(portalFile[1]);
+    res.writeHead(200, {
+      'content-type': url.pathname === '/api/file' ? 'text/plain; charset=utf-8' : 'application/octet-stream',
+      'x-content-type-options': 'nosniff',
+      'x-file-name': encodeURIComponent(name),
+      'x-file-type': 'text/plain',
+      ...(url.pathname === '/api/file/open' ? { 'content-disposition': `attachment; filename*=UTF-8''${encodeURIComponent(name)}` } : {}),
+    });
+    return res.end('12:01:07 GET /press/2026-launch 200\n12:01:08 component-filters.json: no filter "press"\n12:01:08 canvas: 0 components\n');
   }
   if (url.pathname === '/api/file') {
     // A text file of a message (src/fileview.js): the fixtures' uploads, as text.
@@ -1412,6 +2301,7 @@ async function api(req, res, url) {
         aliases: [p.login, String(p.email || '').split('@')[0]].filter(Boolean),
         here: here.has(p.name),
         member: inChannel(p),
+        outside: entry.row.source === 'teams' && Boolean(entry.ch.members) && !inChannel(p),
         staff: p.staff,
         affinity: p.staff ? affinity.get(p.name) || 0 : 0,
       })),
@@ -1443,7 +2333,14 @@ async function api(req, res, url) {
     const found = await findPerson(reader, kbs, {
       email: p?.email, names: [p?.name, url.searchParams.get('name')].filter(Boolean),
     });
-    return json(res, { entries: found });
+    // An Adobe person: as src/person.js, over the admin pages' D1 (src/kbpeople.js leaves their
+    // profiles out of the thread's entries).
+    const person = p?.staff ? await personCard(adminApi.env, topicsViewer(), p.id) : null;
+    const shown = new Set((person?.profiles || []).map((x) => `${x.repo}|${x.path}`));
+    return json(res, {
+      entries: found.filter((x) => !shown.has(`${x.repo}|${x.path}`)),
+      ...(person ? { person } : {}),
+    });
   }
   if (url.pathname === '/api/experts') {
     // Stands in for src/experts.js with `suggested`, all the inbox asks: the thread agents'
@@ -1474,6 +2371,16 @@ async function api(req, res, url) {
       }));
     return json(res, { platform: entry.row.source, experts });
   }
+  if (url.pathname === '/api/draft/file') {
+    // As src/draftfiles.js: a picture of the thread's draft.
+    const d = drafts.get(url.searchParams.get('thread'));
+    const id = url.searchParams.get('id');
+    const f = d && (d.files || []).some((x) => x.id === id) && store.uploads.get(id);
+    if (!f) {
+      return json(res, { error: 'not found' }, 404);
+    }
+    return res.writeHead(200, { 'content-type': f.type, 'x-content-type-options': 'nosniff', 'content-security-policy': "default-src 'none'" }).end(Buffer.from(f.bytes));
+  }
   if (url.pathname === '/api/draft/source') {
     // As src/sources.js would answer about each fixture's source; a Slack message as
     // src/messagelinks.js does, the message the store has.
@@ -1487,9 +2394,13 @@ async function api(req, res, url) {
   const bash = /^\/api\/bash\/(run|deny)$/.exec(url.pathname);
   if (bash && req.method === 'POST') {
     // As src/agent/bashrequest.js: run answers once the command has started; it ends a few
-    // seconds later, and the room says so each time. The values are not kept, or printed.
+    // seconds later, and the room says so each time. The values are not kept, or printed. A
+    // script (`kind: 'codemode'`) answers once it has ended.
     const { thread: key, id, env: values = {} } = await readJson(req);
     const entry = store.threads.get(key);
+    if (entry && !inTeam(entry.row.team) && maySee(entry)) {
+      return notTheirs(res, entry, 'run the commands its agent asks for');
+    }
     const request = entry && inTeam(entry.row.team)
       && (store.bashRequests.get(key) || []).find((r) => r.id === id);
     if (!request) {
@@ -1507,6 +2418,17 @@ async function api(req, res, url) {
     Object.assign(request, { by: { id: ME, name: me.name }, decided_at: at });
     if (bash[1] === 'deny') {
       Object.assign(request, { status: 'denied', finished_at: at });
+    } else if (request.kind === 'codemode') {
+      // As src/agent/stub.js: a script runs as you, and the answer comes once it has ended.
+      request.status = 'running';
+      broadcast(entry.row.team, { type: 'bash', thread: key });
+      await new Promise((resolve) => {
+        setTimeout(resolve, 3000);
+      });
+      Object.assign(request, { status: 'done', finished_at: new Date().toISOString() });
+      console.log(`script ${id} on ${key}: ran`);
+      broadcast(entry.row.team, { type: 'bash', thread: key });
+      return json(res, { ok: true, request });
     } else {
       request.status = 'running';
       setTimeout(() => {
@@ -1518,13 +2440,65 @@ async function api(req, res, url) {
     broadcast(entry.row.team, { type: 'bash', thread: key });
     return json(res, { ok: true, request }, bash[1] === 'run' ? 202 : 200);
   }
+  const tool = /^\/api\/agent\/tools\/(grant|deny|revoke)$/.exec(url.pathname);
+  if (tool && req.method === 'POST') {
+    // As src/agent/stub.js decideTool: a grant lasts a day; granting or denying says so to the
+    // agent as your sidebar message, which the made-up agent answers.
+    const { thread: key, id } = await readJson(req);
+    const entry = store.threads.get(key);
+    if (entry && !inTeam(entry.row.team) && maySee(entry)) {
+      return notTheirs(res, entry, 'decide on the tools its agent asks for');
+    }
+    const request = entry && inTeam(entry.row.team)
+      && (store.toolRequests.get(key) || []).find((r) => r.id === id);
+    if (!request) {
+      return json(res, { error: 'not found' }, 404);
+    }
+    const me = store.people.get(ME);
+    const at = new Date().toISOString();
+    const from = tool[1] === 'revoke' ? 'granted' : 'pending';
+    if (request.status !== from) {
+      return json(res, { error: 'It was decided already', request }, 409);
+    }
+    if (tool[1] === 'revoke') {
+      Object.assign(request, { status: 'revoked', revoked_by: { id: ME, name: me.name }, revoked_at: at });
+      broadcast(entry.row.team, { type: 'sidebar', thread: key });
+      return json(res, { request });
+    }
+    const granted = tool[1] === 'grant';
+    Object.assign(request, {
+      status: granted ? 'granted' : 'denied',
+      by: { id: ME, name: me.name },
+      decided_at: at,
+      expires_at: granted ? new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString() : null,
+    });
+    const message = {
+      id: `sb_${crypto.randomUUID()}`,
+      role: 'person',
+      by: { id: ME, name: me.name },
+      body: granted
+        ? `Granted: you have **${request.title}** in this thread for the next 24 hours (tool request ${request.id}), in every turn, not only in the sidebar. Go on with what you needed it for.`
+        : `Denied: you do not get **${request.title}** (tool request ${request.id}). Go on without it.`,
+      state: 'done',
+      reply_to: null,
+      at,
+    };
+    if (!store.sidebars.has(key)) {
+      store.sidebars.set(key, []);
+    }
+    store.sidebars.get(key).push(message);
+    sidebarLive.add(message.id);
+    console.log(`tool request ${id} on ${key}: ${tool[1]}`);
+    broadcast(entry.row.team, { type: 'sidebar', thread: key });
+    return json(res, { request, message }, 202);
+  }
   if (url.pathname === '/api/agent/sidebar' && req.method === 'POST') {
     // As src/agent/stub.js talkToAgent: into the thread's sidebar and the agent's conversation,
     // never to the platform.
     const { thread: key, text: raw } = await readJson(req);
     const entry = store.threads.get(key);
     const said = String(raw || '').trim();
-    if (!entry || !inTeam(entry.row.team)) {
+    if (!entry || !maySee(entry)) {
       return json(res, { error: 'not found' }, 404);
     }
     if (!said || said.length > 8000) {
@@ -1546,10 +2520,31 @@ async function api(req, res, url) {
     broadcast(entry.row.team, { type: 'sidebar', thread: key });
     return json(res, { message }, 202);
   }
+  if (url.pathname === '/api/agent/sidebar/seen' && req.method === 'POST') {
+    // As src/agent/stub.js sawSidebar: only the viewer's own answers, once.
+    const { thread: key, ids } = await readJson(req);
+    const entry = store.threads.get(key);
+    if (!Array.isArray(ids) || !ids.length) {
+      return json(res, { error: 'name the answers seen' }, 400);
+    }
+    if (!entry || !maySee(entry)) {
+      return json(res, { error: 'not found' }, 404);
+    }
+    const seen = (store.sidebars.get(key) || [])
+      .filter((m) => ids.includes(m.id) && m.role === 'agent' && m.to === ME && m.unseen);
+    for (const m of seen) {
+      m.unseen = false;
+    }
+    if (seen.length) {
+      broadcast(entry.row.team, { type: 'sidebar-seen', thread: key, person: ME });
+    }
+    res.writeHead(204).end();
+    return true;
+  }
   if (url.pathname === '/api/draft' && (req.method === 'PUT' || req.method === 'DELETE')) {
     // As src/drafts.js: `base` is the version the text was written from.
     const {
-      thread: key, text: body, mentions = [], sources, base = null,
+      thread: key, text: body, mentions = [], sources, files: keep, base = null,
     } = await readJson(req);
     const entry = store.threads.get(key);
     if (!entry || !inTeam(entry.row.team)) {
@@ -1585,6 +2580,8 @@ async function api(req, res, url) {
       body,
       mentions,
       sources: sources ?? current?.sources ?? [],
+      // As src/draftfiles.js: the ids it keeps, or all of them.
+      files: (current?.files || []).filter((f) => !keep || keep.includes(f.id)),
       by: { id: ME, name: me.name },
       created_at: current ? current.created_at : at,
       updated_at: at,
@@ -1652,11 +2649,15 @@ async function api(req, res, url) {
         text: String(reply).trim(),
         thread: started.key,
         ...invitedFor([...store.threads.values()].find((t) => t.ch === ch), mentions),
+        ...remindersFor([...store.threads.values()].find((t) => t.ch === ch), mentions, started.id),
       });
     }
     if (app && !store.threads.get(key)?.ch.appPosting) {
       return json(res, { error: 'the opspile app does not post in this channel: turn on "Post messages" for it or its team in the knowledge-base editor first' }, 409);
     }
+    // The agent's draft it sends, for the offer to let it post (src/postoffer.js).
+    const agentDraft = Boolean(base) && drafts.get(key)?.updated_at === base
+      && drafts.get(key).by.id === AGENT.id;
     if (base && drafts.get(key)?.updated_at === base) {
       drafts.delete(key);
     }
@@ -1712,8 +2713,20 @@ async function api(req, res, url) {
     // As the bot, it comes back later still in production (now and then after a minute).
     }, app ? ARRIVE_MS * 1.5 : ARRIVE_MS);
     return json(res, {
-      ok: true, platform: entry.row.source, id, text: sent, ...invitedFor(entry, mentions),
+      ok: true,
+      platform: entry.row.source,
+      id,
+      text: sent,
+      ...invitedFor(entry, mentions),
+      ...remindersFor(entry, mentions, id),
+      ...outsideFor(entry, mentions),
+      ...(agentDraft ? postingOfferFor(entry) : {}),
     });
+  }
+  // Writing a reply in a customer portal's thread: the portal is told, which is not here.
+  if (url.pathname === '/api/typing' && req.method === 'POST') {
+    res.writeHead(204).end();
+    return true;
   }
   if (url.pathname === '/api/edit' && req.method === 'POST') {
     // As src/edit.js: the platform takes the edit, and its event brings it back a moment later.
@@ -1752,11 +2765,37 @@ async function api(req, res, url) {
     broadcast(entry.row.team, { type: 'thread', thread: key });
     return json(res, { ok: true, emoji: native });
   }
+  // As src/threadlinks.js `dismissAbout` and `dismissLink`: a link of the fixtures said wrong.
+  const unlink = /^\/api\/thread\/(about|related)\/dismiss$/.exec(url.pathname);
+  if (unlink && req.method === 'POST') {
+    const body = await readJson(req);
+    const entry = store.threads.get(body.thread);
+    if (!entry || !inTeam(entry.row.team)) {
+      return json(res, { error: 'not found' }, 404);
+    }
+    const found = unlink[1] === 'about'
+      ? store.threadOrgs.find((r) => r.thread === body.thread && r.org === body.org
+        && r.role === (body.role === 'partner' ? 'partner' : 'about'))
+      : store.threadLinks.find((l) => [l.a, l.b].includes(body.thread)
+        && [l.a, l.b].includes(body.other));
+    if (!found) {
+      return json(res, { error: 'not linked' }, 404);
+    }
+    found.dismissed = !body.undo;
+    broadcast(entry.row.team, { type: 'thread', thread: body.thread });
+    return json(res, { ok: true, thread: body.thread, dismissed: !body.undo });
+  }
   if (url.pathname === '/api/resolve' && req.method === 'POST') {
     const { thread: key, undo } = await readJson(req);
     const entry = store.threads.get(key);
     if (!entry || !inTeam(entry.row.team)) {
       return json(res, { error: 'not found' }, 404);
+    }
+    // The agent's resolution comes off with an undo, as src/react.js takes it off.
+    if (undo && agentResolved.delete(key)) {
+      console.log('resolve undo (the agent\'s)');
+      broadcast(entry.row.team, { type: 'thread', thread: key });
+      return json(res, { ok: true, resolved: false, agent: true });
     }
     if (!entry.row.root_at) {
       return json(res, { error: 'the first message of this thread is not known yet' }, 409);
@@ -1783,6 +2822,11 @@ async function api(req, res, url) {
   }
   if (url.pathname === '/api/read' && req.method === 'POST') {
     const { thread: key, at } = await readJson(req);
+    if (isRequestKey(key)) {
+      const r = await adminApi.requests(req, url, { thread: key, at });
+      res.writeHead(r.status).end();
+      return true;
+    }
     const entry = store.threads.get(key);
     if (!entry || !inTeam(entry.row.team) || typeof at !== 'string') {
       return json(res, { error: 'not found' }, 404);
@@ -1875,6 +2919,11 @@ function handleClientMessage(team, data) {
   } catch {
     return;
   }
+  // A request's thread (src/requestthreads.js): its watermark is in the admin D1.
+  if (msg.type === 'read' && isRequestKey(msg.thread) && typeof msg.at === 'string') {
+    adminApi.requests({ method: 'POST' }, new URL('http://localhost/api/read'), { thread: msg.thread, at: msg.at })
+      .then(() => broadcast(team, { type: 'reads', reads: [{ person: ME, thread: msg.thread, at: msg.at }] }));
+  }
   if (msg.type === 'read' && store.threads.get(msg.thread)) {
     readInRoom(team, msg.thread, msg.at);
   }
@@ -1924,7 +2973,7 @@ function fakeLive(req, socket, team) {
   const drop = () => sockets.get(team)?.delete(conn);
   socket.on('close', drop);
   socket.on('error', drop);
-  readFrames(socket, (data) => handleClientMessage(team, data));
+  readFrames(socket, (data) => (data === 'ping' ? conn.send('pong') : handleClientMessage(team, data)));
 }
 
 /**
@@ -1948,7 +2997,12 @@ function relayLive(req, socket, team, b) {
   };
   socket.on('close', () => upstream.close());
   socket.on('error', () => upstream.close());
-  readFrames(socket, () => {});
+  // The room answers `ping` (src/room.js); here the relay does, as reads are not passed on.
+  readFrames(socket, (data) => {
+    if (data === 'ping') {
+      socket.write(frame('pong'));
+    }
+  });
 }
 
 function upgrade(req, socket, url) {
@@ -1983,7 +3037,7 @@ function banner() {
 
 /**
  * The pages' scripts and shared stylesheets, ui/*.js and ui/*.css, read again on every page
- * load (src/index.js imports them).
+ * load (src/pages.js imports them).
  */
 async function scripts() {
   const names = (await readdir(uiDir)).filter((f) => /\.(js|css)$/.test(f));
@@ -2161,6 +3215,9 @@ function rethread(key, after = RETHREAD_MS) {
 
 // Signed out (POST /__dev/signout): /api/* redirects to the sign-in page, as Access does.
 let signedOut = false;
+// Overloaded (POST /__dev/busy): the next thread reads answer 503, as src/api.js does.
+let busyReads = 0;
+let busyThread = null;
 const SIGNIN_HOST = `127.0.0.1:${PORT}`;
 const SIGNIN_PAGE = (back) => `<!doctype html><meta charset="utf-8"><title>Sign in</title>
 <body style="font:15px system-ui;display:grid;place-items:center;height:90vh">
@@ -2178,6 +3235,20 @@ const server = createServer(async (req, res) => {
     if (url.pathname === '/__dev/signout' && req.method === 'POST') {
       signedOut = true;
       res.writeHead(204).end();
+      return;
+    }
+    if (url.pathname === '/__dev/busy' && req.method === 'POST') {
+      busyReads = Number(url.searchParams.get('n')) || 6;
+      busyThread = url.searchParams.get('thread');
+      res.writeHead(204).end();
+      return;
+    }
+    if (busyReads > 0 && url.pathname === '/api/thread' && req.method === 'GET'
+      && (!busyThread || url.searchParams.get('thread') === busyThread)) {
+      busyReads -= 1;
+      console.log(`[dev] busy: /api/thread answers 503 (${busyReads} more)`);
+      res.writeHead(503, { 'content-type': 'application/json', 'retry-after': '1' })
+        .end(JSON.stringify({ error: 'The inbox is busy: try again in a moment.', busy: true }));
       return;
     }
     if (url.pathname === '/__dev/access-login') {
@@ -2206,7 +3277,12 @@ const server = createServer(async (req, res) => {
       res.writeHead(302, { location: '/inbox' }).end();
       return;
     }
-    if (['/inbox/kb', '/inbox/admin', '/inbox/cogs', '/inbox/topics'].includes(url.pathname)) {
+    // The knowledge-base editor that was, as the Worker sends it on: to Teams or Customers.
+    if (url.pathname === '/inbox/kb') {
+      res.writeHead(302, { location: `/inbox/admin${url.search}` }).end();
+      return;
+    }
+    if (['/inbox/admin', '/inbox/cogs', '/inbox/topics'].includes(url.pathname)) {
       const html = await uiPage(`${url.pathname.slice('/inbox/'.length)}.html`);
       res.writeHead(200, { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-cache' });
       res.end(html);
@@ -2215,6 +3291,12 @@ const server = createServer(async (req, res) => {
     if (url.pathname === '/inbox') {
       res.writeHead(200, { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-cache' });
       res.end(await uiPage('inbox.html'));
+      return;
+    }
+    // Buttons that try every way the inbox notifies, and open its troubleshooter.
+    if (url.pathname === '/__dev/notify') {
+      res.writeHead(200, { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-cache' });
+      res.end(await readFile(join(dirname(fileURLToPath(import.meta.url)), 'dev-notify.html')));
       return;
     }
     // The FMC gallery: the guidelines' figures and the stacks, as the inbox draws them.
@@ -2238,7 +3320,8 @@ const server = createServer(async (req, res) => {
     }
     // The code highlighter, as the Worker serves it.
     const asked = { method: req.method, headers: new Headers(req.headers) };
-    const lit = highlightScript(asked, url.pathname) || fmcScript(asked, url.pathname);
+    const lit = highlightScript(asked, url.pathname) || fmcScript(asked, url.pathname)
+      || threeScript(asked, url.pathname);
     if (lit) {
       res.writeHead(lit.status, Object.fromEntries(lit.headers)).end(await lit.text());
       return;
@@ -2264,8 +3347,9 @@ const server = createServer(async (req, res) => {
       res.writeHead(204).end();
       return;
     }
-    if (url.pathname === '/__dev/oauth/authorize') {
-      // The made-up wiki's sign-in (scripts/dev-ui-admin.mjs): granted at once.
+    if (url.pathname === '/__dev/oauth/authorize' || url.pathname === '/__dev/okta/v1/authorize') {
+      // The made-up wiki's sign-in, and FluffyJaws' Okta (scripts/dev-ui-admin.mjs): granted at
+      // once.
       const back = new URL(url.searchParams.get('redirect_uri'));
       back.searchParams.set('code', 'preview-code');
       back.searchParams.set('state', url.searchParams.get('state') || '');

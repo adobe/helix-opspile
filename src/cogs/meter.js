@@ -10,6 +10,7 @@
  * governing permissions and limitations under the License.
  */
 
+import { underlying, UNDERLYING } from '../d1batch.js';
 import { DIMENSIONS } from './prices.js';
 
 /*
@@ -18,9 +19,9 @@ import { DIMENSIONS } from './prices.js';
  *
  * A `Meter` belongs to one invocation (a request, a queue batch, a cron run) or to a Durable
  * Object. Its `env(subject)` is the environment one piece of work runs with: the same bindings,
- * counted (D1 rows, R2 operations, queue operations, Workers AI tokens, Vectorize dimensions, AI
- * Search queries and ingested tokens), and `env.meter`, where code adds what the bindings do not
- * show (an agent's Bedrock tokens, its browser time) and names whom the work is for
+ * counted (D1 rows, R2 operations, queue operations, Workers AI tokens and web searches, Vectorize
+ * dimensions, AI Search queries and ingested tokens), and `env.meter`, where code adds what the
+ * bindings do not show (an agent's Bedrock tokens, its browser time) and names whom the work is for
  * (`attribute`). A subject is a thread (whose customer and team D1 knows), or a customer and a
  * team, or nobody: shared work, which the dashboard spreads over the customers by their
  * messages. `flush()` resolves the subjects and writes one data point per customer, team,
@@ -57,8 +58,10 @@ const sizeOf = (value) => {
 };
 
 /** Calls the binding method `v` on `target`, with `after` counting what it answered. */
+// `Reflect.apply`, not `v.apply`: a binding reached over RPC (AI Search) answers any property,
+// `apply` and `bind` too, as a method of the other side, which it does not have.
 const counted = (target, v, after) => async (...args) => {
-  const res = await v.apply(target, args);
+  const res = await Reflect.apply(v, target, args);
   try {
     after(res, args);
   } catch {
@@ -103,12 +106,22 @@ function d1(db, scope) {
   };
   return new Proxy(db, {
     get(target, prop) {
+      // The binding under it: what is kept across requests by the database (src/partners.js,
+      // the trends, the profiles' facts) is kept by the binding, and each request is metered
+      // anew, so a key of this proxy would be a new one every request.
+      if (prop === UNDERLYING) {
+        return underlying(target);
+      }
       const v = Reflect.get(target, prop);
       if (typeof v !== 'function') {
         return v;
       }
       if (prop === 'prepare') {
         return (...args) => statement(v.apply(target, args));
+      }
+      // A session (src/d1session.js) is counted as the database is.
+      if (prop === 'withSession') {
+        return (...args) => d1(v.apply(target, args), scope);
       }
       if (prop === 'batch') {
         // D1 wants its own statements back.
@@ -202,6 +215,14 @@ function ai(binding, scope) {
           scope.add('workers_ai', 'output_tokens', id, output);
         });
       }
+      // Web Search API (src/agent/websearch.js): a search is billed once it answered.
+      if (prop === 'websearch') {
+        return counted(target, v, (res, [opts]) => {
+          if (res && res.ok) {
+            scope.add('web_search', String((opts && opts.provider) || 'ceramic'), '', 1);
+          }
+        });
+      }
       if (prop === 'toMarkdown') {
         return counted(target, v, (_, [files]) => scope.add('workers_ai', 'conversions', '', Array.isArray(files) ? files.length : 1));
       }
@@ -244,13 +265,14 @@ function search(instance, scope) {
           scope.add('ai_search', 'uploads', '', 1);
         });
       }
-      return v.bind(t);
+      return (...args) => Reflect.apply(v, t, args);
     },
   });
   return new Proxy(instance, {
     get(target, prop) {
       const v = Reflect.get(target, prop);
-      if (prop === 'items' && v && typeof v === 'object') {
+      // Over RPC, `items` is a stub, which is a function.
+      if (prop === 'items' && v && (typeof v === 'object' || typeof v === 'function')) {
         return items(v);
       }
       if (typeof v !== 'function') {
@@ -262,7 +284,7 @@ function search(instance, scope) {
           scope.add('ai_search', kind === 'keyword' ? 'fulltext_queries' : 'semantic_queries', '', 1);
         });
       }
-      return v.bind(target);
+      return (...args) => Reflect.apply(v, target, args);
     },
   });
 }

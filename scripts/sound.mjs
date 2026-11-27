@@ -13,10 +13,11 @@
 
 /**
  * Regenerates src/sound.js, the notifications' sound (`/notify.mp3`, ui/inbox.js), from a
- * recording: its first 1.9 s, faded out, 12 dB louder (the recording peaks at -15 dB), mono,
- * as an 80 kbit/s MP3, which every browser plays.
+ * recording: without the silence after it (what stays under -60 dB to the end), mono, as an
+ * 80 kbit/s MP3, which every browser plays. `gain`, in dB, makes a quiet recording louder (or a
+ * loud one quieter, below 0); without it the sound is as loud as the recording.
  *
- *   node scripts/sound.mjs <recording.wav>
+ *   node scripts/sound.mjs <recording> [gain]
  *
  * Needs `ffmpeg` on the PATH. Inlined as base64, as src/icons.js is, so the Worker serves it
  * without depending on how the bundler treats binary imports.
@@ -28,17 +29,21 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-const [source] = process.argv.slice(2);
-if (!source) {
-  console.error('usage: node scripts/sound.mjs <recording.wav>');
+const [source, gain = '0'] = process.argv.slice(2);
+if (!source || !Number.isFinite(Number(gain))) {
+  console.error('usage: node scripts/sound.mjs <recording> [gain in dB]');
   process.exit(1);
 }
 const here = dirname(fileURLToPath(import.meta.url));
 const out = join(here, '..', 'src', 'sound.js');
 const mp3 = join(mkdtempSync(join(tmpdir(), 'opspile-sound-')), 'notify.mp3');
 execFileSync('ffmpeg', ['-hide_banner', '-loglevel', 'error', '-y', '-i', source,
-  '-af', 'atrim=0:1.9,afade=t=out:st=1.75:d=0.15,volume=12dB',
-  '-ac', '1', '-ar', '44100', '-map_metadata', '-1', '-c:a', 'libmp3lame', '-b:a', '80k', mp3]);
+  // The end's silence is the reversed recording's start, which silenceremove can cut. It
+  // leaves 50 ms of it, so the sound does not end on a cut. rematrix_maxval: both channels at
+  // half, as loud as the two were (ffmpeg adds them 3 dB louder, left to itself).
+  '-af', ['areverse', 'silenceremove=start_periods=1:start_threshold=-60dB:start_silence=0.05',
+    'areverse', 'aresample=44100:ochl=mono:rematrix_maxval=1.0', `volume=${Number(gain)}dB`].join(','),
+  '-map_metadata', '-1', '-c:a', 'libmp3lame', '-b:a', '80k', mp3]);
 const lines = readFileSync(mp3).toString('base64').match(/.{1,96}/g);
 
 writeFileSync(out, `/*

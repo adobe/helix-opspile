@@ -12,7 +12,8 @@
 
 import { TITLER, topicNames } from '../src/label.js';
 import { EMBEDDING_MODEL } from '../src/rethread.js';
-import { MIN_MESSAGES, productsOf } from '../src/topicmap.js';
+import { centered, MIN_MESSAGES, productsOf } from '../src/topicmap.js';
+import { topicPlaces } from '../src/topicspace.js';
 
 /**
  * The Topics page's made-up map for `npm run ui:dev` (`/inbox/topics`): what src/topicmap.js
@@ -124,6 +125,18 @@ const PRODUCTS = {
   20: { 'Sites Optimizer': 0.8, 'Brand Visibility': 0.3 },
 };
 
+// The customers' own people who post, a few per customer (ids from 300).
+const CUSTOMER_PEOPLE = {
+  acme: ['Ana Ruiz', 'Bram Visser', 'Chen Wei'],
+  globex: ['Dara Quinn', 'Eli Moss'],
+  umbrella: ['Farah Aziz', 'Gus Holm'],
+  wonka: ['Hana Ito', 'Ivo Petrov', 'Jill Hart'],
+  hooli: ['Kai Lund'],
+  stark: ['Lia Costa', 'Milo Dunn'],
+  initech: ['Nils Berg'],
+  vandelay: ['Oda Fry'],
+};
+
 // The storefront is one customer's.
 const OWN_TOPIC = { 11: 'wonka' };
 const TEAMS = ['edge', 'platform'];
@@ -134,6 +147,12 @@ export function topicMapFixture(now = Date.now(), tech = []) {
   const rnd = random(4242);
   const pick = (list) => list[Math.floor(rnd() * list.length)];
   const people = Object.fromEntries(PEOPLE.map(([name], i) => [100 + i, name]));
+  const theirs = {};
+  Object.entries(CUSTOMER_PEOPLE).flatMap(([org, names]) => names.map((name) => [org, name]))
+    .forEach(([org, name], i) => {
+      people[300 + i] = name;
+      theirs[org] = [...(theirs[org] || []), 300 + i];
+    });
   const byTopic = TOPICS.map((_, t) => PEOPLE.map((p, i) => [p, i])
     .filter(([p]) => p[1].includes(t))
     .map(([p, i]) => ({ id: 100 + i, lead: p[1][0] === t })));
@@ -174,6 +193,12 @@ export function topicMapFixture(now = Date.now(), tech = []) {
           facts.push({ thread: key, value: name });
         }
       }
+      const customers = {};
+      for (const c of theirs[org] || []) {
+        if (rnd() < 0.5) {
+          customers[c] = 1 + Math.floor(rnd() * 4);
+        }
+      }
       threads.push({
         key,
         title: `${pick(titles)}${rnd() < 0.3 ? pick(SUFFIXES) : ''}`,
@@ -187,17 +212,53 @@ export function topicMapFixture(now = Date.now(), tech = []) {
         topic: id,
         sim,
         staff,
+        customers,
       });
     }
+    // Found in the area most of its threads are in (none for those Clef tags nothing).
+    const area = Object.entries(tags).sort((a, b) => b[1] - a[1])[0]?.[0] || null;
     return {
-      id, label, theme, size, cohesion: Math.round((0.42 + rnd() * 0.18) * 1000) / 1000,
+      id, label, theme, area, size, cohesion: Math.round((0.42 + rnd() * 0.18) * 1000) / 1000,
     };
   });
+  // The topics' places, as src/topicmap.js finds them, from made-up vectors: a thread's is its
+  // topic's (near its area's), and some of each person's who posted and of its customer's.
+  const DIMS = 32;
+  const vec = () => Array.from({ length: DIMS }, () => rnd() - 0.5);
+  const near = (base, k) => base.map((x) => x + (rnd() - 0.5) * k);
+  const areaVec = new Map();
+  const topicVec = topics.map((t) => {
+    if (!areaVec.has(t.area)) {
+      areaVec.set(t.area, vec());
+    }
+    return near(areaVec.get(t.area), 0.6);
+  });
+  const own = new Map();
+  const ownOf = (k) => own.get(k) || own.set(k, vec()).get(k);
+  const X = centered(threads.map((t) => {
+    const parts = [...Object.keys(t.staff), ...Object.keys(t.customers), `org:${t.org}`].map(ownOf);
+    return topicVec[t.topic].map((x, d) => x + parts.reduce((sum, p) => sum + p[d] * 0.4, 0)
+      + (rnd() - 0.5) * 0.3);
+  }));
+  const at = topicPlaces(X, threads.map((t) => t.topic), {
+    people: threads.map((t) => Object.keys({ ...t.staff, ...t.customers })),
+    orgs: threads.map((t) => [t.org]),
+  });
+  topics.forEach((t, i) => Object.assign(t, { at: at[i] }));
   const order = topics.map((t) => t.id).sort((a, b) => topics[b].size - topics[a].size);
   const renumber = new Map(order.map((old, i) => [old, i]));
   const products = productsOf(facts, tech);
+  // Adobe's people in a team each, the customers' in their customer (src/topicmap.js peopleOf).
+  const peopleOf = Object.fromEntries(PEOPLE.map((_, i) => [100 + i,
+    { staff: true, team: i % 3 ? 'platform' : 'edge' }]));
+  for (const [org, ids] of Object.entries(theirs)) {
+    for (const id of ids) {
+      peopleOf[id] = { staff: false, org };
+    }
+  }
   return {
-    version: 1,
+    version: 2,
+    peopleOf,
     built_at: new Date(now - 2 * 86400000).toISOString(),
     built_by: 'cron',
     model: EMBEDDING_MODEL,
@@ -222,4 +283,149 @@ export function seedTopicMap(DB, now = Date.now()) {
   const map = topicMapFixture(now, tech);
   DB.sqlite.prepare(`INSERT INTO topic_maps (built_at, built_by, threads, k, map)
     VALUES (?, ?, ?, ?, ?)`).run(map.built_at, map.built_by, map.threads.length, map.topics.length, JSON.stringify(map));
+}
+
+// ---- Trends (ui/trendview.js) -----------------------------------------------------------
+
+// How often each topic comes up over the weeks of the preview, against the rest (1): some rise
+// (trending), some fall (declining), some had their weeks and are back to a trickle (peaked).
+const RISE = (w, n) => (w < n - 9 ? 1 : 1 + (w - (n - 9)) * 0.45);
+const FALL = (w, n) => (w < n - 8 ? 2.6 : 0.6);
+const BUMP = (at) => (w, n) => 1 + 6 * Math.exp(-((w - (n - at)) ** 2) / 5);
+const PROFILES = {
+  1: RISE, 9: RISE, 20: RISE, 4: FALL, 16: FALL, 2: BUMP(20), 21: BUMP(14), 11: BUMP(11),
+};
+const TREND_WEEKS = 30;
+
+/**
+ * The trends' data for `npm run ui:dev`, in GET /api/topics/trends's shape (src/trends.js
+ * `trendsData`), of the made-up topic map `map` (its topics and products): half a year of threads
+ * in sixty channels, with topics that are trending, declining and peaked, one of them mostly one
+ * customer's (the storefront). Seeded. With it what the match and threads endpoints answer.
+ */
+export function trendsFixture(now = Date.now(), weeks = [], { id: mapId = 1, map = null } = {}) {
+  const rnd = random(777);
+  const pick = (list) => list[Math.floor(rnd() * list.length)];
+  const n = weeks.length;
+  const start = n - TREND_WEEKS;
+  const orgs = ORGS.filter(([, , type]) => type !== 'internal');
+  const channels = Array.from({ length: 60 }, (_, c) => ({
+    org: c < 6 ? 'wonka' : orgs[c % orgs.length][0],
+    team: TEAMS[c % 2],
+    source: c % 4 === 3 ? 'teams' : 'slack',
+  }));
+  const lists = {
+    org: orgs.map(([slug]) => slug), team: TEAMS, source: ['slack', 'teams'], kind: ['question', 'incident', 'request', 'access'],
+  };
+  const areaIds = [...new Set(TOPICS.flatMap(([, , tags]) => Object.keys(tags)))];
+  const areaNames = topicNames();
+  // The map's topic of each of TOPICS, and the products its threads have there, and how often.
+  const topics = map?.topics || [];
+  const topicId = TOPICS.map(([label]) => Math.max(0, topics.findIndex((t) => t.label === label)));
+  const techIds = Object.keys(map?.products || {}).filter((pid) => pid.startsWith('tech:'));
+  const productsOfTopic = TOPICS.map((_, t) => {
+    const mine = (map?.threads || []).filter((x) => x.topic === topicId[t]);
+    const counts = new Map();
+    for (const x of mine) {
+      for (const pid of x.products || []) {
+        counts.set(pid, (counts.get(pid) || 0) + 1);
+      }
+    }
+    return [...counts].filter(([pid]) => techIds.includes(pid))
+      .map(([pid, c]) => [pid, c / (mine.length || 1)]);
+  });
+  const threads = [];
+  const titles = new Map();
+  let id = 1000;
+  const profile = (t, into) => (PROFILES[t] ? PROFILES[t](into, TREND_WEEKS) : 1);
+  const kinds = lists.kind.length;
+  for (let w = start; w < n; w += 1) {
+    const weights = TOPICS.map(([, , , , weight], t) => weight * profile(t, w - start));
+    const total = weights.reduce((x, y) => x + y, 0);
+    // The week under way has less of everything, as it is not over.
+    const busy = w === n - 1 ? 0.3 : 0.65;
+    for (let c = 0; c < channels.length; c += 1) {
+      const ch = channels[c];
+      const count = rnd() > busy ? 0 : 1 + Math.floor(rnd() * 2);
+      for (let k = 0; k < count; k += 1) {
+        let r = rnd() * total;
+        let topic = 0;
+        while (r > weights[topic]) {
+          r -= weights[topic];
+          topic += 1;
+        }
+        // The storefront is the storefront customer's.
+        if (OWN_TOPIC[topic] && ch.org !== OWN_TOPIC[topic] && rnd() < 0.85) {
+          topic = 0;
+        }
+        const [, , tags, ttl] = TOPICS[topic];
+        id += 1;
+        const msgs = [w, 1 + Math.floor(rnd() * 5)];
+        if (w + 1 < n && rnd() < 0.3) {
+          msgs.push(w + 1, 1 + Math.floor(rnd() * 3));
+        }
+        const areas = Object.entries(tags).filter(([, p]) => rnd() < p + 0.2);
+        const tech = productsOfTopic[topic].filter(([, p]) => rnd() < p);
+        threads.push([
+          id, w, c, lists.org.indexOf(ch.org), lists.team.indexOf(ch.team),
+          lists.source.indexOf(ch.source), Math.floor(rnd() * kinds), topicId[topic],
+          areas.map(([x]) => areaIds.indexOf(x)), tech.map(([x]) => techIds.indexOf(x)), msgs,
+        ]);
+        titles.set(id, {
+          id,
+          key: `slack:T-FAKE:C0TREND${String(c).padStart(2, '0')}:${1790000000 + id}.000100`,
+          team: ch.team,
+          org: ch.org,
+          source: ch.source,
+          at: `${weeks[w]}T10:00:00.000Z`,
+          messages: msgs[1] + (msgs[3] || 0),
+          title: `${pick(ttl)}${rnd() < 0.3 ? pick(SUFFIXES) : ''}`,
+          topic,
+        });
+      }
+    }
+  }
+  const data = {
+    weeks,
+    map: {
+      id: mapId, built_at: map?.built_at || new Date(now).toISOString(), assigned: threads.length,
+    },
+    available: true,
+    channels: channels.length,
+    orgs: lists.org.map((slug) => {
+      const [, name, type] = ORGS.find(([s]) => s === slug);
+      return { slug, name, type };
+    }),
+    teams: lists.team,
+    sources: lists.source,
+    kinds: lists.kind,
+    areas: areaIds.map((a) => ({ id: a, name: areaNames[a] || a })),
+    tech: techIds.map((pid) => ({
+      id: pid.slice(5), name: map.products[pid].name, product: map.products[pid].product || null,
+    })),
+    threads,
+  };
+  const words = (s) => String(s).toLowerCase().split(/[^a-z0-9]+/).filter((x) => x.length > 3);
+  return {
+    data,
+    /** As GET /api/topics/trends/match: words in a title; a phrase, topics with a word of it. */
+    match(term) {
+      const t = String(term || '').trim();
+      const all = [...titles.values()];
+      if (t.startsWith('~')) {
+        const want = new Set(words(t.slice(1)));
+        const about = new Set(TOPICS.map(([label, theme], tid) => (words(`${label} ${theme}`)
+          .some((x) => want.has(x)) ? tid : -1)));
+        const ids = all.filter((x) => about.has(x.topic)).map((x) => x.id);
+        return { ids, semantic: true, capped: false };
+      }
+      const word = t.toLowerCase().replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      const re = new RegExp(`(^|[^a-z0-9])${word}($|[^a-z0-9])`);
+      const ids = all.filter((x) => re.test(x.title.toLowerCase())).map((x) => x.id);
+      return { ids, semantic: false, capped: false };
+    },
+    /** As GET /api/topics/trends/threads. */
+    threads: (ids) => ids.map(Number).map((i) => titles.get(i)).filter(Boolean)
+      .map((x) => ({ ...x, topic: undefined })),
+  };
 }

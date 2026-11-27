@@ -1,0 +1,462 @@
+/*
+ * Copyright 2026 Adobe. All rights reserved.
+ * This file is licensed to you under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License. You may obtain a copy
+ * of the License at https://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software distributed under
+ * the License is distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR REPRESENTATIONS
+ * OF ANY KIND, either express or implied. See the License for the specific language
+ * governing permissions and limitations under the License.
+ */
+
+/*
+ * The customer portal's page (ui/portal.html), in Spectrum 2:
+ *
+ * - the lobby: a Form in one column, its sections set apart by space; the technologies
+ *   Checkboxes in groups; the people a ListView; what the lobby waits for an InlineAlert.
+ * - a channel: the threads a ListView on the frame, the thread picked in the content area, as
+ *   the inbox has its list and thread; a message's author an Avatar (their picture over their
+ *   initials), Adobe's people a Badge, reactions Tags that toggle, its images a gallery and
+ *   its other files Cards.
+ * - writing: a TextArea under an ActionGroup of quiet ActionButtons (the formatting, a
+ *   mention, emoji, files, the preview), its suggestions and the emoji picker Popovers, the
+ *   files being attached Tags with a thumbnail.
+ * - "Your company and colleagues" and "Delete this message?": Dialogs.
+ */
+
+/* ==== The page's layout ========================================================================
+   Where everything is and how it moves. Its look, in Spectrum 2's components, follows below. */
+:root { --safe-bottom: env(safe-area-inset-bottom, 0px); }
+:root.keyboard { --safe-bottom: 0px; }
+main { flex: 1; min-height: 0; overflow: auto; display: flex; flex-direction: column; }
+main > .empty { margin: auto; }
+[hidden] { display: none !important; }
+
+/* The lobby: one column, as wide as a form reads. */
+.lobby { width: 100%; max-width: calc(var(--spectrum-spacing-1000) * 9); margin: 0 auto; }
+.lobby .pair { display: flex; flex-wrap: wrap; align-items: flex-end; }
+.lobby .pair.top { align-items: center; }
+.lobby .pair > .fld { flex: 1 1 calc(var(--spectrum-spacing-1000) * 3); }
+.lobby textarea { width: 100%; resize: vertical; }
+.tech fieldset { display: grid; grid-template-columns: repeat(auto-fill, minmax(calc(var(--spectrum-spacing-1000) * 2 + var(--spectrum-spacing-600)), 1fr)); min-width: 0; margin: 0; padding: 0; border: 0; }
+.tech legend { grid-column: 1 / -1; }
+.tech .pick { display: flex; align-items: center; cursor: pointer; }
+.people { list-style: none; margin: 0; padding: 0; }
+.people li { display: flex; align-items: center; min-width: 0; }
+.people .sub { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.actions { display: flex; align-items: center; justify-content: flex-end; }
+.actions .status { flex: 1; }
+.av { display: grid; place-items: center; flex: none; position: relative; overflow: hidden; border-radius: 50%; }
+/* A picture covers the initials; a logo is shown whole. */
+.av img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
+.av.square img { object-fit: contain; }
+.pic { display: flex; align-items: center; flex: none; }
+.pic-act { display: flex; flex-direction: column; align-items: flex-start; }
+
+/* A channel: its threads beside the one picked. */
+body.open main { display: grid; grid-template-columns: calc(var(--spectrum-spacing-100) * 44) 1fr; overflow: hidden; }
+body.open main > section { min-height: 0; min-width: 0; display: flex; flex-direction: column; }
+#threads .bar { display: flex; align-items: flex-end; flex: none; }
+#threads .bar .chan { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#threads .rows { flex: 1; min-height: 0; overflow: auto; }
+#threads .row { display: flex; flex-direction: column; align-items: stretch; width: 100%; text-align: left; }
+#threads .row .top { display: flex; align-items: center; min-width: 0; }
+#threads .row .name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#threads .row .sub { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#threads .row .dot { flex: none; border-radius: 50%; }
+#pane .title { display: flex; align-items: center; flex: none; min-width: 0; }
+#pane .title .fill { display: flex; align-items: center; flex: 1; min-width: 0; }
+#pane .title h2 { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#pane .back { display: none; }
+#pane .scroll { flex: 1; min-height: 0; overflow: auto; }
+#pane .composer { flex: none; }
+/* The messages: the customer's own people's on the right, a bubble each as wide as what it says;
+   Adobe's on the left, across the pane. */
+.messages { display: flex; flex-direction: column; list-style: none; margin: 0; padding: 0; }
+.msg { display: flex; align-items: flex-start; min-width: 0; }
+.msg .what { display: flex; flex-direction: column; align-items: flex-start; flex: 0 1 auto; min-width: 0; max-width: 100%; }
+.msg.adobe .what { flex: 1; }
+.msg.ours { flex-direction: row-reverse; }
+.msg.ours .what { align-items: flex-end; max-width: 85%; }
+.msg.editing .what { flex: 1; align-items: stretch; max-width: 100%; }
+.msg.gone.ours { justify-content: flex-start; }
+.msg .by { display: flex; align-items: baseline; flex-wrap: wrap; }
+.msg .own { order: -1; visibility: hidden; }
+.msg:hover .own, .msg:focus-within .own { visibility: visible; }
+.msg .body { max-width: 100%; overflow-wrap: anywhere; }
+.msg .bubble { width: fit-content; }
+:is(.msg .body, .rich) > :first-child { margin-top: 0; }
+:is(.msg .body, .rich) > :last-child { margin-bottom: 0; }
+:is(.msg .body, .rich) pre { overflow: auto; }
+:is(.msg .body, .rich) ul { list-style: disc; }
+:is(.msg .body, .rich) ul ul { list-style: circle; }
+.msg .body table { border-collapse: collapse; }
+/* What happens at Adobe right now, under the messages; who listens, over the text box. */
+.activity, .listening { display: flex; flex-wrap: wrap; align-items: center; margin: 0; }
+.dots { display: inline-flex; align-items: center; flex: none; }
+.dots i { display: block; border-radius: 50%; }
+.listening .live { flex: none; border-radius: 50%; }
+.reactions { display: flex; flex-wrap: wrap; align-items: center; position: relative; }
+/* A message's files: its images side by side, each as large as its size says before it has
+   loaded, and the others as cards. */
+.gallery { display: flex; flex-wrap: wrap; align-items: flex-start; }
+.shot { display: block; flex: none; max-width: 100%; cursor: zoom-in; }
+.shot img { display: block; max-width: 100%; height: auto; }
+.files { display: flex; flex-direction: column; align-items: flex-start; }
+.file { display: flex; flex-wrap: wrap; align-items: center; max-width: 100%; }
+.file .player { flex: 1 0 100%; min-width: 0; max-width: 100%; }
+.file-ico { display: grid; place-items: center; flex: none; }
+.file-nm { display: flex; flex-direction: column; min-width: 0; }
+.file-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+dialog.lightbox { width: 100vw; height: 100dvh; max-width: none; max-height: none; margin: 0; border: 0; cursor: zoom-out; }
+dialog.lightbox[open] { display: grid; place-items: center; }
+dialog.lightbox img { max-width: 96vw; max-height: 90dvh; object-fit: contain; }
+dialog.lightbox .bar { position: fixed; display: flex; align-items: center; }
+/* Writing: a field of rich text over the files being attached and the toolbar, which ends in
+   what sends it; the suggestions and the emoji picker open over it. */
+.composer { position: relative; }
+.field { display: flex; flex-direction: column; min-width: 0; }
+.rich { position: relative; overflow: auto; overflow-wrap: anywhere; max-height: 40dvh; outline: none; }
+.rich .mention { white-space: nowrap; }
+.tools { display: flex; flex-wrap: wrap; align-items: center; position: relative; }
+.tool, .send { display: grid; place-items: center; flex: none; }
+.tools .gap { flex: none; }
+.tools .send { margin-left: auto; }
+.composer .over { display: flex; flex-wrap: wrap; align-items: baseline; }
+.composer .over .listening { margin-left: auto; }
+.composer .foot { display: flex; align-items: baseline; }
+.composer .foot .hint { margin-left: auto; }
+.suggest { position: absolute; z-index: 6; left: 0; bottom: 100%; max-width: 100%; max-height: 40dvh; overflow: auto; list-style: none; }
+.suggest li { display: flex; align-items: center; cursor: pointer; white-space: nowrap; }
+.suggest .nm { overflow: hidden; text-overflow: ellipsis; }
+.picker { position: absolute; z-index: 6; left: 0; bottom: 100%; }
+.picker .grid { display: grid; grid-template-columns: repeat(8, 1fr); overflow: auto; max-height: 30dvh; }
+.picker .item { display: grid; place-items: center; }
+.picker.linker { display: flex; align-items: center; }
+.picker.linker input { flex: 1; min-width: 0; }
+.tray { display: flex; flex-wrap: wrap; }
+.tray .chip { display: inline-flex; align-items: center; min-width: 0; max-width: 100%; text-align: left; }
+.tray .chip img { flex: none; object-fit: cover; }
+.tray .chip .x { display: grid; place-items: center; flex: none; }
+dialog.company { width: min(100vw - var(--spectrum-spacing-400), var(--spectrum-spacing-1000) * 9); max-height: calc(100dvh - var(--spectrum-spacing-600)); overflow: auto; }
+dialog.company .head { display: flex; align-items: center; }
+dialog.company .head h2 { flex: 1; }
+dialog.confirm { max-width: calc(var(--spectrum-spacing-1000) * 5); }
+
+/* A touch screen has no pointer to rest on a message. */
+@media (hover: none) and (pointer: coarse) {
+  .msg .own { visibility: visible; }
+}
+@media (prefers-reduced-motion: reduce) { .dots i { animation: none; } }
+@keyframes dot { 0%, 60%, 100% { opacity: .25; } 30% { opacity: 1; } }
+/* Phones: the threads or the one picked (`body.picked`), which has a way back. */
+@media (max-width: 699px) {
+  body.open main { grid-template-columns: 1fr; }
+  body.open:not(.picked) #pane { display: none; }
+  body.open.picked #threads { display: none; }
+  #pane .back { display: grid; place-items: center; flex: none; }
+}
+
+/* ==== Spectrum 2's look ======================================================================== */
+
+.spectrum main { padding: 0 var(--frame-gap) var(--frame-gap); }
+.spectrum main > .empty, .spectrum #pane > .empty:not(.pick), .spectrum #threads .empty {
+  padding: var(--spectrum-spacing-400);
+  color: var(--spectrum-neutral-subdued-content-color-default);
+  text-align: center;
+}
+.spectrum .sub { color: var(--spectrum-neutral-subdued-content-color-default); font-size: var(--spectrum-font-size-75); }
+.spectrum .hint { margin: var(--spectrum-spacing-200) 0 0; color: var(--spectrum-neutral-subdued-content-color-default); font-size: var(--spectrum-font-size-75); }
+/* An individual channel says whose its threads are, under the channel's bar. */
+.spectrum #threads .hint.own { margin: 0; padding: 0 var(--spectrum-component-edge-to-text-100) var(--spectrum-spacing-200); }
+.spectrum .status { min-height: var(--spectrum-line-height-100); color: var(--spectrum-neutral-subdued-content-color-default); font-size: var(--spectrum-font-size-75); }
+.spectrum .status.err { color: var(--spectrum-negative-content-color-default); }
+.spectrum h2, .spectrum h3 { margin: 0; line-height: var(--spectrum-heading-line-height); font-weight: var(--spectrum-bold-font-weight); }
+.spectrum input:not([type="checkbox"]), .spectrum select { min-height: var(--s2-ctl); padding: 0 var(--spectrum-component-edge-to-text-100); }
+.spectrum textarea { padding: var(--spectrum-component-top-to-text-100) var(--spectrum-component-edge-to-text-100); line-height: var(--spectrum-line-height-200); }
+.spectrum button:not(.primary, .danger, .link, .row, .chip, .item, .tool, .shot, #user, .x, .back) {
+  min-height: var(--s2-ctl);
+  padding: 0 var(--spectrum-component-edge-to-text-100);
+  font-weight: var(--spectrum-medium-font-weight);
+}
+.spectrum .actions { gap: var(--spectrum-spacing-200); margin-top: var(--spectrum-spacing-200); }
+
+/* Avatar: initials on one of the categorical backgrounds (ui/spectrum.css, `data-hue`). */
+.spectrum .av {
+  width: var(--spectrum-avatar-size-300);
+  height: var(--spectrum-avatar-size-300);
+  color: var(--spectrum-white);
+  font-size: var(--spectrum-font-size-50);
+  font-weight: var(--spectrum-bold-font-weight);
+}
+.spectrum #user .s2-chevron { color: var(--spectrum-neutral-subdued-content-color-default); }
+/* A logo: a Thumbnail, rounded as a nested object is; a picture to change, larger. */
+.spectrum .av.square { border-radius: var(--spectrum-corner-radius-100); }
+.spectrum .av.square:has(img) { background: var(--spectrum-gray-100) !important; color: transparent; }
+.spectrum .av.big { width: calc(var(--spectrum-avatar-size-700) + var(--spectrum-spacing-400)); height: calc(var(--spectrum-avatar-size-700) + var(--spectrum-spacing-400)); font-size: var(--spectrum-font-size-300); }
+.spectrum .pic { gap: var(--spectrum-spacing-200); }
+.spectrum .pic-act { gap: var(--spectrum-spacing-50); }
+
+/* The lobby, in the content area. */
+.spectrum .lobby {
+  padding: var(--spectrum-spacing-500) var(--spectrum-spacing-400) calc(var(--spectrum-spacing-500) + var(--safe-bottom));
+  background: var(--content);
+  border-radius: var(--content-radius);
+  box-shadow: var(--content-shadow);
+}
+.spectrum .lobby .hello { color: var(--spectrum-heading-color); font-size: var(--spectrum-heading-size-l); }
+.spectrum .lobby .lead { max-width: calc(var(--spectrum-spacing-1000) * 7); margin: var(--spectrum-spacing-100) 0 var(--spectrum-spacing-400); color: var(--spectrum-neutral-subdued-content-color-default); }
+.spectrum .lobby .card { margin: 0 0 var(--spectrum-spacing-500); }
+.spectrum .lobby .card h3 { margin-bottom: var(--spectrum-spacing-200); color: var(--spectrum-heading-color); font-size: var(--spectrum-font-size-300); }
+.spectrum .lobby .pair { gap: var(--spectrum-spacing-200); }
+/* InlineAlert: what the lobby waits for, or why it got no channel. */
+.spectrum .banner {
+  margin: 0 0 var(--spectrum-spacing-400);
+  padding: var(--spectrum-spacing-200) var(--spectrum-spacing-300);
+  border: var(--spectrum-border-width-200) solid var(--spectrum-notice-visual-color);
+  border-radius: var(--spectrum-corner-radius-large-default);
+}
+.spectrum .banner.negative { border-color: var(--spectrum-negative-visual-color); }
+.spectrum .banner .reason { font-weight: var(--spectrum-bold-font-weight); }
+.spectrum .tech fieldset { column-gap: var(--spectrum-spacing-300); }
+.spectrum .tech fieldset + fieldset { margin-top: var(--spectrum-spacing-300); }
+.spectrum .tech legend { margin-bottom: var(--spectrum-spacing-75); padding: 0; color: var(--spectrum-neutral-subdued-content-color-default); font-size: var(--spectrum-font-size-75); font-weight: var(--spectrum-medium-font-weight); }
+.spectrum .tech .pick { gap: var(--spectrum-text-to-visual-100); min-height: var(--s2-ctl); }
+.spectrum .tech .pick input { margin: 0; }
+.spectrum .people { margin-bottom: var(--spectrum-spacing-200); }
+.spectrum .people li { gap: var(--spectrum-spacing-100); min-height: var(--spectrum-component-height-200); border-bottom: var(--spectrum-border-width-100) solid var(--spectrum-gray-200); }
+.spectrum .people .nm { font-weight: var(--spectrum-medium-font-weight); }
+.spectrum .tag {
+  flex: none;
+  padding: 0 var(--spectrum-spacing-75);
+  border: var(--spectrum-border-width-100) solid var(--spectrum-gray-300);
+  color: var(--spectrum-neutral-subdued-content-color-default);
+  line-height: var(--spectrum-line-height-200);
+}
+.spectrum .tag.adobe { color: var(--spectrum-white); background: var(--spectrum-accent-background-color-default); border-color: transparent; }
+.spectrum .tag.resolved { color: var(--spectrum-neutral-content-color-default); background: var(--spectrum-positive-subtle-background-color-default); border-color: transparent; }
+
+/* The threads: a ListView on the frame. */
+.spectrum #threads { padding: 0 var(--frame-gap) 0 var(--spectrum-spacing-100); }
+.spectrum #threads .bar { gap: var(--spectrum-spacing-100); padding: var(--spectrum-spacing-100) 0 var(--spectrum-spacing-200); }
+.spectrum #threads .bar .chan { align-self: center; color: var(--spectrum-heading-color); font-size: var(--spectrum-font-size-300); }
+.spectrum #threads .rows { padding-bottom: var(--safe-bottom); }
+.spectrum #threads .row {
+  gap: var(--spectrum-spacing-50);
+  padding: var(--spectrum-spacing-100) var(--spectrum-component-edge-to-text-100);
+  color: var(--spectrum-neutral-content-color-default);
+  background: transparent;
+  border: 0;
+  border-radius: var(--spectrum-corner-radius-100);
+}
+.spectrum #threads .row + .row { margin-top: var(--spectrum-spacing-50); }
+.spectrum #threads .row:hover { background: rgb(var(--spectrum-gray-900-rgb), var(--spectrum-table-row-hover-opacity)); }
+.spectrum #threads .row.on { background: rgb(var(--spectrum-blue-900-rgb), var(--spectrum-table-selected-row-background-opacity)); }
+.spectrum #threads .row .top { gap: var(--spectrum-spacing-100); }
+.spectrum #threads .row.unread .name { font-weight: var(--spectrum-bold-font-weight); }
+.spectrum #threads .row .dot { width: var(--spectrum-spacing-100); height: var(--spectrum-spacing-100); background: var(--spectrum-accent-visual-color); }
+
+/* The thread picked: the content area. */
+.spectrum #pane {
+  background: var(--content);
+  border-radius: var(--content-radius);
+  box-shadow: var(--content-shadow);
+  overflow: hidden;
+}
+.spectrum #pane .title { gap: var(--spectrum-spacing-100); padding: var(--spectrum-spacing-300) var(--spectrum-spacing-400) var(--spectrum-spacing-200); }
+.spectrum #pane .title .fill { gap: var(--spectrum-spacing-100); }
+.spectrum #pane .title h2 { color: var(--spectrum-heading-color); font-size: var(--spectrum-heading-size-s); }
+.spectrum #pane .scroll { padding: 0 var(--spectrum-spacing-400) var(--spectrum-spacing-200); }
+.spectrum #pane .back, .spectrum dialog .x {
+  width: var(--s2-ctl);
+  height: var(--s2-ctl);
+  padding: 0;
+  background: transparent;
+  border: 0;
+}
+.spectrum #pane .back .s2-chevron { rotate: 90deg; }
+.spectrum .messages { gap: var(--spectrum-spacing-300); padding: var(--spectrum-spacing-200) 0; }
+.spectrum .msg { gap: var(--spectrum-spacing-200); }
+.spectrum .msg .by { gap: var(--spectrum-spacing-100); margin-bottom: var(--spectrum-spacing-50); }
+.spectrum .msg .by .nm { font-weight: var(--spectrum-bold-font-weight); }
+.spectrum .msg .by time { color: var(--spectrum-neutral-subdued-content-color-default); font-size: var(--spectrum-font-size-75); }
+/* The customer's own people's messages: a bubble, as the user's message of a conversation. */
+.spectrum .msg .bubble { padding: var(--spectrum-spacing-100) var(--spectrum-spacing-200); background: var(--spectrum-gray-100); border-radius: var(--spectrum-corner-radius-large-default); }
+.spectrum :is(.msg .body, .rich) :is(p, ul, ol) { margin: var(--spectrum-spacing-100) 0; }
+.spectrum :is(.msg .body, .rich) :is(ul, ol) { padding-left: var(--spectrum-spacing-400); }
+.spectrum :is(.msg .body, .rich) :is(pre, code) { font-family: var(--spectrum-code-font-family-stack); font-size: var(--spectrum-code-size-xs); background: var(--spectrum-gray-75); border-radius: var(--spectrum-corner-radius-75); }
+.spectrum :is(.msg .bubble, .rich) :is(pre, code) { background: var(--spectrum-gray-200); }
+.spectrum :is(.msg .body, .rich) pre { margin: var(--spectrum-spacing-100) 0; padding: var(--spectrum-spacing-200); }
+.spectrum .msg .body :is(th, td) { padding: var(--spectrum-spacing-50) var(--spectrum-spacing-100); border: var(--spectrum-border-width-100) solid var(--spectrum-gray-300); }
+.spectrum :is(.msg .body, .rich) blockquote { margin: var(--spectrum-spacing-100) 0; padding-left: var(--spectrum-spacing-200); border-left: var(--spectrum-border-width-200) solid var(--spectrum-gray-300); color: var(--spectrum-neutral-subdued-content-color-default); }
+.spectrum .rich .mention { color: var(--spectrum-accent-content-color-default); font-weight: var(--spectrum-medium-font-weight); }
+/* Right now, at Adobe: three dots that take turns, and what they stand for. */
+.spectrum .activity { gap: var(--spectrum-spacing-100); padding: 0 0 var(--spectrum-spacing-200); color: var(--spectrum-neutral-subdued-content-color-default); font-size: var(--spectrum-font-size-75); }
+.spectrum .dots { gap: var(--spectrum-spacing-50); padding: var(--spectrum-spacing-100) var(--spectrum-spacing-100); background: var(--spectrum-gray-100); border-radius: var(--spectrum-corner-radius-large-default); }
+.spectrum .dots i { width: var(--spectrum-spacing-75); height: var(--spectrum-spacing-75); background: currentColor; animation: dot var(--spectrum-animation-duration-2000) ease-in-out infinite; }
+.spectrum .dots i:nth-child(2) { animation-delay: var(--spectrum-animation-duration-300); }
+.spectrum .dots i:nth-child(3) { animation-delay: var(--spectrum-animation-duration-600); }
+/* Who listens: a quiet line, its dot the green of what is on. */
+.spectrum .composer .over { gap: var(--spectrum-spacing-50) var(--spectrum-spacing-200); margin-bottom: var(--spectrum-spacing-75); color: var(--spectrum-neutral-subdued-content-color-default); font-size: var(--spectrum-font-size-75); line-height: var(--spectrum-line-height-100); }
+.spectrum .listening { gap: var(--spectrum-spacing-75); }
+.spectrum .listening .live { width: var(--spectrum-spacing-100); height: var(--spectrum-spacing-100); background: var(--spectrum-positive-visual-color); }
+.spectrum .body .mention { color: var(--spectrum-accent-content-color-default); font-weight: var(--spectrum-medium-font-weight); }
+/* A mention of you: marked, and its message with it. */
+.spectrum .body .mention.me { padding: 0 var(--spectrum-spacing-50); color: var(--spectrum-neutral-content-color-default); background: var(--spectrum-notice-subtle-background-color-default); border-radius: var(--spectrum-corner-radius-75); }
+.spectrum .msg.names-me { box-shadow: inset var(--spectrum-border-width-200) 0 0 var(--spectrum-notice-visual-color); padding-left: var(--spectrum-spacing-200); }
+.spectrum .tag.you { color: var(--spectrum-neutral-content-color-default); background: var(--spectrum-notice-subtle-background-color-default); border-color: transparent; }
+/* Reactions: Tags that toggle; yours has the accent's edge. */
+.spectrum .reactions { gap: var(--spectrum-spacing-75); margin-top: var(--spectrum-spacing-100); }
+.spectrum .chip {
+  min-height: var(--spectrum-component-height-75);
+  padding: 0 var(--spectrum-spacing-100);
+  border-radius: calc(var(--spectrum-component-height-75) / 2);
+  font-size: var(--spectrum-font-size-75);
+}
+.spectrum .chip[aria-pressed="true"], .spectrum .chip[aria-pressed="true"]:hover:not(:disabled) {
+  color: var(--spectrum-neutral-content-color-default);
+  background: var(--spectrum-accent-subtle-background-color-default);
+  border-color: var(--spectrum-accent-visual-color);
+}
+.spectrum .chip.add { color: var(--spectrum-neutral-subdued-content-color-default); background: transparent; border-color: var(--spectrum-gray-300); }
+/* Popovers over the text box and under a message: the suggestions, the emoji to pick from. */
+.spectrum :is(.suggest, .picker) {
+  margin: 0 0 var(--spectrum-spacing-75);
+  padding: var(--spectrum-spacing-75);
+  background: var(--spectrum-background-layer-2-color);
+  border: var(--spectrum-border-width-100) solid var(--spectrum-gray-200);
+  border-radius: var(--spectrum-corner-radius-large-default);
+  box-shadow: var(--s2-elevated);
+}
+.spectrum .picker { width: calc(var(--s2-ctl) * 8 + var(--spectrum-spacing-200)); max-width: calc(100vw - var(--spectrum-spacing-400)); }
+.spectrum .picker .s2-search { margin-bottom: var(--spectrum-spacing-75); }
+.spectrum .picker .grid { gap: var(--spectrum-spacing-50); }
+.spectrum .picker .grid .sub { grid-column: 1 / -1; padding: var(--spectrum-spacing-100); }
+.spectrum .picker .item { width: 100%; aspect-ratio: 1; padding: 0; background: transparent; border: 0; font-size: var(--spectrum-font-size-300); }
+.spectrum .picker .item:hover, .spectrum .picker .item:focus-visible { background: var(--s2-down); }
+.spectrum .picker.linker { gap: var(--spectrum-spacing-100); }
+.spectrum .picker.linker input { min-height: var(--s2-ctl); padding: 0 var(--spectrum-component-edge-to-text-100); }
+.spectrum .suggest { left: var(--spectrum-spacing-400); min-width: calc(var(--spectrum-spacing-1000) * 3); }
+.spectrum #pane .scroll > .composer .suggest { left: 0px; }
+.spectrum .suggest li { gap: var(--spectrum-spacing-100); min-height: var(--s2-ctl); padding: 0 var(--spectrum-component-edge-to-text-100); border-radius: var(--spectrum-corner-radius-100); }
+.spectrum .suggest li[aria-selected="true"], .spectrum .suggest li:hover { background: var(--s2-down); }
+.spectrum .suggest .av { width: var(--spectrum-avatar-size-100); height: var(--spectrum-avatar-size-100); }
+.spectrum .suggest .glyph { width: var(--spectrum-avatar-size-100); font-size: var(--spectrum-font-size-300); text-align: center; }
+/* The field: a prompt field, its border the focus of what is written in it. */
+.spectrum .field {
+  background: var(--spectrum-gray-25);
+  border: var(--spectrum-border-width-200) solid var(--spectrum-gray-300);
+  border-radius: var(--spectrum-corner-radius-large-default);
+  transition: border-color var(--s2-ease);
+}
+.spectrum .field:hover { border-color: var(--spectrum-gray-400); }
+.spectrum .field:focus-within { border-color: var(--spectrum-gray-800); }
+.spectrum .rich { min-height: var(--spectrum-component-height-200); padding: var(--spectrum-component-top-to-text-100) var(--spectrum-component-edge-to-text-100); }
+.spectrum .rich.tall { min-height: calc(var(--spectrum-component-height-200) * 4); }
+.spectrum .rich a { color: var(--spectrum-accent-content-color-default); }
+/* The toolbar: quiet ActionButtons, each on while the caret is in what it makes; then Send. */
+.spectrum .tools { gap: var(--spectrum-spacing-50); padding: var(--spectrum-spacing-75); }
+.spectrum .tools .gap { width: var(--spectrum-spacing-200); }
+.spectrum .tool {
+  min-width: var(--spectrum-component-height-75);
+  height: var(--spectrum-component-height-75);
+  padding: 0 var(--spectrum-spacing-75);
+  color: var(--spectrum-neutral-subdued-content-color-default);
+  background: transparent;
+  border: 0;
+  font-size: var(--spectrum-font-size-100);
+}
+.spectrum .tool:hover:not(:disabled) { color: var(--spectrum-neutral-content-color-hover); background: var(--spectrum-gray-100); }
+.spectrum :is(.tool, .send) svg { width: var(--spectrum-workflow-icon-size-75); height: var(--spectrum-workflow-icon-size-75); }
+.spectrum .tool[aria-pressed="true"], .spectrum .tool[aria-pressed="true"]:hover:not(:disabled) { color: var(--spectrum-neutral-content-color-default); background: var(--spectrum-gray-200); }
+.spectrum .send {
+  width: var(--spectrum-component-height-100);
+  height: var(--spectrum-component-height-100);
+  padding: 0;
+  color: var(--spectrum-white);
+  background: var(--spectrum-accent-background-color-default);
+  border: 0;
+  border-radius: 50%;
+}
+.spectrum .send:hover:not(:disabled) { color: var(--spectrum-white); background: var(--spectrum-accent-background-color-hover); }
+.spectrum .send:active:not(:disabled) { background: var(--spectrum-accent-background-color-down); }
+.spectrum .send:disabled { color: var(--spectrum-disabled-content-color); background: var(--spectrum-disabled-background-color); }
+/* The files being attached: a Tag each, with its thumbnail or its kind, and a clear button. */
+.spectrum .tray { gap: var(--spectrum-spacing-100); padding: 0 var(--spectrum-spacing-100) var(--spectrum-spacing-75); }
+.spectrum .tray .chip {
+  gap: var(--spectrum-spacing-100);
+  min-height: var(--spectrum-component-height-200);
+  padding: var(--spectrum-spacing-50) var(--spectrum-spacing-75);
+  border-radius: var(--s2-radius);
+  background: var(--spectrum-gray-100);
+}
+.spectrum .tray .chip.error { border-color: var(--spectrum-negative-visual-color); }
+.spectrum .tray .chip.error .sub { color: var(--spectrum-negative-content-color-default); }
+.spectrum .tray .chip.uploading { opacity: .6; }
+.spectrum .tray .chip img { width: var(--spectrum-component-height-100); height: var(--spectrum-component-height-100); border-radius: var(--spectrum-corner-radius-75); }
+.spectrum .tray .chip .x { width: var(--spectrum-component-height-50); height: var(--spectrum-component-height-50); padding: 0; background: transparent; border: 0; border-radius: var(--spectrum-corner-radius-75); }
+.spectrum .tray .chip .x:hover { background: var(--s2-down); }
+.spectrum #pane.dropping { outline: var(--spectrum-border-width-200) dashed var(--spectrum-accent-visual-color); outline-offset: calc(-1 * var(--spectrum-spacing-100)); }
+/* A message's files. */
+.spectrum .gallery { gap: var(--spectrum-spacing-100); margin-top: var(--spectrum-spacing-100); }
+.spectrum .shot { padding: 0; background: var(--spectrum-gray-100); border: 0; border-radius: var(--spectrum-corner-radius-large-default); overflow: hidden; }
+.spectrum .shot img { max-height: calc(var(--spectrum-spacing-1000) * 4); }
+.spectrum .files { gap: var(--spectrum-spacing-100); margin-top: var(--spectrum-spacing-100); }
+.spectrum .file {
+  gap: var(--spectrum-spacing-100) var(--spectrum-spacing-200);
+  min-width: min(100%, calc(var(--spectrum-spacing-1000) * 3));
+  padding: var(--spectrum-spacing-100) var(--spectrum-spacing-200);
+  border: var(--spectrum-border-width-100) solid var(--spectrum-gray-300);
+  border-radius: var(--spectrum-corner-radius-large-default);
+}
+.spectrum .file video.player { aspect-ratio: 16 / 9; background: var(--spectrum-black); border-radius: var(--spectrum-corner-radius-100); }
+.spectrum .file-ico {
+  width: var(--spectrum-component-height-100);
+  height: var(--spectrum-component-height-100);
+  color: var(--spectrum-neutral-subdued-content-color-default);
+  background: var(--spectrum-gray-100);
+  border-radius: var(--spectrum-corner-radius-75);
+  font-size: var(--spectrum-font-size-50);
+  font-weight: var(--spectrum-bold-font-weight);
+}
+.spectrum .file-name { color: inherit; font-weight: var(--spectrum-medium-font-weight); }
+.spectrum a.file-name { text-decoration: none; }
+.spectrum a.file-name:hover { text-decoration: underline; }
+.spectrum dialog.lightbox { padding: var(--spectrum-spacing-300); background: transparent; box-shadow: none; }
+.spectrum dialog.lightbox::backdrop { background: var(--spectrum-transparent-black-800); opacity: 1; }
+.spectrum dialog.lightbox img { border-radius: var(--spectrum-corner-radius-100); }
+.spectrum dialog.lightbox .bar { top: var(--spectrum-spacing-200); right: var(--spectrum-spacing-200); gap: var(--spectrum-spacing-100); }
+.spectrum dialog.lightbox .bar :is(a, button) {
+  display: grid;
+  place-items: center;
+  min-width: var(--s2-ctl);
+  height: var(--s2-ctl);
+  padding: 0 var(--spectrum-component-edge-to-text-100);
+  color: var(--spectrum-white);
+  background: var(--spectrum-transparent-black-500);
+  border: var(--spectrum-border-width-100) solid var(--spectrum-transparent-white-400);
+  border-radius: var(--s2-radius);
+  text-decoration: none;
+}
+/* The reply, under the messages. */
+.spectrum .composer { padding: var(--spectrum-spacing-200) var(--spectrum-spacing-400) calc(var(--spectrum-spacing-300) + var(--safe-bottom)); border-top: var(--spectrum-border-width-100) solid var(--spectrum-gray-200); }
+.spectrum #pane .scroll > .composer { padding: var(--spectrum-spacing-100) 0 0; border-top: 0; }
+.spectrum .composer .foot { gap: var(--spectrum-spacing-200); min-height: var(--spectrum-line-height-100); margin-top: var(--spectrum-spacing-75); font-size: var(--spectrum-font-size-75); }
+.spectrum form.edit .actions { margin-top: var(--spectrum-spacing-100); }
+
+/* Dialogs. */
+.spectrum dialog.company { padding: 0; }
+.spectrum dialog.company .head { gap: var(--spectrum-spacing-200); padding: var(--spectrum-spacing-400) var(--spectrum-spacing-400) 0; }
+.spectrum dialog.company .head h2 { color: var(--spectrum-heading-color); font-size: var(--spectrum-heading-size-s); }
+.spectrum dialog.company .lobby { padding-top: var(--spectrum-spacing-300); background: transparent; box-shadow: none; }
+.spectrum dialog.confirm { padding: var(--spectrum-spacing-400); }
+.spectrum dialog.confirm p { margin: 0; }
+
+@media (max-width: 699px) {
+  .spectrum main { padding: 0; }
+  .spectrum .lobby { padding: var(--spectrum-spacing-300) var(--spectrum-spacing-200) calc(var(--spectrum-spacing-400) + var(--safe-bottom)); border-radius: var(--content-radius) var(--content-radius) 0px 0px; box-shadow: none; }
+  .spectrum #threads { padding: 0 var(--spectrum-spacing-100); }
+  .spectrum #pane { border-radius: var(--content-radius) var(--content-radius) 0px 0px; box-shadow: none; }
+  .spectrum #pane .title, .spectrum #pane .scroll, .spectrum .composer { padding-left: var(--spectrum-spacing-200); padding-right: var(--spectrum-spacing-200); }
+}

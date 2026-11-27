@@ -13,10 +13,22 @@
 import git from 'isomorphic-git';
 import http from 'isomorphic-git/http/web';
 import { memfs } from './memfs.js';
+import { checkDiagrams } from '../diagrams.js';
 import {
-  addLogEntry, asSystemPrompt, checkConcept, checkLayout, isEntry, renderIndex, RESERVED,
+  addLogEntry, asSystemPrompt, checkConcept, checkLayout, dotInfo, isDiagram, isEntry, renderIndex,
+  RESERVED,
   splitFrontmatter, stampGenerated, SYSTEM_PROMPT,
 } from './okf.js';
+import { checkStackTech } from '../stacktech.js';
+import {
+  AREAS, checkArea, compileAreas, isArea,
+} from '../areas.js';
+import { storeOrgStack } from '../orgstacks.js';
+import { indexWrite, isConcept } from '../kbindex.js';
+import { STACK_PATH } from '../stack.js';
+import {
+  checkCatalog, compileCatalog, inCatalog, movesOf, storeCatalog, withMovedFrom,
+} from '../catalog.js';
 
 /**
  * Writes to a knowledge base: clone it into memory, apply the agent's changes, rewrite the
@@ -39,6 +51,24 @@ const enc = new TextEncoder();
 export const kindOf = (artifact) => (/^kb-(org|team)-/.exec(String(artifact)) || [])[1] || null;
 
 /**
+ * Whether `path` names a file of a knowledge base as it is: relative, with no empty, `.` or `..`
+ * segment and no backslash. Anything else could name another file than the one checked
+ * (`./systemprompt.md` is `systemprompt.md`), so every change is refused that is not.
+ */
+export const isCanonicalPath = (path) => {
+  const p = String(path ?? '');
+  return Boolean(p) && !p.includes('\\') && p.split('/').every((s) => s && s !== '.' && s !== '..');
+};
+
+/**
+ * Who may change file `path` of a knowledge base: `manager` (the admin team and the team's
+ * managers: its agent instructions, `systemprompt.md`, and its Clef areas, `areas/`), or
+ * `member` (everyone on its team, src/kbaccess.js `mayWrite`) for every other file.
+ */
+export const pathOwner = (path) => (path === SYSTEM_PROMPT || String(path).startsWith(`${AREAS}/`)
+  ? 'manager' : 'member');
+
+/**
  * Checks a change set before anything is cloned; returns an error message or null. Only
  * `staff` writes (the admin team, in the knowledge-base editor) may touch `systemprompt.md`.
  * The agents' concepts (not `staff`) of a knowledge base of `kind` go where their type goes
@@ -53,6 +83,9 @@ export function checkChanges(changes, { staff = false, kind = null } = {}) {
   }
   const seen = new Set();
   for (const c of changes) {
+    if (!isCanonicalPath(c.path)) {
+      return `${c.path || '(no path)'}: give the file's path as it is, without ./, ../ or //`;
+    }
     if (seen.has(c.path)) {
       return `${c.path} appears twice`;
     }
@@ -67,12 +100,19 @@ export function checkChanges(changes, { staff = false, kind = null } = {}) {
       // eslint-disable-next-line no-continue
       continue;
     }
+    // An area is a Clef question in every label: people author them (src/areas.js), not agents.
+    if (!staff && String(c.path).startsWith(`${AREAS}/`)) {
+      return `${c.path}: areas are kept by the admin team and team managers, on the Topics page`;
+    }
     if (c.delete) {
       if (RESERVED.has(String(c.path).split('/').pop())) {
         return `${c.path} is maintained automatically`;
       }
     } else {
       const why = checkConcept(c.path, String(c.content ?? ''))
+        // What is under products/ of a team's is what Clef asks: people are held to it too.
+        || (kind === 'team' ? checkCatalog(c.path, String(c.content ?? '')) : null)
+        || (kind === 'team' ? checkArea(c.path, String(c.content ?? '')) : null)
         || (!staff && kind ? checkLayout(c.path, String(c.content ?? ''), kind) : null);
       if (why) {
         return `${c.path}: ${why}`;
@@ -124,10 +164,13 @@ async function rewriteIndexes(fs, dirs) {
       // eslint-disable-next-line no-await-in-loop
       const st = await fs.promises.stat(`${abs}/${name}`);
       if (st.isDirectory()) {
-        const count = fs.files(`${abs}/${name}`).filter((f) => f.endsWith('.md') && !RESERVED.has(f.split('/').pop())).length;
+        const count = fs.files(`${abs}/${name}`).filter((f) => (f.endsWith('.md') || isDiagram(f)) && !RESERVED.has(f.split('/').pop())).length;
         if (count) {
           entries.push({ name, dir: true, count });
         }
+      } else if (isDiagram(name)) {
+        // eslint-disable-next-line no-await-in-loop
+        entries.push({ name, dot: dotInfo(name, await fs.promises.readFile(`${abs}/${name}`, 'utf8')) });
       } else if (name.endsWith('.md')) {
         // eslint-disable-next-line no-await-in-loop
         const fm = splitFrontmatter(await fs.promises.readFile(`${abs}/${name}`, 'utf8'));
@@ -179,8 +222,10 @@ async function apply(fs, changes, { by, at }) {
       // eslint-disable-next-line no-await-in-loop
       await fs.mkdirp(dirOf(abs));
       const content = c.path === SYSTEM_PROMPT ? asSystemPrompt(c.content) : String(c.content);
+      // A diagram has no frontmatter to stamp: its commit says who wrote it and when.
+      const text = isDiagram(c.path) ? content : stampGenerated(content, by, at);
       // eslint-disable-next-line no-await-in-loop
-      await fs.promises.writeFile(abs, enc.encode(stampGenerated(content, by, at)));
+      await fs.promises.writeFile(abs, enc.encode(text));
     }
   }
   return null;
@@ -205,13 +250,32 @@ async function stageAll(fs) {
 }
 
 /**
+ * `changes` with what a move of a catalog file keeps (src/catalog.js): a file the write deletes
+ * and one it creates in its place, the new one listing the old one's ids in `moved_from`.
+ */
+async function keepMoves(fs, changes) {
+  const pairs = await movesOf(changes, {
+    old: (path) => fs.promises.readFile(`${DIR}/${path}`, 'utf8').catch(() => ''),
+    present: (path) => exists(fs, `${DIR}/${path}`),
+  });
+  if (!pairs.length) {
+    return changes;
+  }
+  return changes.map((c) => {
+    const pair = pairs.find((x) => x.to === c.path);
+    return pair ? { ...c, content: withMovedFrom(String(c.content ?? ''), pair.ids) } : c;
+  });
+}
+
+/**
  * Commits `changes` to the clone in `fs` (already cloned or initialised at `DIR`). Exported
- * for tests, which run it without a remote.
+ * for tests, which run it without a remote. `catalog`: a team's knowledge base, whose moved
+ * catalog files keep their ids.
  */
 export async function commitChanges(fs, changes, {
-  message, by, at, logEntry, author = AGENT_AUTHOR,
+  message, by, at, logEntry, author = AGENT_AUTHOR, catalog = false,
 }) {
-  const conflict = await apply(fs, changes, { by, at });
+  const conflict = await apply(fs, catalog ? await keepMoves(fs, changes) : changes, { by, at });
   if (conflict) {
     return { conflict };
   }
@@ -265,6 +329,52 @@ async function countEntries(env, artifact, fs) {
     })));
 }
 
+/**
+ * Compiles the catalog of a team's knowledge base from the work tree that was pushed
+ * (src/catalog.js): its products/ files into tech_stack. A failure leaves the rows as they were,
+ * and the cron compiles it again (its commit is not recorded).
+ */
+export async function compileTree(env, artifact, fs, commit) {
+  if (!env.DB) {
+    return null;
+  }
+  try {
+    const paths = fs.files(DIR).filter((f) => !f.startsWith('.git/') && (inCatalog(f) || isArea(f)));
+    const files = await Promise.all(paths.map(async (path) => ({
+      path, text: await fs.promises.readFile(`${DIR}/${path}`, 'utf8'),
+    })));
+    const team = artifact.replace(/^kb-team-/, '');
+    return await storeCatalog(env, { team, repo: artifact, commit }, {
+      ...compileCatalog(files.filter((f) => inCatalog(f.path))),
+      areas: compileAreas(files.filter((f) => isArea(f.path))),
+    });
+  } catch (e) {
+    console.error(JSON.stringify({
+      route: 'kb', action: 'catalog', artifact, error: e.message,
+    }));
+    return null;
+  }
+}
+
+/**
+ * The search's rows of the concepts a pushed write changed (src/kbindex.js), from the work
+ * tree: what is there now, with its blob hash, or that it was deleted.
+ */
+async function indexChanged(env, artifact, fs, changes) {
+  const files = await Promise.all(changes.filter((c) => isConcept(c.path)).map(async (c) => {
+    const bytes = await fs.promises.readFile(`${DIR}/${c.path}`).catch(() => null);
+    if (!bytes) {
+      return { path: c.path, deleted: true };
+    }
+    return {
+      path: c.path,
+      hash: (await git.hashBlob({ object: bytes })).oid,
+      text: await fs.promises.readFile(`${DIR}/${c.path}`, 'utf8'),
+    };
+  }));
+  await indexWrite(env, artifact, files);
+}
+
 const rejected = (e) => /PushRejected|not a simple fast-forward|non-fast-forward|fetch first|failed to update ref/i
   .test(`${e && e.code} ${e && e.message}`);
 
@@ -279,9 +389,21 @@ const rejected = (e) => /PushRejected|not a simple fast-forward|non-fast-forward
 export async function writeKnowledge(env, artifact, changes, {
   message, by, at = new Date().toISOString(), logEntry, author, staff = false,
 }) {
-  const invalid = checkChanges(changes, { staff, kind: kindOf(artifact) });
+  const invalid = checkChanges(changes, { staff, kind: kindOf(artifact) })
+    || await checkDiagrams(env, changes);
   if (invalid) {
     return { error: invalid };
+  }
+  // A customer's stack drawing names its technologies as the catalog does (src/stacktech.js).
+  let filled = [];
+  if (kindOf(artifact) === 'org') {
+    const fixed = await checkStackTech(env, changes, { staff });
+    if (fixed.error) {
+      return { error: fixed.error };
+    }
+    ({ filled } = fixed);
+    // eslint-disable-next-line no-param-reassign
+    changes = fixed.changes;
   }
   const repo = await env.ARTIFACTS.get(artifact);
   try {
@@ -295,7 +417,7 @@ export async function writeKnowledge(env, artifact, changes, {
       const fs = await cloneOrInit(remote, headers, empty);
       // eslint-disable-next-line no-await-in-loop
       const result = await commitChanges(fs, changes, {
-        message, by, at, logEntry, author,
+        message, by, at, logEntry, author, catalog: kindOf(artifact) === 'team',
       });
       if (!result.commit) {
         return result;
@@ -310,7 +432,34 @@ export async function writeKnowledge(env, artifact, changes, {
         }
         // eslint-disable-next-line no-await-in-loop
         await countEntries(env, artifact, fs);
-        return { commit: result.commit, files: changes.map((c) => c.path) };
+        // eslint-disable-next-line no-await-in-loop
+        await indexChanged(env, artifact, fs, changes).catch((e) => console.error(JSON.stringify({
+          route: 'kb', action: 'search', artifact, error: e.message,
+        })));
+        if (kindOf(artifact) === 'org' && changes.some((c) => c.path === STACK_PATH)) {
+          // The customer's stack as the inbox's list shows it (src/orgstacks.js).
+          // eslint-disable-next-line no-await-in-loop
+          const text = await fs.promises.readFile(`${DIR}/${STACK_PATH}`, 'utf8').catch(() => null);
+          // eslint-disable-next-line no-await-in-loop
+          const org = artifact.replace(/^kb-org-/, '');
+          // eslint-disable-next-line no-await-in-loop
+          await storeOrgStack(env, org, text).catch(async (e) => {
+            console.error(JSON.stringify({
+              route: 'kb', action: 'stack', artifact, error: e.message,
+            }));
+            // Kept stale no longer: with no row, the cron reads the file again.
+            await env.DB.prepare('DELETE FROM org_stacks WHERE org = ?').bind(org).run()
+              .catch((d) => console.error(JSON.stringify({
+                route: 'kb', action: 'stack', artifact, error: `row kept: ${d.message}`,
+              })));
+          });
+        }
+        if (kindOf(artifact) === 'team' && changes.some((c) => inCatalog(c.path) || isArea(c.path))) {
+          // eslint-disable-next-line no-await-in-loop
+          await compileTree(env, artifact, fs, result.commit);
+        }
+        const files = changes.map((c) => c.path);
+        return { commit: result.commit, files, ...(filled.length ? { filled } : {}) };
       } catch (e) {
         if (!rejected(e) || attempt >= ATTEMPTS) {
           throw e;

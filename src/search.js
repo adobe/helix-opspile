@@ -15,6 +15,7 @@ import { segment } from './raw.js';
 import { EMBEDDING_MODEL } from './rethread.js';
 import { channelTag } from './fulltext.js';
 import { likePattern as like } from './like.js';
+import { followedByTeams } from './follows.js';
 
 /**
  * Search over a team's inbox (or the viewer's teams', for the personal view), on every platform
@@ -49,9 +50,16 @@ const VECTOR_K = 50;
 const KEYWORD_ROWS = 200;
 /** The filter of a Vectorize query has at most 2 KB: shared channels go in parts. */
 const FILTER_BYTES = 1800;
+/** And an `$in` of at most 100 values, however short they are. */
+export const VECTOR_IN = 100;
+/** The vectors of threads and their messages; the knowledge bases' (`kb`) share the index. */
+const THREAD_TYPES = { $in: ['message', 'thread'] };
 const SNIPPET = 240;
-/** Full-text queries ask for the team's items, then the shared channels', so many at a time. */
-const TAGS_PER_QUERY = 50;
+/**
+ * Full-text queries ask for the team's items, then the shared channels', so many at a time:
+ * an AI Search metadata filter's `$in` has at most 40 values.
+ */
+export const TEXT_IN = 40;
 const TEXT_RESULTS = 50;
 const SNIPPETS = 30;
 
@@ -97,53 +105,94 @@ export function snippet(body, words = []) {
 }
 
 /**
- * SQL: thread row `alias` is filed under one of the teams (`?1`, a JSON list), or in a channel
- * shared with one of them.
+ * SQL: thread row `alias` is filed under one of the teams (`?1`, a JSON list), in a channel
+ * shared with one of them, or shows a technology one of them follows (src/follows.js).
  */
 const ofTeams = (alias) => `(${alias}.team IN (SELECT value FROM json_each(?1))
   OR (${alias}.source, ${alias}.channel_id) IN (SELECT source, channel_id FROM channel_teams
-    WHERE team IN (SELECT value FROM json_each(?1))))`;
+    WHERE team IN (SELECT value FROM json_each(?1)))
+  OR ${followedByTeams(alias, '?1')})`;
 
-/** Filters for the vectors the teams see: their own, then the shared channels', in parts. */
-export function vectorFilters(teams, channels) {
-  const list = [].concat(teams);
-  const out = [list.length === 1 ? { team: list[0] } : { team: { $in: list } }];
+/**
+ * Filters `make(part)` for `values` in parts, each under FILTER_BYTES as JSON (a Vectorize
+ * filter has at most 2 KB) and of at most VECTOR_IN values; none for no values.
+ */
+export function inParts(values, make) {
+  const out = [];
   let part = [];
-  for (const c of channels) {
-    if (part.length && JSON.stringify({ channel: { $in: [...part, c] } }).length > FILTER_BYTES) {
-      out.push({ channel: { $in: part } });
+  for (const v of values) {
+    if (part.length && (part.length >= VECTOR_IN
+      || JSON.stringify(make([...part, v])).length > FILTER_BYTES)) {
+      out.push(make(part));
       part = [];
     }
-    part.push(c);
+    part.push(v);
   }
   if (part.length) {
-    out.push({ channel: { $in: part } });
+    out.push(make(part));
   }
   return out;
 }
 
-/** The channels shared with `teams` and filed under another team, as channel keys. */
+/**
+ * Filters for the vectors the teams see: their own, then the shared channels', in parts; only
+ * the threads' and their messages'.
+ */
+export function vectorFilters(teams, channels) {
+  return [
+    ...inParts([].concat(teams), (part) => ({
+      type: THREAD_TYPES, team: part.length === 1 ? part[0] : { $in: part },
+    })),
+    ...inParts(channels, (part) => ({ type: THREAD_TYPES, channel: { $in: part } })),
+  ];
+}
+
+/**
+ * The vector of query `q` (bge, with its instruction for queries), or null without Workers AI
+ * or when it fails: the thread search and the knowledge bases' share one per search.
+ */
+export async function queryVector(env, q) {
+  if (!env.AI || !String(q || '').trim()) {
+    return null;
+  }
+  try {
+    const embedded = await env.AI.run(EMBEDDING_MODEL, { text: [`${QUERY_PREFIX}${q}`] });
+    return embedded.data[0] || null;
+  } catch (e) {
+    console.log(JSON.stringify({ route: 'search', error: `embedding failed: ${e.message}` }));
+    return null;
+  }
+}
+
+/** The query as `find` searches for it: whitespace collapsed, at most MAX_QUERY characters. */
+export const cleanQuery = (q) => String(q || '').replace(/\s+/g, ' ').trim().slice(0, MAX_QUERY);
+
+/**
+ * The channels shared with `teams` and filed under another team, as channel keys, and those of
+ * the threads that show a technology one of them follows (src/follows.js): the vectors and the
+ * full text are asked for these channels too, and the inbox keeps what of them is the teams'.
+ */
 async function sharedChannels(env, teams) {
   const { results } = await env.DB.prepare(`SELECT DISTINCT
       t.source || ':' || t.tenant || ':' || t.channel_id AS channel
-    FROM threads t WHERE (t.source, t.channel_id) IN (SELECT source, channel_id
+    FROM threads t WHERE ((t.source, t.channel_id) IN (SELECT source, channel_id
       FROM channel_teams WHERE team IN (SELECT value FROM json_each(?1)))
+      OR ${followedByTeams('t', '?1')})
       AND t.team NOT IN (SELECT value FROM json_each(?1))`)
     .bind(JSON.stringify(teams)).all();
   return (results || []).map((r) => r.channel);
 }
 
 /** Message and thread vectors similar to `q`: `[{ thread, score, message? }]`, best first. */
-async function similar(env, teams, q, sharedP) {
+async function similar(env, teams, vectorP, sharedP) {
   if (!env.CONTENT || !env.AI) {
     return [];
   }
   try {
-    const [embedded, shared] = await Promise.all([
-      env.AI.run(EMBEDDING_MODEL, { text: [`${QUERY_PREFIX}${q}`] }),
-      sharedP,
-    ]);
-    const vector = embedded.data[0];
+    const [vector, shared] = await Promise.all([vectorP, sharedP]);
+    if (!vector) {
+      return [];
+    }
     const found = await Promise.all(vectorFilters(teams, shared)
       .map((filter) => env.CONTENT.query(vector, { topK: VECTOR_K, filter, returnMetadata: 'all' })));
     const matches = found.flatMap((f) => f.matches || [])
@@ -180,6 +229,21 @@ async function liveMessages(env, refs) {
 }
 
 /**
+ * Filters for the full-text items the teams see: their own, then the shared channels' (`tags`,
+ * src/fulltext.js), in parts of at most TEXT_IN values.
+ */
+export function textFilters(teams, tags) {
+  const parts = (values) => Array.from(
+    { length: Math.ceil(values.length / TEXT_IN) },
+    (_, i) => values.slice(i * TEXT_IN, (i + 1) * TEXT_IN),
+  );
+  return [
+    ...parts([].concat(teams)).map((p) => ({ team: p.length === 1 ? p[0] : { $in: p } })),
+    ...parts(tags).map((p) => ({ channel: { $in: p } })),
+  ];
+}
+
+/**
  * Messages with every word of `q` (BM25, porter stemming: "purged" finds "purge"), the recent
  * boosted: `[{ thread, id, score, text }]`, best first, `score` relative to the best (1).
  */
@@ -189,10 +253,7 @@ async function inText(env, teams, q, sharedP) {
   }
   try {
     const tags = await Promise.all((await sharedP).map(channelTag));
-    const filters = [teams.length === 1 ? { team: teams[0] } : { team: { $in: teams } }];
-    for (let i = 0; i < tags.length; i += TAGS_PER_QUERY) {
-      filters.push({ channel: { $in: tags.slice(i, i + TAGS_PER_QUERY) } });
-    }
+    const filters = textFilters(teams, tags);
     const found = await Promise.all(filters.map((f) => env.SEARCH.search({
       query: q,
       ai_search_options: {
@@ -298,10 +359,11 @@ function bestMessage(e) {
  * `{ q, words, hits }`, each hit `{ thread, score, title (the share of words in it), place,
  * fact, topic, text, message, said }`, `message` being the best matching message vector's
  * `{ thread, message, channel, path }`, `said` the best message with the words
- * `{ thread, id, path, text }`.
+ * `{ thread, id, path, text }`. `vector`: the query's (`queryVector`), when the caller has
+ * asked for it already.
  */
-export async function find(env, teams, q, { limit = DEFAULT_RESULTS } = {}) {
-  const query = String(q || '').replace(/\s+/g, ' ').trim().slice(0, MAX_QUERY);
+export async function find(env, teams, q, { limit = DEFAULT_RESULTS, vector } = {}) {
+  const query = cleanQuery(q);
   const words = terms(query);
   const n = Math.max(1, Math.min(MAX_RESULTS, Number(limit) || DEFAULT_RESULTS));
   const none = { q: query, words, hits: [] };
@@ -312,7 +374,7 @@ export async function find(env, teams, q, { limit = DEFAULT_RESULTS } = {}) {
   const sharedP = sharedChannels(env, list);
   sharedP.catch(() => {});
   const [vectors, saidIn, byTitle, byFact] = await Promise.all([
-    similar(env, list, query, sharedP),
+    similar(env, list, vector || queryVector(env, query), sharedP),
     inText(env, list, query, sharedP),
     titled(env, list, words),
     withFacts(env, list, words),

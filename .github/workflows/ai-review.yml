@@ -2,9 +2,13 @@ name: AI Review
 
 on:
   pull_request:
+  # In the merge queue, the `review` check passes without a new review: the pull request
+  # was reviewed already. The queue requires it (and CI's `test`) as the pull request does.
+  merge_group:
 
 concurrency:
-  group: ai-review-${{ github.event.pull_request.number }}
+  # A merge group has no pull request number: its ref (one per group) keeps groups apart.
+  group: ai-review-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
 jobs:

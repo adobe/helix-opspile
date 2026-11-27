@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content">
-<title>Enterprise Support · Topics</title>
+<title>Enterprise Support – Topics</title>
 <link rel="icon" href="/favicon.ico" sizes="16x16 32x32 48x48">
 <link rel="apple-touch-icon" href="/apple-touch-icon.png">
 <link rel="manifest" href="/manifest.webmanifest">
@@ -17,6 +17,8 @@
 <link rel="stylesheet" href="spectrum-tokens.css">
 <link rel="stylesheet" href="spectrum.css">
 <link rel="stylesheet" href="spectrum-topics.css">
+<!-- The agent of what is picked: offered beside the page (ui/kbchat.js). -->
+<link rel="stylesheet" href="spectrum-kbchat.css">
 </head>
 <body>
 <header>
@@ -35,26 +37,40 @@
 </header>
 <script src="header.js"></script>
 <main id="main">
-  <div class="bar" id="bar" hidden>
-    <div class="group">
-      <select id="team" aria-label="Team"></select>
-    </div>
-    <div class="group legend" id="types" role="group" aria-label="Show"></div>
-    <div class="group">
-      <label class="lbl" for="min">Shared threads</label>
-      <select id="min" title="Draw a line between two only when this many threads have both"></select>
-    </div>
-    <div class="group">
-      <label class="s2-search"><input class="search" id="find" type="search" list="names" aria-label="Find a person, topic, tag or customer" autocomplete="off"></label>
+  <!-- The sidebar (ui/sidenav.js): the areas with their topics, the products with their
+       features; its search field finds on the map too, and Enter compares on the chart. -->
+  <nav class="sidenav" id="nav" aria-label="Topics and products">
+    <div class="navtop">
+      <label class="s2-search"><input class="search" id="find" type="search" list="names" aria-label="Find topics, areas and products" title="Press Enter to compare on the chart. Separate terms with commas; ~ finds a phrase" autocomplete="off"></label>
       <datalist id="names"></datalist>
     </div>
-    <span class="spacer"></span>
-    <span class="sub" id="built"></span>
-    <button id="rebuild">Rebuild</button>
+    <div class="navlist" id="navList"><div class="navempty">Loading…</div></div>
+    <div id="navFoot"></div>
+  </nav>
+  <div class="page">
+    <div class="bar" id="bar" hidden>
+      <div class="group">
+        <select id="team" aria-label="Team"></select>
+      </div>
+      <div class="group legend" id="types" role="group" aria-label="Show"></div>
+      <button id="only" hidden></button>
+      <span class="spacer"></span>
+      <span class="sub" id="built"></span>
+      <button id="rebuild">Rebuild</button>
+    </div>
+    <div id="body"><div class="empty">Loading…</div></div>
   </div>
-  <div id="body"><div class="empty">Loading…</div></div>
 </main>
+<script src="markdown.js"></script>
+<script src="sidenav.js"></script>
 <script src="topicgraph.js"></script>
+<script src="topicspace.js"></script>
+<script src="topicview.js"></script>
+<script src="trends.js"></script>
+<script src="trendview.js"></script>
+<script src="follow.js"></script>
+<script src="followsuggest.js"></script>
+<script src="kbchat.js"></script>
 <script type="module" src="topics.js"></script>
 <script src="app.js"></script>
 </body>

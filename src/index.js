@@ -10,38 +10,16 @@
  * governing permissions and limitations under the License.
  */
 
-import inboxHtml from '../ui/inbox.html';
-import adminHtml from '../ui/admin.html';
-import kbHtml from '../ui/kb.html';
-import cogsHtml from '../ui/cogs.html';
-import topicsHtml from '../ui/topics.html';
-// The pages' scripts, as text (src/page.js inlines them).
-import inboxJs from '../ui/inbox.js' with { type: 'text' };
-import adminJs from '../ui/admin.js' with { type: 'text' };
-import kbJs from '../ui/kb.js' with { type: 'text' };
-import cogsJs from '../ui/cogs.js' with { type: 'text' };
-import topicsJs from '../ui/topics.js' with { type: 'text' };
-import appJs from '../ui/app.js' with { type: 'text' };
-import headerJs from '../ui/header.js' with { type: 'text' };
-import rankJs from '../ui/rank.js' with { type: 'text' };
-import tableJs from '../ui/table.js' with { type: 'text' };
-import stackJs from '../ui/stack.js' with { type: 'text' };
-import topicGraphJs from '../ui/topicgraph.js' with { type: 'text' };
-// Spectrum 2's look of every page (README, "Spectrum 2").
-import spectrumFontsCss from '../ui/spectrum-fonts.css' with { type: 'text' };
-import spectrumCss from '../ui/spectrum.css' with { type: 'text' };
-import spectrumInboxCss from '../ui/spectrum-inbox.css' with { type: 'text' };
-import spectrumAdminCss from '../ui/spectrum-admin.css' with { type: 'text' };
-import spectrumKbCss from '../ui/spectrum-kb.css' with { type: 'text' };
-import spectrumCogsCss from '../ui/spectrum-cogs.css' with { type: 'text' };
-import spectrumTopicsCss from '../ui/spectrum-topics.css' with { type: 'text' };
 import { accessEmail } from './access.js';
 import { followed, Meter } from './cogs/meter.js';
 import { rollupCogs } from './cogs/rollup.js';
 import { syncAccessQuietly } from './accesssync.js';
 import { clientDocumentResponse, keepOAuthAlive } from './agent/mcpoauth.js';
 import { refreshMirrors } from './agent/repos.js';
+import { sweepFeedback } from './agent/feedback.js';
 import { agentStub } from './agent/stub.js';
+import { WATCH_CRON } from './agent/watches.js';
+import { pollWatches } from './watches.js';
 import { api, personByEmail } from './api.js';
 import { syncInstalledBots } from './bots.js';
 import { listDead, pruneDead, redrive } from './deadjobs.js';
@@ -49,28 +27,40 @@ import { sweepLabels } from './label.js';
 import { sweepRethreads } from './rethread.js';
 import { diagTeams } from './diag.js';
 import { discordEnabled } from './discord.js';
+import { runDreams } from './dreams.js';
 import { json, text } from './http.js';
 import { ICONS } from './icons.js';
 import { SOUNDS } from './sound.js';
 import { pwa } from './pwa.js';
 import { ensureTeamKnowledgeBases } from './kb.js';
 import { countEntries } from './kbadmin.js';
-import { mcp } from './mcp.js';
+import { syncConcepts } from './kbindex.js';
+import { syncCatalogs } from './catalogsync.js';
+import { syncOrgStacks } from './orgstacks.js';
+import { inboxCall, mcp } from './mcp.js';
 import { refreshGlobalTools } from './mcpadmin.js';
 import { oauth, pruneOauth } from './oauth.js';
 import { consume } from './normalizer.js';
 import {
-  fmcScript, fromPreview, highlightScript, inboxPage, page,
+  fmcScript, fromPreview, highlightScript, threeScript,
 } from './page.js';
+import {
+  ADMIN_PAGE, COGS_PAGE, INBOX_PAGE, TOPICS_PAGE,
+} from './pages.js';
 import { slackEvents } from './slack.js';
 import { joinPublicChannels } from './autojoin.js';
+import { sweepChannels } from './channelsweep.js';
+import { syncFollowRules } from './followrules.js';
 import { ensureSubscription } from './subscription.js';
 import { moved } from './moved.js';
 import { classifyChannels } from './suggest.js';
+import { refreshPartners } from './orgpartners.js';
 import { teamsNotify } from './teams.js';
 import { teamsBot } from './teamsbot.js';
 import { sweepVectors } from './vectors.js';
+import { sweepMentionModel } from './mentionmodels.js';
 import { sweepTopicMap } from './topicmap.js';
+import { sweepTrends } from './trends.js';
 import { sweepPreviews } from './previews.js';
 import { sweepExports } from './clickhouse.js';
 import { pruneRankEvents } from './rankevents.js';
@@ -78,32 +68,7 @@ import { pruneDraftUndo } from './draftevents.js';
 import { sweepBackfills } from './backfill.js';
 import { pruneExpertEvents } from './expertevents.js';
 import { prunePostKeys } from './postkeys.js';
-
-const SCRIPTS = {
-  'inbox.js': inboxJs,
-  'admin.js': adminJs,
-  'kb.js': kbJs,
-  'cogs.js': cogsJs,
-  'topics.js': topicsJs,
-  'app.js': appJs,
-  'header.js': headerJs,
-  'rank.js': rankJs,
-  'table.js': tableJs,
-  'stack.js': stackJs,
-  'topicgraph.js': topicGraphJs,
-  'spectrum-fonts.css': spectrumFontsCss,
-  'spectrum.css': spectrumCss,
-  'spectrum-inbox.css': spectrumInboxCss,
-  'spectrum-admin.css': spectrumAdminCss,
-  'spectrum-kb.css': spectrumKbCss,
-  'spectrum-cogs.css': spectrumCogsCss,
-  'spectrum-topics.css': spectrumTopicsCss,
-};
-const INBOX_PAGE = inboxPage(inboxHtml, SCRIPTS);
-const ADMIN_PAGE = page(adminHtml, SCRIPTS);
-const KB_PAGE = page(kbHtml, SCRIPTS);
-const COGS_PAGE = page(cogsHtml, SCRIPTS);
-const TOPICS_PAGE = page(topicsHtml, SCRIPTS);
+import { pruneTranslations } from './translate.js';
 
 /** The one Discord poller object (src/poller.js). */
 const poller = (env) => env.DISCORD.get(env.DISCORD.idFromName('poller'));
@@ -217,16 +182,18 @@ const handlers = {
       return oauthResponse;
     }
     if (pathname === '/inbox/admin') {
-      // Teams and orgs (admin team; the API checks), under /inbox like the editor.
+      // Teams and customers, with their agents (the API checks who sees what). Under /inbox,
+      // so the same Access application covers it.
       return new Response(ADMIN_PAGE, {
         headers: { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-cache' },
       });
     }
     if (pathname === '/inbox/kb') {
-      // The knowledge-base editor (admin team; the API checks). Under /inbox, so the same
-      // Access application covers it.
-      return new Response(KB_PAGE, {
-        headers: { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-cache' },
+      // The knowledge-base editor that was: its links (a knowledge base, a file, a view) open
+      // the same on the team's or the customer's page, which reads them (ui/admin.js `wanted`).
+      return new Response(null, {
+        status: 302,
+        headers: { location: `/inbox/admin${url.search}`, 'cache-control': 'no-store' },
       });
     }
     if (pathname === '/inbox/cogs') {
@@ -236,7 +203,7 @@ const handlers = {
       });
     }
     if (pathname === '/inbox/topics') {
-      // The topic map (admin team; the API checks), under /inbox like the others.
+      // The topic map (every internal user; the API checks), under /inbox like the others.
       return new Response(TOPICS_PAGE, {
         headers: { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-cache' },
       });
@@ -261,6 +228,11 @@ const handlers = {
     if (fmc) {
       return fmc;
     }
+    // three.js, which the Topics page imports when it first draws its map.
+    const three = threeScript(request, pathname);
+    if (three) {
+      return three;
+    }
     if (request.method === 'GET' || request.method === 'HEAD') {
       const iconResponse = icon(pathname);
       if (iconResponse) {
@@ -273,6 +245,8 @@ const handlers = {
     }
     const apiResponse = await api(request, env, url, {
       waitUntil: ctx && ((p) => ctx.waitUntil(p)),
+      // The inbox's tools, for a script an agent asked a person to run (src/agent/stub.js).
+      inboxTools: inboxCall,
     });
     if (apiResponse) {
       return apiResponse;
@@ -286,18 +260,29 @@ const handlers = {
 
   /**
  * Cron: keep the Graph subscription alive (#5), give every team a knowledge base, count the
- * entries of the knowledge bases not counted yet, keep the
- * agents' GitHub mirrors fresh, learn the bots installed in each Teams team, check the global
- * MCP servers' tools once a day, keep the agents' MCP OAuth grants alive, classify a batch of
- * the admin team's channels for the channel suggestions, join the public Slack channels the app
- * is not in (SLACK_JOIN_TEAMS), enqueue the threads whose message and thread vectors are
- * behind, fill in the latest message's text of threads indexed before it was kept, delete
- * the thread list's picks older than RANK_EVENTS_DAYS (src/rankevents.js) and the proposals
- * kept for an Undo of a discarded draft past its time (src/draftevents.js), and enqueue the
- * threads whose klickhaus rows are behind; build the Topics page's map once a week; and roll up
- * what the days used, for COGS.
+ * entries of the knowledge bases not counted yet, read the concepts the search has not read yet
+ * (src/kbindex.js), keep the agents' GitHub mirrors fresh, learn the
+ * bots installed in each Teams team, check the global MCP servers' tools once a day, keep the
+ * agents' MCP OAuth grants alive, classify a batch of the admin team's channels for the channel
+ * suggestions, write the follow rules' shares (src/followrules.js), join the public Slack channels
+ * the app is not in (SLACK_JOIN_TEAMS), look up again the channels not looked up for a week (to
+ * learn which are archived), enqueue the threads whose message and thread vectors are behind, fill
+ * in the latest message's text of threads indexed before it was kept, delete the thread list's
+ * picks older than RANK_EVENTS_DAYS (src/rankevents.js) and the proposals kept for an Undo of a
+ * discarded draft past its time (src/draftevents.js), and enqueue the threads whose klickhaus rows
+ * are behind; file the agents' feedback GitHub did not take yet (src/agent/feedback.js); fit the
+ * expert finder's mention model once a day and build the Topics page's map once a week; and roll
+ * up what the days used, for COGS.
  */
+  // The five-minute cron (`WATCH_CRON`) polls only what thread agents watch on GitHub.
   async scheduled(controller, env, ctx) {
+    // Every five minutes: the GitHub items thread agents watch (src/agent/watches.js), alone.
+    if (controller.cron === WATCH_CRON) {
+      ctx.waitUntil(pollWatches(env)
+        .then((r) => console.log(JSON.stringify({ route: 'cron', watches: r })))
+        .catch((e) => console.error(JSON.stringify({ route: 'cron', watches: 'error', error: e.message }))));
+      return;
+    }
     // What the days cost so far, for the COGS dashboard (src/cogs/rollup.js).
     ctx.waitUntil(rollupCogs(env)
       .then((r) => console.log(JSON.stringify({ route: 'cron', cogs: r })))
@@ -311,6 +296,18 @@ const handlers = {
     ctx.waitUntil(countEntries(env)
       .then((r) => console.log(JSON.stringify({ route: 'cron', kb: 'entries', ...r })))
       .catch((e) => console.error(JSON.stringify({ route: 'cron', kb: 'entries', error: e.message }))));
+    // The knowledge bases' concepts the inbox's search has not read yet, and their vectors.
+    ctx.waitUntil(syncConcepts(env)
+      .then((r) => console.log(JSON.stringify({ route: 'cron', kb: 'search', ...r })))
+      .catch((e) => console.error(JSON.stringify({ route: 'cron', kb: 'search', error: e.message }))));
+    // The customers' stack drawings the inbox's list by customer has not read yet.
+    ctx.waitUntil(syncOrgStacks(env)
+      .then((r) => console.log(JSON.stringify({ route: 'cron', kb: 'stacks', ...r })))
+      .catch((e) => console.error(JSON.stringify({ route: 'cron', kb: 'stacks', error: e.message }))));
+    // The teams' catalogs of products whose knowledge base moved on without a compile.
+    ctx.waitUntil(syncCatalogs(env)
+      .then((r) => console.log(JSON.stringify({ route: 'cron', kb: 'catalog', ...r })))
+      .catch((e) => console.error(JSON.stringify({ route: 'cron', kb: 'catalog', error: e.message }))));
     // The sign-in allow list follows the teams, in case a change in D1 bypassed the admin pages.
     ctx.waitUntil(syncAccessQuietly(env, 'cron'));
     ctx.waitUntil(refreshMirrors(env)
@@ -330,18 +327,34 @@ const handlers = {
     ctx.waitUntil(keepOAuthAlive(env)
       .then((r) => console.log(JSON.stringify({ route: 'cron', mcpOauth: r })))
       .catch((e) => console.error(JSON.stringify({ route: 'cron', mcpOauth: 'error', error: e.message }))));
+    // Customers quiet for eight hours consolidate their knowledge base, in the dream experiment.
+    ctx.waitUntil(runDreams(env)
+      .then((r) => console.log(JSON.stringify({ route: 'cron', dreams: r })))
+      .catch((e) => console.error(JSON.stringify({ route: 'cron', dreams: 'error', error: e.message }))));
     ctx.waitUntil(refreshGlobalTools(env)
       .then((r) => console.log(JSON.stringify({ route: 'cron', mcpGlobals: r })))
       .catch((e) => console.error(JSON.stringify({ route: 'cron', mcpGlobals: 'error', error: e.message }))));
     ctx.waitUntil(classifyChannels(env)
       .then((r) => console.log(JSON.stringify({ route: 'cron', suggest: r })))
       .catch((e) => console.error(JSON.stringify({ route: 'cron', suggest: 'error', error: e.message }))));
+    // Which customers each partner works for: candidates, Clef on a few (src/orgpartners.js).
+    ctx.waitUntil(refreshPartners(env)
+      .then((r) => console.log(JSON.stringify({ route: 'cron', partners: r })))
+      .catch((e) => console.error(JSON.stringify({ route: 'cron', partners: 'error', error: e.message }))));
     ctx.waitUntil(pruneOauth(env)
       .then((r) => console.log(JSON.stringify({ route: 'cron', oauth: r })))
       .catch((e) => console.error(JSON.stringify({ route: 'cron', oauth: 'error', error: e.message }))));
     ctx.waitUntil(joinPublicChannels(env)
       .then((r) => console.log(JSON.stringify({ route: 'cron', slackJoin: r })))
       .catch((e) => console.error(JSON.stringify({ route: 'cron', slackJoin: 'error', error: e.message }))));
+    // The follow rules' shares (src/followrules.js), for the channels seen or renamed since.
+    ctx.waitUntil(syncFollowRules(env)
+      .then((r) => console.log(JSON.stringify({ route: 'cron', followRules: r })))
+      .catch((e) => console.error(JSON.stringify({ route: 'cron', followRules: 'error', error: e.message }))));
+    // Channels looked up a week ago, again: archived ones get no messages to say so.
+    ctx.waitUntil(sweepChannels(env)
+      .then((r) => console.log(JSON.stringify({ route: 'cron', channels: r })))
+      .catch((e) => console.error(JSON.stringify({ route: 'cron', channels: 'error', error: e.message }))));
     ctx.waitUntil(sweepRethreads(env)
       .then((r) => console.log(JSON.stringify({ route: 'cron', rethreads: r })))
       .catch((e) => console.error(JSON.stringify({ route: 'cron', rethreads: 'error', error: e.message }))));
@@ -354,10 +367,19 @@ const handlers = {
     ctx.waitUntil(sweepVectors(env)
       .then((r) => console.log(JSON.stringify({ route: 'cron', vectors: r })))
       .catch((e) => console.error(JSON.stringify({ route: 'cron', vectors: 'error', error: e.message }))));
+    // The expert finder's mention model (src/mentionmodels.js), once it is a day old.
+    ctx.waitUntil(sweepMentionModel(env)
+      .then((r) => console.log(JSON.stringify({ route: 'cron', mentionModel: r })))
+      .catch((e) => console.error(JSON.stringify({ route: 'cron', mentionModel: 'error', error: e.message }))));
     // The Topics page's map (src/topicmap.js), once it is a week old.
     ctx.waitUntil(sweepTopicMap(env)
       .then((r) => console.log(JSON.stringify({ route: 'cron', topicMap: r })))
       .catch((e) => console.error(JSON.stringify({ route: 'cron', topicMap: 'error', error: e.message }))));
+    // The Topics page's trends (src/trends.js): the topics of the threads the newest topic map
+    // does not have.
+    ctx.waitUntil(sweepTrends(env)
+      .then((r) => console.log(JSON.stringify({ route: 'cron', trends: r })))
+      .catch((e) => console.error(JSON.stringify({ route: 'cron', trends: 'error', error: e.message }))));
     ctx.waitUntil(sweepPreviews(env)
       .then((r) => console.log(JSON.stringify({ route: 'cron', previews: r })))
       .catch((e) => console.error(JSON.stringify({ route: 'cron', previews: 'error', error: e.message }))));
@@ -373,9 +395,16 @@ const handlers = {
     ctx.waitUntil(prunePostKeys(env)
       .then((r) => console.log(JSON.stringify({ route: 'cron', postKeys: r })))
       .catch((e) => console.error(JSON.stringify({ route: 'cron', postKeys: 'error', error: e.message }))));
+    ctx.waitUntil(pruneTranslations(env)
+      .then((r) => console.log(JSON.stringify({ route: 'cron', translations: r })))
+      .catch((e) => console.error(JSON.stringify({ route: 'cron', translations: 'error', error: e.message }))));
     ctx.waitUntil(pruneExpertEvents(env)
       .then((r) => console.log(JSON.stringify({ route: 'cron', expertEvents: r })))
       .catch((e) => console.error(JSON.stringify({ route: 'cron', expertEvents: 'error', error: e.message }))));
+    // The agents' feedback that GitHub did not take when they gave it (src/agent/feedback.js).
+    ctx.waitUntil(sweepFeedback(env)
+      .then((r) => console.log(JSON.stringify({ route: 'cron', feedback: r })))
+      .catch((e) => console.error(JSON.stringify({ route: 'cron', feedback: 'error', error: e.message }))));
     // The klickhaus export (CLICKHOUSE_*): the threads that changed since, and the backfill.
     ctx.waitUntil(sweepExports(env)
       .then((r) => console.log(JSON.stringify({ route: 'cron', exports: r })))
@@ -424,7 +453,5 @@ export default {
 export { TeamRoom } from './room.js';
 export { ThreadAgent } from './agent/agent.js';
 export { DiscordPoller } from './poller.js';
-// The way back from an agent's shell (a Dynamic Worker) to its files (src/agent/computer.js).
-export { WorkspaceServiceProxy } from '@cloudflare/computer';
-// Where the shells of the agents' computers reach the network, with their secrets.
-export { SecretGateway } from './agent/gateway.js';
+// Where the customer portal's events arrive (src/portalsource.js).
+export { PortalSource } from './portalentry.js';

@@ -25,7 +25,7 @@ const ADA = {
 const BO = {
   id: 2, email: 'bo@staff.example', name: 'Bo', staff: 1, teams: ['helix'],
 };
-const asMe = (p) => ({ ...p, teams: p.teams.map((slug) => ({ slug })) });
+const asMe = (p) => ({ ...p, teams: p.teams.map((t) => (typeof t === 'string' ? { slug: t } : t)) });
 const RULES = [
   {
     id: 1, target: 'org', priority: 100, source: null, field: 'name', pattern: '^aem-(.+)$', value: '$1',
@@ -93,6 +93,16 @@ describe('admin: teams and members', () => {
     assert.equal((await call(e, { ...ADA, readonly: true }, 'POST', '/api/admin/teams', { slug: 'x', name: 'X' })).status, 403);
   });
 
+  it('relabels channel threads for the admin team only, and needs the queue', async () => {
+    const e = env();
+    assert.equal((await call(e, BO, 'POST', '/api/admin/relabel', {})).status, 403);
+    const r = await call(e, ADA, 'POST', '/api/admin/relabel', { limit: 10 });
+    assert.equal(r.status, 200);
+    assert.deepEqual(Object.keys(r.body).sort(), ['next', 'queued']);
+    const none = { ...e, NORMALIZE: undefined };
+    assert.equal((await call(none, ADA, 'POST', '/api/admin/relabel', {})).status, 503);
+  });
+
   it('creates, renames and deletes teams, and adds and removes members', async () => {
     const e = env();
     let r = await call(e, ADA, 'GET', '/api/admin/teams');
@@ -110,11 +120,11 @@ describe('admin: teams and members', () => {
       { team: 'search', enabled: 1, changed_by: 'Ada' },
     ]);
     assert.deepEqual(rowsOf(`SELECT tool, scope, target, enabled, changed_by
-      FROM agent_tool_switches ORDER BY tool`), ['computer', 'extraction_rules'].map((tool) => ({
+      FROM agent_tool_switches ORDER BY tool`), ['computer', 'extraction_rules', 'label', 'org_threads', 'resolve', 'web_search'].map((tool) => ({
       tool, scope: 'team', target: 'search', enabled: 1, changed_by: 'Ada',
     })));
     assert.deepEqual(rowsOf(`SELECT server, scope, target, enabled, changed_by
-      FROM mcp_global_switches ORDER BY server`), ['browser', 'github'].map((server) => ({
+      FROM mcp_global_switches ORDER BY server`), ['github'].map((server) => ({
       server, scope: 'team', target: 'search', enabled: 1, changed_by: 'Ada',
     })));
     assert.equal((await call(e, ADA, 'PUT', '/api/admin/teams', { slug: 'search', name: 'Search' })).status, 200);
@@ -210,7 +220,8 @@ describe('admin: team managers', () => {
         target: 'team', field: 'name', pattern: '^x', value: 'helix',
       }],
       ['POST', '/api/admin/assign', { target: 'team', channelId: 'C3', value: 'helix' }],
-      ['GET', '/api/admin/orgs'],
+      ['PUT', '/api/admin/orgs', { slug: 'acme', name: 'ACME' }],
+      ['GET', '/api/admin/org?slug=_unassigned'],
       ['GET', '/api/admin/org-icons?slug=acme'],
       ['GET', '/api/admin/favicon?domain=acme.example'],
     ]) {
@@ -224,6 +235,80 @@ describe('admin: team managers', () => {
     assert.equal((await as(e, asMe(CY), 'GET', '/api/admin/teams')).status, 403);
     assert.equal((await as(e, asMe(CY), 'GET', '/api/kb')).status, 200);
     assert.equal((await as(e, asMe(CY), 'PUT', '/api/kb/agent', { team: 'edge', enabled: true })).status, 403);
+  });
+
+  it('see a customer\'s page, one row per channel, and act on their teams\' part of it', async () => {
+    const e = managers();
+    // A thread of C1 still filed under edge (a re-filing not done): C1 is one channel all the
+    // same, under the team the rules file it under, with what is left elsewhere.
+    e.DB.sqlite.exec(`INSERT INTO threads (thread, source, tenant, channel_id, root_id, org, team,
+        kind, channel_name, path, root_at, last_at, any_at, messages, updated_at)
+      VALUES ('slack:E1:C1:9.1', 'slack', 'E1', 'C1', '9.1', 'acme', 'edge', 'channel', 'aem-acme',
+        'channels/acme/edge/slack-C1/9.1/', '2026-10-23T00:00:00Z', '2026-10-23T00:00:00Z',
+        '2026-10-23T00:00:00Z', 1, '2026-10-23T00:00:00Z')`);
+    let r = await call(e, ADA, 'GET', '/api/admin/org?slug=acme');
+    assert.deepEqual(r.body.channels.map((c) => [c.channelId, c.team, c.threads, c.split]), [
+      ['C1', 'helix', 3, [{ team: 'edge', threads: 1 }]],
+    ]);
+    assert.equal(r.body.channels[0].latest, '2026-10-23T00:00:00Z');
+    assert.equal((await call(e, ADA, 'GET', '/api/admin/orgs')).body.orgs.find((o) => o.slug === 'acme').channels, 1);
+    assert.ok(r.body.rules.length);
+
+    // Everyone on a team sees it, without the rules; Unassigned stays the admin team's.
+    const me = asBo(bo);
+    r = await as(e, me, 'GET', '/api/admin/org?slug=acme');
+    assert.deepEqual(
+      [r.status, r.body.rules, r.body.channels.length, r.body.follows],
+      [200, [], 1, []],
+    );
+    assert.equal((await as(e, asMe(CY), 'GET', '/api/admin/org?slug=acme')).status, 200);
+    assert.equal((await as(e, asMe(CY), 'GET', '/api/admin/orgs')).status, 200);
+
+    // A team follows the customer: every channel of it is shared with the team, by a rule.
+    assert.equal((await as(e, me, 'PUT', '/api/admin/org-follows', { team: 'edge', org: 'acme' })).status, 403);
+    r = await call(e, ADA, 'PUT', '/api/admin/org-follows', { team: 'edge', org: 'acme' });
+    assert.deepEqual([r.status, r.body.followers.map((f) => f.team)], [200, ['edge']]);
+    const shares = () => e.DB.rows(`SELECT channel_id, team, added_by FROM channel_teams
+      ORDER BY channel_id, team`)
+      .map((x) => [x.channel_id, x.team, x.added_by.startsWith('rule:')]);
+    assert.deepEqual(shares(), [['C1', 'edge', true]]);
+    r = await call(e, ADA, 'PUT', '/api/admin/org-follows', { team: 'edge', org: 'acme' });
+    assert.equal(e.DB.rows("SELECT id FROM rules WHERE target = 'follow'").length, 1, 'once');
+    r = await as(e, asMe(CY), 'GET', '/api/admin/org?slug=acme');
+    assert.deepEqual([r.body.follows.map((f) => f.team), r.body.channels[0].followedByRule], [['edge'], ['edge']]);
+    // Taken out by hand, it is not: the rule's.
+    assert.equal((await call(e, ADA, 'DELETE', '/api/admin/share', { team: 'edge', source: 'slack', channelId: 'C1' })).status, 409);
+    // A manager follows with their own team: helix holds C1, so nothing is shared with it.
+    r = await as(e, me, 'PUT', '/api/admin/org-follows', { team: 'helix', org: 'acme' });
+    assert.deepEqual(r.body.followers.map((f) => f.team).sort(), ['edge', 'helix']);
+    assert.deepEqual(shares(), [['C1', 'edge', true]]);
+    r = await as(e, me, 'PUT', '/api/admin/org-follows', { team: 'helix', org: 'acme', follow: false });
+    assert.deepEqual(r.body.followers.map((f) => f.team), ['edge']);
+    r = await call(e, ADA, 'PUT', '/api/admin/org-follows', { team: 'edge', org: 'acme', follow: false });
+    assert.deepEqual([r.body.followers, shares()], [[], []]);
+    assert.equal((await call(e, ADA, 'PUT', '/api/admin/org-follows', { team: 'edge', org: 'nobody' })).status, 404);
+
+    // A manager gives a channel of their team back to the admin team; another team's they
+    // cannot, and one the admin team holds is not theirs to give.
+    assert.equal((await as(e, me, 'POST', '/api/admin/release', { team: 'edge', source: 'slack', channelId: 'C1' })).status, 403);
+    r = await as(e, me, 'POST', '/api/admin/release', { team: 'helix', source: 'slack', channelId: 'C1' });
+    assert.equal(r.status, 200);
+    await drain(e);
+    assert.deepEqual(e.DB.rows("SELECT DISTINCT team FROM threads WHERE channel_id = 'C1'"), [{ team: 'admin' }]);
+    assert.equal((await as(e, me, 'POST', '/api/admin/release', { team: 'helix', source: 'slack', channelId: 'C1' })).status, 409);
+    // and asks for it again, as a move.
+    r = await as(e, me, 'POST', '/api/admin/requests', {
+      team: 'helix', source: 'slack', channelId: 'C1', move: true,
+    });
+    assert.deepEqual([r.status, r.body.request.move], [200, true]);
+    r = await as(e, me, 'GET', '/api/admin/org?slug=acme');
+    assert.deepEqual(r.body.requests.map((x) => [x.team, x.move]), [['helix', true]]);
+
+    // A channel shared with their team by hand, they take out of its inbox; not another team's.
+    e.DB.sqlite.exec(`INSERT INTO channel_teams (source, channel_id, team, added_by, added_at)
+      VALUES ('slack', 'C1', 'helix', 'ada@staff.example', 'x'), ('slack', 'C1', 'edge', 'ada@staff.example', 'x')`);
+    assert.equal((await as(e, me, 'DELETE', '/api/admin/share', { team: 'edge', source: 'slack', channelId: 'C1' })).status, 403);
+    assert.equal((await as(e, me, 'DELETE', '/api/admin/share', { team: 'helix', source: 'slack', channelId: 'C1' })).status, 200);
   });
 
   it('edit their teams\' knowledge base, and no other', async () => {
@@ -240,12 +325,17 @@ describe('admin: team managers', () => {
     assert.equal((await as(e, me, 'GET', '/api/kb/channels?repo=kb-team-edge')).status, 200);
     assert.equal((await as(e, me, 'PUT', '/api/kb/file', { repo: 'kb-team-edge', path: 'a.md', content: 'x' })).status, 403);
     assert.equal((await as(e, asMe(ADA), 'GET', '/api/kb')).body.bases.length, 3);
-    // A member of edge reads the teams', and changes none.
+    // A member of edge reads them all, customers' too, and writes the files of edge's (not its
+    // instructions), not acme's, which edge does not own.
     const cy = await as(e, asMe(CY), 'GET', '/api/kb');
-    assert.deepEqual(cy.body.bases.map((b) => [b.repo, b.may]), [['kb-team-edge', false], ['kb-team-helix', false]]);
+    assert.deepEqual(cy.body.bases.map((b) => [b.repo, b.may, b.write]), [['kb-team-edge', false, true], ['kb-team-helix', false, false], ['kb-org-acme', false, false]]);
     assert.equal((await as(e, asMe(CY), 'GET', '/api/kb/channels?repo=kb-team-helix')).status, 200);
-    assert.equal((await as(e, asMe(CY), 'GET', '/api/kb/files?repo=kb-org-acme')).status, 404);
-    assert.equal((await as(e, asMe(CY), 'PUT', '/api/kb/file', { repo: 'kb-team-edge', path: 'a.md', content: 'x' })).status, 403);
+    assert.equal((await as(e, asMe(CY), 'GET', '/api/kb/channels?repo=kb-org-acme')).status, 200);
+    assert.equal((await as(e, asMe(CY), 'PUT', '/api/kb/file', { repo: 'kb-org-acme', path: 'a.md', content: 'x' })).status, 403);
+    // Let through: what is left is the content (`x` is no concept), which the fake refuses.
+    assert.notEqual((await as(e, asMe(CY), 'PUT', '/api/kb/file', { repo: 'kb-team-edge', path: 'a.md', content: 'x' })).status, 403);
+    assert.equal((await as(e, asMe(CY), 'PUT', '/api/kb/file', { repo: 'kb-team-edge', path: 'systemprompt.md', content: 'x' })).status, 403);
+    assert.equal((await as(e, asMe(CY), 'PUT', '/api/kb/file', { repo: 'kb-team-helix', path: 'a.md', content: 'x' })).status, 403);
   });
 
   it('are everyone in a self-managed team; turning it off keeps the roles', async () => {
@@ -746,6 +836,44 @@ describe('admin: shared channels', () => {
     });
     assert.equal((await call(e, ADA, 'DELETE', '/api/admin/teams', { slug: 'search' })).status, 200);
     assert.deepEqual(e.DB.rows('SELECT team FROM channel_teams'), []);
+  });
+
+  it('swaps the team a shared channel is filed under, for the admin team or a manager of both', async () => {
+    const e = env();
+    // Helix holds C1 by rule; it is shared with edge.
+    await call(e, ADA, 'POST', '/api/admin/assign', {
+      target: 'team', channelId: 'C1', source: 'slack', value: 'edge',
+    });
+    const swap = (me, team = 'edge') => call(e, me, 'POST', '/api/admin/swap', {
+      source: 'slack', channelId: 'C1', team,
+    });
+    const manager = (...slugs) => ({ ...BO, teams: slugs.map((slug) => ({ slug, role: 'manager' })) });
+    // A member, or a manager of one of the two teams only, may not.
+    assert.equal((await swap(BO)).status, 403);
+    assert.equal((await swap(manager('edge'))).status, 403);
+    assert.equal((await swap(manager('helix'))).status, 403);
+    // Not shared with that team: nothing to swap.
+    assert.equal((await swap(ADA, 'admin')).status, 404);
+
+    let r = await swap(manager('edge', 'helix'));
+    assert.equal(r.status, 200);
+    assert.deepEqual(r.body.swapped, {
+      source: 'slack', channelId: 'C1', team: 'edge', from: 'helix', shared: true,
+    });
+    assert.deepEqual(r.body.moves.map((m) => m.to.team), ['edge']);
+    assert.equal(r.body.rule.value, 'edge');
+    assert.deepEqual(e.DB.rows('SELECT team FROM channel_teams'), [{ team: 'helix' }]);
+    await drain(e);
+    assert.deepEqual(e.DB.rows("SELECT DISTINCT team FROM threads WHERE channel_id = 'C1'"), [{ team: 'edge' }]);
+    r = await call(e, ADA, 'GET', '/api/admin/team?slug=helix');
+    const c = r.body.channels.find((x) => x.channelId === 'C1');
+    assert.deepEqual([c.team, c.sharedWith], ['edge', ['helix']]);
+
+    // And back, by the admin team.
+    r = await swap(ADA, 'helix');
+    assert.deepEqual([r.status, r.body.swapped.from, r.body.moves.map((m) => m.to.team)], [200, 'edge', ['helix']]);
+    assert.deepEqual(e.DB.rows('SELECT team FROM channel_teams'), [{ team: 'edge' }]);
+    assert.equal((await swap(ADA, 'helix')).status, 404);
   });
 });
 

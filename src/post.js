@@ -17,16 +17,22 @@ import {
   CHANNEL_PEOPLE, kept, keptAccounts, placeArgs,
 } from './accounts.js';
 import { json } from './http.js';
-import { invitedFields, inviteMentioned } from './invite.js';
+import { messageKey, putRaw } from './raw.js';
+import { inviteAuthor, invitedFields, inviteMentioned } from './invite.js';
 import { getIdentity, isStaffDomain } from './lookup.js';
 import { threadExperts } from './expertise.js';
 import { suggestMentions } from './mention-match.js';
 import { markdownToMrkdwn } from './markdown.js';
+import { readMarkdown } from './mdast.js';
 import { mentionCandidates } from './profiles.js';
 import {
   inPersonalView, personalChannels, sharesByChannel, teamsOf,
 } from './shares.js';
-import { refreshMembers } from './suggest.js';
+import { MAX_MEMBERS_LISTED, refreshMembers } from './suggest.js';
+import { MESSAGE_ID } from './portal/ids.js';
+import {
+  portalAuthor, portalBound, portalCall, portalUpload,
+} from './portalsource.js';
 import { resolveShortcodes } from './shortcodes.js';
 import { messageHtml } from './ui-markdown.js';
 
@@ -149,6 +155,12 @@ async function saveToken(env, person, platform, t) {
 }
 
 /**
+ * The customer portal among a person's platforms, where its Worker is bound: nobody connects an
+ * account for it, and the portal takes the inbox's word for who posts, reacts or edits.
+ */
+const portalOn = (env) => (portalBound(env) ? { portal: true } : {});
+
+/**
  * Whether the person's tokens may react: Slack tokens from before `reactions:write` was
  * asked for may not (they need to connect again); `ChannelMessage.Send` already may.
  */
@@ -160,6 +172,7 @@ export async function reactable(env, person) {
     slack: by.has('slack') && by.get('slack').split(/[\s,]+/).includes('reactions:write'),
     teams: by.has('teams'),
     discord: false,
+    ...portalOn(env),
   };
 }
 
@@ -183,7 +196,9 @@ export async function editable(env, person) {
       teams = 'reconnect';
     }
   }
-  return { slack: by.has('slack'), teams, discord: false };
+  return {
+    slack: by.has('slack'), teams, discord: false, ...portalOn(env),
+  };
 }
 
 /**
@@ -194,15 +209,23 @@ export async function editable(env, person) {
 export async function attachable(env, person) {
   const { results } = await env.DB.prepare('SELECT platform, scope FROM user_tokens WHERE person = ?')
     .bind(person).all();
-  return Object.fromEntries((results || []).filter((r) => r.platform !== 'discord')
-    .map((r) => [r.platform, personRule(r.platform, r.scope)]));
+  return {
+    ...Object.fromEntries((results || []).filter((r) => r.platform !== 'discord')
+      .map((r) => [r.platform, personRule(r.platform, r.scope)])),
+    ...(portalBound(env) ? { portal: personRule('portal') } : {}),
+  };
 }
 
 export async function connections(env, person) {
   const { results } = await env.DB.prepare('SELECT platform FROM user_tokens WHERE person = ?')
     .bind(person).all();
   const set = new Set((results || []).map((r) => r.platform));
-  return { slack: set.has('slack'), teams: set.has('teams'), discord: set.has('discord') };
+  return {
+    slack: set.has('slack'),
+    teams: set.has('teams'),
+    discord: set.has('discord'),
+    ...portalOn(env),
+  };
 }
 
 /**
@@ -506,6 +529,46 @@ const markMentions = (body, mentions, mark) => splitMentions(body, mentions)
  */
 export const slackMarkdown = (body, mentions = []) => markMentions(body, mentions, (p) => `<@${p.id}>`);
 
+/** Whether a markdown tree has a table anywhere (in a list item or a quote too). */
+const hasTable = (node) => node.type === 'table' || (node.children || []).some(hasTable);
+
+/**
+ * The `blocks` of a person's Slack post or edit: a reply with a table is a `markdown` block,
+ * which Slack renders itself, tables too, where mrkdwn has none (the `text` keeps its pipes);
+ * any other reply has none, and its mrkdwn `text` is the message. Undefined for none.
+ */
+export function slackBlocks(body, mentions = []) {
+  return hasTable(readMarkdown(body))
+    ? [{ type: 'markdown', text: slackMarkdown(body, mentions) }] : undefined;
+}
+
+/** Slack refusing the blocks of a message, which it takes as text alone. */
+export const SLACK_BLOCKS_REFUSED = [
+  'invalid_blocks', 'invalid_blocks_format', 'msg_blocks_too_long', 'block_mismatch',
+];
+
+/**
+ * Calls Slack `method` with `payload` and its `blocks` (src/post.js `slackBlocks`); when Slack
+ * refuses those, which posts nothing, once more as `text` alone. Slack's answer, as JSON, or
+ * `{ status }` when it gave none.
+ */
+export async function slackWithBlocks(token, method, payload, blocks) {
+  const call = async (b) => {
+    const res = await fetch(`https://slack.com/api/${method}`, {
+      method: 'POST',
+      headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json; charset=utf-8' },
+      body: JSON.stringify({ ...payload, ...(b ? { blocks: b } : {}) }),
+    });
+    return res.json().catch(() => ({ status: res.status }));
+  };
+  const data = await call(blocks);
+  if (blocks && !data.ok && SLACK_BLOCKS_REFUSED.includes(data.error)) {
+    console.warn(JSON.stringify({ route: 'slack', method, blocks: data.error }));
+    return call();
+  }
+  return data;
+}
+
 /**
  * A Discord message's `content` and `allowed_mentions` (the opspile bot's posts): mentions as
  * `<@id>`, and the mentioned people are the only ones it pings (not `@everyone`, nor a role).
@@ -612,8 +675,9 @@ export async function channelPlace(env, ref) {
     ORDER BY t.any_at DESC LIMIT 1`).bind(id.join(':'), source, tenant).first();
 }
 
-// The id a platform gives the first message of a thread: a Slack `ts`, a Teams message id.
-const ROOT_ID = { slack: /^\d{1,12}\.\d{1,8}$/, teams: /^\d{1,20}$/ };
+// The id a platform gives the first message of a thread: a Slack `ts`, a Teams message id, a
+// portal message id.
+const ROOT_ID = { slack: /^\d{1,12}\.\d{1,8}$/, teams: /^\d{1,20}$/, portal: MESSAGE_ID };
 
 /**
  * The inbox entry a message `id` starts in channel `t`, as src/normalize.js will key it (the
@@ -761,6 +825,70 @@ async function inChannelOf(env, t, ids) {
 }
 
 /**
+ * Whether the members of a Teams thread's team are listed in full, so that someone not among
+ * them (`CHANNEL_PEOPLE`) is known to be out of it: a list that came back, of a team that is no
+ * shared channel's (whose people come from other teams too) and not cut at `MAX_MEMBERS_LISTED`.
+ * Teams completes an @mention from the whole tenant, so a name that fills in says nothing of it.
+ */
+async function teamListed(env, t) {
+  if (t.source !== 'teams') {
+    return false;
+  }
+  const r = await env.DB.prepare(`SELECT c.members_at, c.members_error, c.shared,
+      (SELECT COUNT(*) FROM channel_members m WHERE m.source = c.source AND m.tenant = c.tenant
+        AND m.channel_id = c.channel_id) AS listed
+    FROM channels c WHERE c.source = 'teams' AND c.tenant = ? AND c.channel_id = ?`)
+    .bind(t.tenant, t.channel_id).first();
+  return Boolean(r && r.members_at && !r.members_error && !r.shared
+    && r.listed > 0 && r.listed < MAX_MEMBERS_LISTED);
+}
+
+/**
+ * Of the people `mentions` (from `knownMentions`) of a Teams post, those not in the thread's
+ * Teams team, as `{ name, email? }`: they get no notice of the mention and may not see the
+ * thread until someone adds them (admin-bot). A list that says someone is out is listed again
+ * first when it is over `MEMBERS_MISS_AGE_MS` old, so someone just added is not called out.
+ * Empty where nobody can tell, and whatever fails: the post went out.
+ */
+export async function mentionedOutside(env, t, mentions, learn = {}) {
+  const people = (mentions || []).filter((m) => m.kind === 'person');
+  if (t.source !== 'teams' || !people.length) {
+    return [];
+  }
+  try {
+    const out = async () => {
+      if (!await teamListed(env, t)) {
+        return [];
+      }
+      const inside = await inChannelOf(env, t, people.map((p) => p.id));
+      return people.filter((p) => !inside.has(p.id));
+    };
+    let outside = await out();
+    if (outside.length) {
+      const learned = await learnMembers(env, t, { ...learn, maxAge: MEMBERS_MISS_AGE_MS });
+      if (learned.members !== undefined) {
+        outside = await out();
+      }
+    }
+    if (!outside.length) {
+      return [];
+    }
+    const { results } = await env.DB.prepare(`SELECT i.user_id AS id,
+        COALESCE(i.email, p.email) AS email
+      FROM identities i LEFT JOIN people p ON p.id = i.person
+      WHERE i.source = ? AND i.tenant = ? AND i.user_id IN (SELECT value FROM json_each(?))`)
+      .bind(t.source, t.tenant, JSON.stringify(outside.map((p) => p.id))).all();
+    const mail = new Map((results || []).map((r) => [r.id, r.email]));
+    return outside.map((p) => ({
+      name: p.name, ...(mail.get(p.id) ? { email: mail.get(p.id) } : {}),
+    }));
+  } catch (e) {
+    console.warn(JSON.stringify({ route: 'post', action: 'outside', error: e.message }));
+    return [];
+  }
+}
+
+/**
  * Accounts by the names an earlier version of a message mentioned them by (`@Name` in its
  * markdown), so that editing it keeps them mentioned: a name that stands for exactly one
  * account of the thread's workspace or tenant (or one bot of its Teams team), else none.
@@ -773,7 +901,7 @@ async function inChannelOf(env, t, ids) {
  * keeps the name it was written with.
  */
 export async function mentionsByName(env, t, names) {
-  const wanted = [...new Set(names.filter(Boolean))].slice(0, 200);
+  const wanted = [...new Set(names.filter(Boolean))].slice(0, 400);
   if (!wanted.length) {
     return [];
   }
@@ -848,6 +976,7 @@ const poolAccount = (r) => ({
   ...(r.staff ? { staff: true } : {}),
   ...(r.here ? { here: true } : {}),
   ...(r.member ? { member: true } : {}),
+  ...(r.outside ? { outside: true } : {}),
   ...(r.affinity > 0 ? { affinity: r.affinity } : {}),
 });
 
@@ -862,7 +991,9 @@ const poolAccount = (r) => ({
  * else; within each, by that affinity, then by how well `q` matches (src/mention-match.js: the
  * start of any word of the name, the Slack login or display name, or the mail address, in any
  * case), staff first, by name. On Teams, the bots seen in the thread's Teams team are offered
- * as well.
+ * as well, and a person is `outside` when the team's members are listed in full and they are not
+ * among them (Teams completes a mention from the whole tenant, so the name filling in there says
+ * nothing of whether the mention reaches them).
  *
  * With `pool`, the answer has everything these suggestions are picked from as well (`pool`:
  * `{ accounts, bots }`, src/mention-match.js `suggestMentions`), so the page suggests from it
@@ -891,7 +1022,7 @@ export async function mentionable(env, key, q, inTeam, opts = {}) {
   const found = Promise.all([
     t.source === 'teams' && t.group_id
       ? env.DB.prepare(`SELECT i.user_id AS id, ${BOT_NAME} AS name, i.name AS posts_as,
-          i.avatar ${BOTS} ORDER BY b.at DESC`).bind(t.tenant, t.group_id).all()
+          COALESCE(i.display_avatar, i.avatar) AS avatar ${BOTS} ORDER BY b.at DESC`).bind(t.tenant, t.group_id).all()
       : { results: [] },
     env.DB.prepare(`SELECT i.user_id AS id, i.person, ${NAME} AS name, i.name AS account_name,
         i.aliases, COALESCE(i.email, p.email) AS email, i.avatar,
@@ -903,6 +1034,7 @@ export async function mentionable(env, key, q, inTeam, opts = {}) {
     env.DB.prepare(CHANNEL_PEOPLE).bind(...placeArgs(t)).all(),
     me && key ? threadExperts(env, key, { me: me.id }) : null,
     keptAccounts(env, t),
+    teamListed(env, t),
   ]);
   // Awaited below once the viewer may see it; not an unhandled rejection before that.
   found.catch(() => {});
@@ -916,7 +1048,7 @@ export async function mentionable(env, key, q, inTeam, opts = {}) {
   }
   const [
     { results: botRows }, { results: accounts }, { results: posters }, { results: members },
-    experts, reached,
+    experts, reached, listed,
   ] = await found;
   const prefix = `${t.source}:${t.tenant}:`;
   const here = new Set((posters || []).map((r) => String(r.author_key || ''))
@@ -948,6 +1080,8 @@ export async function mentionable(env, key, q, inTeam, opts = {}) {
         staff: list.some((a) => a.staff),
         here: list.some((a) => here.has(a.id)),
         member: list.some((a) => inChannel.has(a.id)),
+        // On Teams, known not to be in its team: a mention would not reach them.
+        outside: listed && !list.some((a) => inChannel.has(a.id)),
         affinity: affinity(r, list),
       });
     }),
@@ -980,21 +1114,60 @@ export async function mentionable(env, key, q, inTeam, opts = {}) {
 const SLACK_RECONNECT = ['invalid_auth', 'token_revoked', 'not_authed', 'missing_scope'];
 
 /**
+ * Keeps the Teams message a post made in pile 1, as Graph answered it, for the normalizer: the
+ * reply is in the inbox at once, not only once its change notification is in (which Graph may
+ * be slow to deliver, or retry for minutes). The notification's fetch comes later and keeps the
+ * same version under the same key (`messageKey`), so the two merge. Quietly: the post went out
+ * whatever happens here, and the notification still brings it.
+ */
+export async function keepTeamsPost(env, t, message) {
+  if (!env.RAW || !env.NORMALIZE || !message || !message.id || !message.createdDateTime) {
+    return null;
+  }
+  try {
+    const stored = {
+      ...message,
+      channelIdentity: message.channelIdentity
+        || { teamId: t.group_id, channelId: t.channel_id },
+    };
+    const key = messageKey(t.tenant, {
+      teamId: t.group_id, channelId: t.channel_id, messageId: message.id,
+    }, stored);
+    await putRaw(env, key, JSON.stringify(stored), {
+      source: 'teams', via: 'post', changeType: 'created',
+    });
+    return key;
+  } catch (e) {
+    console.warn(JSON.stringify({ route: 'post', action: 'keep', error: e.message }));
+    return null;
+  }
+}
+
+/**
  * POST /api/post `{ thread, text, mentions? }`, and `files` (src/attach.js): replies in the
  * thread as the signed-in person. `mentions` are account ids from /api/mentionable; each
  * `@Name` of one of them in the text becomes a real platform mention, so the person is
  * notified. On Slack, the Adobe people among them who are not in the channel are added to it
  * first (src/invite.js): `invited` in the answer, and `uninvited` whom Slack would not add.
+ * When Slack refuses the post because the person is not in the channel, the opspile app adds
+ * them and it goes again, once: `joined` in the answer (`joinedWorkspace` when they were added
+ * to the channel's workspace too). On Teams, `outside` names the people mentioned who are not
+ * in its Teams team (`mentionedOutside`), with their mail address where known, for an
+ * `@admin-bot add`: the mention does not reach them.
  * Emoji `:names:` go as the platform knows them (src/shortcodes.js); `text` in the answer is
  * the reply as sent. Files go with the text, in the same message. The reply then
- * arrives like any other message, through the platform's events.
+ * arrives like any other message, through the platform's events; on Teams it is also kept as
+ * Graph answered the post (`keepTeamsPost`, after the answer with `waitUntil`), so it does not
+ * wait for its change notification.
  *
  * With `channel` (as `channelPlace` reads it) instead of `thread`, the message starts a thread
  * there, and the answer's `thread` is its inbox entry, where the platform names the message.
  * With `channel` and `root`, the id the platform gave such a message, it is a reply in that
  * thread, which the inbox may not have yet: it comes back through the platform's events.
  */
-export async function post(env, me, request, inTeam, files = []) {
+export async function post(env, me, request, inTeam, files = [], {
+  waitUntil = null, learn = {},
+} = {}) {
   const {
     thread: key, channel, text, mentions: ids, root,
   } = request || {};
@@ -1016,6 +1189,45 @@ export async function post(env, me, request, inTeam, files = []) {
   }
   if (t.source === 'discord') {
     return json({ error: 'reply in Discord: the inbox cannot post there as you' }, 409);
+  }
+  if (t.source === 'portal') {
+    // The customer portal: nobody connects an account for it. The inbox says who posts, by
+    // their mail address (src/portalsource.js), and the text goes as it is: markdown, in
+    // which an `@Name` of someone in the channel is a mention there.
+    const refused = checkFiles(personRule('portal'), files);
+    if (refused) {
+      return json({ error: refused }, 400);
+    }
+    const { text: sent } = await resolveShortcodes(env, body, {
+      source: t.source, tenant: t.tenant,
+    });
+    await routeReply(env, key, t);
+    const author = await portalAuthor(env, me);
+    // The files first, then the message that carries them.
+    const up = await portalUpload(env, t, files, author);
+    if (up.error) {
+      return json({ error: `Portal: ${up.error}` }, 502);
+    }
+    const res = await portalCall(env, 'post', {
+      domain: t.tenant,
+      channel: t.channel_id,
+      root: t === place && !key ? undefined : t.root_id,
+      text: sent,
+      files: up.ids,
+      author,
+    });
+    if (res.error) {
+      return json({
+        error: `Portal: ${res.error}`, unknown: res.unknown || undefined,
+      }, res.status === 409 ? 409 : 502);
+    }
+    return json({
+      ok: true,
+      platform: 'portal',
+      id: res.id,
+      text: sent,
+      ...(t === place && !key ? { thread: threadOf(t, res.id) } : {}),
+    });
   }
   const { token, scope, userId } = await personalToken(env, me.id, t.source) || {};
   if (!token) {
@@ -1044,39 +1256,59 @@ export async function post(env, me, request, inTeam, files = []) {
   if (t.source === 'slack') {
     // Colleagues mentioned who are not in the channel are added first, so the mention reaches
     // them (src/invite.js).
-    const invited = invitedFields(await inviteMentioned(env, t, mentions, { except: userId }));
-    if (files.length) {
-      const up = await slackUpload(token, {
+    const invitedSome = await inviteMentioned(env, t, mentions, { except: userId });
+    const send = () => (files.length
+      ? slackUpload(token, {
         channel: t.channel_id, threadTs: t.root_id, comment: sent && slackText(sent, mentions),
-      }, files);
-      if (up.error === 'missing_scope') {
-        // A token from before files:write, or one it was taken from.
-        return json({
-          error: 'Slack: the inbox needs your permission to upload files: connect your Slack account again',
-          reconnect: 'slack',
-          files: true,
-        }, 409);
+      }, files)
+      // A table goes as a `markdown` block, which Slack renders (mrkdwn has no tables).
+      : slackWithBlocks(token, 'chat.postMessage', {
+        channel: t.channel_id, thread_ts: t.root_id, text: slackText(sent, mentions),
+      }, slackBlocks(sent, mentions)));
+    let data = await send();
+    // Slack lets a person post only where they are in: the app adds them, and it goes again.
+    let joined = null;
+    if (data.error === 'not_in_channel') {
+      joined = await inviteAuthor(env, t, { id: userId, name: me.name });
+      if (joined?.invited.length) {
+        data = await send();
       }
-      if (up.error) {
-        const connect = SLACK_RECONNECT.includes(up.error) ? 'slack' : undefined;
-        return json({ error: `Slack: ${up.error}`, connect }, 502);
+    }
+    const invited = {
+      ...invitedFields(invitedSome),
+      ...(joined?.invited.length ? { joined: true } : {}),
+      ...(joined?.invited[0]?.workspace ? { joinedWorkspace: true } : {}),
+    };
+    if (data.error === 'missing_scope' && files.length) {
+      // A token from before files:write, or one it was taken from.
+      return json({
+        error: 'Slack: the inbox needs your permission to upload files: connect your Slack account again',
+        reconnect: 'slack',
+        files: true,
+      }, 409);
+    }
+    if (data.error === 'not_in_channel' && joined && !joined.invited.length) {
+      // The app could not add them: Slack's reason, where it gave one.
+      const why = joined.refused[0]?.error;
+      return json({
+        error: `Slack: not_in_channel, and the bot could not add you${why ? ` (${why})` : ''}: join the channel in Slack`,
+      }, 502);
+    }
+    if (files.length) {
+      if (data.error) {
+        const connect = SLACK_RECONNECT.includes(data.error) ? 'slack' : undefined;
+        return json({ error: `Slack: ${data.error}`, connect }, 502);
       }
       // Slack names the files, not the message, which arrives through the events.
       return json({
-        ok: true, platform: 'slack', id: null, files: up.files, text: sent, ...invited,
+        ok: true, platform: 'slack', id: null, files: data.files, text: sent, ...invited,
       });
     }
-    const res = await fetch('https://slack.com/api/chat.postMessage', {
-      method: 'POST',
-      headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json; charset=utf-8' },
-      body: JSON.stringify({
-        channel: t.channel_id, thread_ts: t.root_id, text: slackText(sent, mentions),
-      }),
-    });
-    const data = await res.json();
     if (!data.ok) {
       const reconnect = SLACK_RECONNECT.includes(data.error);
-      return json({ error: `Slack: ${data.error}`, connect: reconnect ? 'slack' : undefined }, 502);
+      return json({
+        error: `Slack: ${data.error || data.status}`, connect: reconnect ? 'slack' : undefined,
+      }, 502);
     }
     return json({
       ok: true, platform: 'slack', id: data.ts, text: sent, ...started(data.ts), ...invited,
@@ -1114,16 +1346,55 @@ export async function post(env, me, request, inTeam, files = []) {
       unknown: res.status >= 500 || undefined,
     }, res.status === 413 ? 413 : 502);
   }
+  // The message as Graph made it, kept now: it shows without waiting for its notification.
+  const keeping = keepTeamsPost(env, t, data);
+  if (waitUntil) {
+    waitUntil(keeping);
+  } else {
+    await keeping;
+  }
+  // Whom the mentions do not reach: Teams completes them from the whole tenant.
+  const outside = await mentionedOutside(env, t, mentions, learn);
   return json({
-    ok: true, platform: 'teams', id: data.id, text: sent, ...started(data.id),
+    ok: true,
+    platform: 'teams',
+    id: data.id,
+    text: sent,
+    ...started(data.id),
+    ...(outside.length ? { outside } : {}),
   });
+}
+
+/**
+ * POST /api/typing `{ thread }`: the signed-in person is writing a reply in the thread. Only the
+ * customer portal is told (src/portal/platform.js `typing`), which shows its customers who is
+ * writing for a few seconds; Slack and Teams take no such word from an app. Staff only, in
+ * their teams; 204 whether or not anyone was told.
+ */
+export async function typing(env, me, request, inTeam) {
+  const key = request && request.thread;
+  const t = key ? await target(env, key) : null;
+  if (!t || !await inTeam(await teamsOf(env, t), t)) {
+    return json({ error: 'not found' }, 404);
+  }
+  if (t.source === 'portal' && isStaffDomain(env, me.email) && portalBound(env)) {
+    // Who writes, by their mail address: the portal keeps the picture it has of them.
+    await portalCall(env, 'typing', {
+      domain: t.tenant,
+      channel: t.channel_id,
+      root: t.root_id,
+      author: { email: me.email, name: me.name || undefined },
+    });
+  }
+  return new Response(null, { status: 204 });
 }
 
 export async function disconnect(env, me, platform) {
   if (platform === 'discord') {
-    // The link was the point of connecting; it goes with the token.
+    // The link was the point of connecting; it goes with the token. One the admin team made
+    // (src/accountlinks.js) is the admin team's to take back.
     await env.DB.prepare(`UPDATE identities SET person = NULL WHERE source = 'discord'
-      AND person = ? AND user_id IN (SELECT user_id FROM user_tokens
+      AND person = ? AND linked_at IS NULL AND user_id IN (SELECT user_id FROM user_tokens
         WHERE person = ? AND platform = 'discord')`).bind(me.id, me.id).run();
   }
   await env.DB.prepare('DELETE FROM user_tokens WHERE person = ? AND platform = ?')

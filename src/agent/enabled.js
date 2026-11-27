@@ -62,7 +62,17 @@ export async function teamDefault(env, team) {
 export async function agentStates(env, ids, { teams = new Map() } = {}) {
   const list = [...new Set([...ids].map(String))];
   const fallback = agentChannels(env);
-  const teamsOn = await agentTeams(env, list.map((id) => teams.get(id)));
+  // D1 allows 100 bound parameters per statement. Asked together: /api/* sends the reads of
+  // one tick to D1 as one batch (src/d1batch.js).
+  const parts = [];
+  for (let i = 0; env.DB && i < list.length; i += 90) {
+    parts.push(list.slice(i, i + 90));
+  }
+  const [teamsOn, ...switched] = await Promise.all([
+    agentTeams(env, list.map((id) => teams.get(id))),
+    ...parts.map((part) => env.DB.prepare(`SELECT channel_id, enabled, changed_by, changed_at
+      FROM agent_channels WHERE channel_id IN (${part.map(() => '?').join(', ')})`).bind(...part).all()),
+  ]);
   const viaOf = (id) => {
     if (fallback.has(id)) {
       return 'deployment';
@@ -72,15 +82,7 @@ export async function agentStates(env, ids, { teams = new Map() } = {}) {
   const out = new Map(list.map((id) => [id, {
     enabled: Boolean(viaOf(id)), set: false, by: null, at: null, via: viaOf(id),
   }]));
-  if (!env.DB || !list.length) {
-    return out;
-  }
-  // D1 allows 100 bound parameters per statement.
-  for (let i = 0; i < list.length; i += 90) {
-    const part = list.slice(i, i + 90);
-    // eslint-disable-next-line no-await-in-loop
-    const { results } = await env.DB.prepare(`SELECT channel_id, enabled, changed_by, changed_at
-      FROM agent_channels WHERE channel_id IN (${part.map(() => '?').join(', ')})`).bind(...part).all();
+  for (const { results } of switched) {
     for (const r of results || []) {
       out.set(r.channel_id, { ...shown(r), set: true, via: null });
     }

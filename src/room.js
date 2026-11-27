@@ -37,6 +37,11 @@ export class TeamRoom extends DurableObject {
     // flush is done: a timer would keep the room from hibernating.
     this.cogs = objectMeter(env, { via: 'room', subject: () => ({ team: ctx.id.name || '' }), delay: 0 });
     this.env = this.cogs.env;
+    // The inbox asks whether its socket is still there when it is back on screen (probeSockets
+    // in ui/inbox.js): answered by the runtime, without waking the room.
+    if (typeof WebSocketRequestResponsePair === 'function') {
+      ctx.setWebSocketAutoResponse(new WebSocketRequestResponsePair('ping', 'pong'));
+    }
   }
 
   async broadcast(event) {

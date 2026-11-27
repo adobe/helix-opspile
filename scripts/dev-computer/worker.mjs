@@ -12,25 +12,29 @@
 
 /**
  * An agent's computer by itself, in local workerd: the real ThreadAgent (src/agent/agent.js)
- * with its Workspace, its shells (just-bash, and the SLICC kernel with an image mounted from its
- * local `IMAGES` bucket) and the gateway's `forward`, but no model, no inbox and no D1, so no
- * secrets. For trying a shell, an image, and a new version of the kernel or of its programs,
- * which Node's tests cannot run. scripts/dev-computer/dev.mjs starts it and fills the bucket
+ * with its Workspace, its shell (the SLICC kernel, with an image mounted from its local
+ * `IMAGES` bucket) and the gateway's `forward`, but no model, no inbox and no D1, so no
+ * secrets. For trying an image, and a new version of the kernel or of its programs, which
+ * Node's tests cannot run. scripts/dev-computer/dev.mjs starts it and fills the bucket
  * with the images of scripts/computer-images.mjs.
  *
  *   npm run computer:dev                     # http://localhost:8788
- *   curl localhost:8788 -d '{"command":"uname -a","runtime":"slicc-kernel"}'
+ *   curl localhost:8788 -d '{"command":"uname -a"}'
  *   curl localhost:8788 -d '{"command":"sqlite3 --version","image":"data"}'
  *   curl localhost:8788 -d '{"command":"sleep 9","timeout":2}'
  *   curl 'localhost:8788?thread=other' -d '{"command":"ls -la"}'
  *   curl localhost:8788/uploads -d '{"a.log":"line 1\nERROR boom\n"}'
  *   curl localhost:8788/shell -d '{}'        # what the agent is told its shell has
  *
- * `runtime` changes the computer's shell and `image` its kernel's image, as a team's choice
- * does at the agent's next message (`changeShell`), and stay until the next change. `/uploads`
- * puts files into the read-only uploads of the thread. Each `thread` is an agent of its own,
- * with its own files. `PUT /images/<key>` writes an object of the images bucket, and
- * `GET /images/<key>` reads it (404 when there is none). `GET /health` answers `ok`.
+ * `image` changes the computer's image, as a team's choice does at the agent's next message
+ * (`changeImage`), and stays until the next change; `cache`
+ * (`{ mib, fileMib }`) sizes the isolate's image cache (src/agent/image.js). `/uploads`
+ * puts files into the read-only uploads of the thread. `/reads` answers what the isolate asked
+ * of the images bucket and keeps, and `/drop` ends the agent's kernel.
+ * Each `thread` is an agent of its own, with its own files. With the secret `GITHUB_TOKEN`,
+ * git sends it to github.com, through the gateway (`devSecrets`, `devEnv`). `PUT /images/<key>`
+ * writes an object of the images bucket, and `GET /images/<key>` reads it (404 when there is
+ * none). `GET /health` answers `ok`.
  *
  * Deployed (`--env stage`, .github/workflows/computer-stage.yml), it is a shell on the
  * internet: `REQUIRE_TOKEN` is set there, and every request needs the secret `COMPUTER_TOKEN`
@@ -38,43 +42,74 @@
  */
 
 import { ThreadAgent } from '../../src/agent/agent.js';
+import { forgetImages, imageReads, sizeImageCache } from '../../src/agent/image.js';
+import { forward } from '../../src/agent/secrets.js';
 import { mountList } from '../../src/threadfiles.js';
+import { devEnv, devSecrets } from './secrets.mjs';
 
-export { WorkspaceServiceProxy } from '@cloudflare/computer';
-export { SecretGateway } from '../../src/agent/gateway.js';
+const MiB = 1024 * 1024;
 
 export class ComputerAgent extends ThreadAgent {
-  /** Runs `command` as pi's bash tool does: what it answers, and what the command printed. */
+  /** The kernel's programs reach the network with the dev computer's secrets. */
+  kernelFetch(request) {
+    return forward(this.env, { agent: this.name }, request, { secrets: devSecrets(this.env) });
+  }
+
+  /**
+   * Runs `command` as pi's bash tool does: what it answers, what the command printed, and what
+   * the isolate read of the images bucket and keeps (`images`, src/agent/image.js).
+   * `cache` (`{ mib, fileMib }`, `{}` for the Worker's own) empties what the isolate keeps and
+   * sizes it first.
+   */
   async exec({
-    command, runtime, image, timeout, env,
+    command, image, timeout, env, cache,
   }) {
-    await this.shell({ runtime, image });
+    if (cache) {
+      // A cache of its own: what the isolate kept for another agent is forgotten first.
+      forgetImages();
+      sizeImageCache({
+        ...(cache.mib ? { bytes: cache.mib * MiB } : {}),
+        ...(cache.fileMib ? { fileMax: cache.fileMib * MiB } : {}),
+      });
+    }
+    await this.shell({ image });
     this.tools = ['computer'];
     const output = { stdout: '', stderr: '' };
     const started = Date.now();
+    const vars = { ...devEnv(this.env), ...(env || {}) };
     const res = await this.computer().exec(String(command), {
       ...(timeout ? { timeout: Number(timeout) } : {}),
-      ...(env ? { env } : {}),
+      ...(Object.keys(vars).length ? { env: vars } : {}),
       onOutput: (chunk, context, info) => {
         output[info.stream] += chunk;
       },
     });
     return {
-      runtime: this.runtime,
-      ...(this.runtime === 'slicc-kernel' ? { image: this.image } : {}),
+      image: this.image,
       ms: Date.now() - started,
       ...(res.ok ? res.value : { error: res.error.code, message: res.error.message }),
       ...output,
       sqliteBytes: this.ctx.storage.sql.databaseSize,
+      images: imageReads(),
     };
   }
 
-  /** Changes the shell or the image, if asked: what the agent is told of it then. */
-  async shell({ runtime, image } = {}) {
-    const before = await this.currentRuntime();
-    const next = runtime || (image ? 'slicc-kernel' : before);
-    if (next !== before || (image && image !== this.image)) {
-      await this.changeShell(next, image || this.image);
+  /** What the isolate asked of the images bucket, and keeps (src/agent/image.js). */
+  // eslint-disable-next-line class-methods-use-this
+  async reads() {
+    return { images: imageReads() };
+  }
+
+  /** Ends the kernel, as when the agent's object lets it go: the next command boots another. */
+  async drop() {
+    await this.changeImage();
+    return { dropped: true, images: imageReads() };
+  }
+
+  /** Changes the image, if asked: what the agent is told of its shell then. */
+  async shell({ image } = {}) {
+    if (image && image !== await this.currentImage()) {
+      await this.changeImage(image);
     }
     return this.shellInfo();
   }
@@ -130,7 +165,7 @@ export default {
       }
     }
     if (request.method !== 'POST') {
-      return new Response('POST { command, runtime?, image?, timeout?, env? }, /uploads { name: text } or /shell\n', { status: 405 });
+      return new Response('POST { command, image?, timeout?, env?, cache? }, /uploads { name: text }, /shell, /reads or /drop\n', { status: 405 });
     }
     const thread = url.searchParams.get('thread') || 'dev';
     const agent = env.AGENTS.get(env.AGENTS.idFromName(`dev:${thread}`));
@@ -141,6 +176,12 @@ export default {
       const body = await request.json();
       if (url.pathname === '/uploads') {
         return Response.json(await agent.upload(body));
+      }
+      if (url.pathname === '/reads') {
+        return Response.json(await agent.reads());
+      }
+      if (url.pathname === '/drop') {
+        return Response.json(await agent.drop());
       }
       return Response.json(url.pathname === '/shell'
         ? await agent.shell(body) : await agent.exec(body));

@@ -31,7 +31,7 @@ describe('the knowledge-base editor', () => {
   });
 
   it('says what the folded frontmatter holds', () => {
-    assert.equal(summary('---\ntype: "Playbook"\ntitle: x\n---'), 'type: Playbook · 2 lines');
-    assert.equal(summary('---\ntitle: x\n---'), 'frontmatter · 1 line');
+    assert.equal(summary('---\ntype: "Playbook"\ntitle: x\n---'), 'type: Playbook, 2 lines');
+    assert.equal(summary('---\ntitle: x\n---'), 'frontmatter, 1 line');
   });
 });

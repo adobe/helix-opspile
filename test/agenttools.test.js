@@ -11,6 +11,7 @@
  */
 
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import {
   afterEach, beforeEach, describe, it,
 } from 'node:test';
@@ -22,10 +23,11 @@ import { Bash, InMemoryFs } from 'just-bash';
 import { toolsFor } from '../src/agent/agenttools.js';
 import { COMPUTER_CWD, computerEnv } from '../src/agent/computer.js';
 import { commandsOf } from '../src/agent/image.js';
-import { runtimeFor, shellFor } from '../src/agent/kernel.js';
+import { imageFor } from '../src/agent/kernel.js';
+import { messageIdOf } from '../src/agent/membership.js';
 import { build } from '../scripts/computer-images.mjs';
 import { appReaction, postAsApp, reactAsApp } from '../src/agent/posting.js';
-import { agentToolsExtension, opspileExtension } from '../src/agent/tools.js';
+import { agentToolsExtension, opspileExtension, replyGuide } from '../src/agent/tools.js';
 import { kbAdmin } from '../src/kbadmin.js';
 import { d1 } from './d1.js';
 import { fakeBucket, quiet } from './fakes.js';
@@ -91,10 +93,25 @@ const target = (key, source, channelId) => ({
 });
 
 describe('agent tools', () => {
+  it('tell the agent how a reply leaves the inbox on each platform, from the bots set up', () => {
+    const all = replyGuide({ SLACK_BOT_TOKEN: 'x', DISCORD_GUILDS: '900', DISCORD_BOT_TOKEN: 'x' });
+    assert.match(all, /- Slack: a person sends the draft as themselves, .*, or as the opspile app, where the Post messages switch/);
+    assert.match(all, /- Discord: nobody sends as themselves: Discord lets only bots post .* A person sends the draft as the opspile app, where the Post messages switch of the channel or its team is on; elsewhere they copy it into Discord\./);
+    // Without a bot, no platform is said to take the app's posts.
+    const none = replyGuide({});
+    assert.doesNotMatch(none, /as the opspile app/);
+    assert.match(none, /- Discord: .*A person copies the draft into Discord\./);
+    assert.match(none, /- Microsoft Teams: a person sends the draft as themselves, with the account they connected\./);
+  });
+
   it('are off until a team or a channel turns them on; a channel wins over its team', async () => {
     const e = env();
     const slack = target(SLACK, 'slack', 'C1');
     assert.deepEqual(await toolsFor(e, slack), []);
+    // A knowledge-base agent's are no channel's: what works here, a team's extraction rules too.
+    assert.deepEqual(await toolsFor(e, { key: null, team: 'helix', org: null }), ['computer', 'extraction_rules']);
+    assert.deepEqual(await toolsFor(e, { key: null, team: null, org: 'acme' }), ['computer']);
+    assert.deepEqual(await toolsFor(e, { key: null, team: null, org: null }), []);
 
     let res = await call(e, manager, 'PUT', '/api/kb/tools', { tool: 'computer', team: 'helix', enabled: true });
     assert.equal(res.status, 200);
@@ -117,8 +134,9 @@ describe('agent tools', () => {
     assert.deepEqual(await toolsFor(e, teams), ['computer']);
     assert.deepEqual(await toolsFor({ ...e, ...TEAMS_BOT }, teams), ['computer', 'post_message']);
     assert.deepEqual(await toolsFor({ ...e, LOADER: undefined }, slack), ['post_message']);
-    // An agent without a thread (filing seeded knowledge) gets none.
-    assert.deepEqual(await toolsFor(e, { ...slack, key: null }), []);
+    // A knowledge-base agent (no thread) gets its own, whatever the switches say: they are for the
+    // conversations of its knowledge base's page (src/kbchat.js), and refused anywhere else.
+    assert.deepEqual(await toolsFor(e, { ...slack, key: null }), ['computer', 'extraction_rules']);
   });
 
   it('switch an internal tool per channel, by the admin team, in internal channels only', async () => {
@@ -172,6 +190,26 @@ describe('agent tools', () => {
     assert.deepEqual(await toolsFor(e, slack), []);
   });
 
+  it('read the customer\'s other channels by default: on for every team there is, off per channel', async () => {
+    const e = env();
+    const slack = target(SLACK, 'slack', 'C1');
+    // What migration 0102 does, for the teams of this database (made after its migrations).
+    e.DB.sqlite.exec(readFileSync(new URL('../migrations/0102_org_threads.sql', import.meta.url), 'utf8'));
+    assert.deepEqual(e.DB.sqlite.prepare(`SELECT target FROM agent_tool_switches
+      WHERE tool = 'org_threads' AND scope = 'team' AND enabled = 1 ORDER BY target`).all()
+      .map((r) => r.target), ['admin', 'edge', 'helix']);
+    assert.deepEqual(await toolsFor(e, slack), ['org_threads']);
+    // A team's manager opts one channel out; the team's switch stays.
+    const res = await call(e, manager, 'PUT', '/api/kb/tools', { tool: 'org_threads', channel: 'C1', enabled: false });
+    assert.equal(res.status, 200);
+    assert.deepEqual(await toolsFor(e, slack), []);
+    const listed = await call(e, manager, 'GET', '/api/kb/tools?repo=kb-team-helix');
+    const row = listed.body.tools.find((t) => t.tool === 'org_threads');
+    assert.equal(row.internal, false);
+    assert.equal(row.team.enabled, true);
+    assert.equal(row.channels.C1.enabled, false);
+  });
+
   it('are listed and switched by the admin team and the team\'s managers only', async () => {
     const e = env({ LOADER: undefined });
     let res = await call(e, outsider, 'PUT', '/api/kb/tools', { tool: 'computer', team: 'helix', enabled: true });
@@ -188,8 +226,10 @@ describe('agent tools', () => {
     // helix owns acme: its managers see acme's tools too.
     res = await call(e, manager, 'GET', '/api/kb/tools?repo=kb-org-acme');
     assert.equal(res.status, 200);
+    // And everyone on a team a customer's, as they see its page (its channels' switches stay
+    // its owners', above).
     res = await call(e, outsider, 'GET', '/api/kb/tools?repo=kb-org-acme');
-    assert.equal(res.status, 404);
+    assert.equal(res.status, 200);
 
     await call(e, manager, 'PUT', '/api/kb/tools', { tool: 'post_message', channel: 'C1', enabled: true });
     res = await call(e, manager, 'GET', '/api/kb/tools?repo=kb-team-helix');
@@ -208,52 +248,7 @@ describe('agent tools', () => {
     assert.equal(res.body.tools[0].channels.C1.enabled, true);
   });
 
-  it('have the computer\'s shell, which the admin team chooses for a team', async () => {
-    const e = env();
-    const computerOf = async (me, repo = 'kb-team-helix') => (await call(e, me, 'GET', `/api/kb/tools?repo=${repo}`))
-      .body.tools.find((t) => t.tool === 'computer');
-    let computer = await computerOf(manager);
-    assert.deepEqual(computer.runtime, { runtime: 'just-bash' });
-    assert.deepEqual(computer.runtimes.map((r) => r.runtime), ['just-bash', 'slicc-kernel']);
-    assert.ok(computer.runtimes.every((r) => r.title && r.description));
-    assert.equal(computer.mayRuntime, false);
-    assert.equal((await computerOf(admin)).mayRuntime, true);
-    // Only the Computer tool has one, and only a team: a customer's knowledge base shows none.
-    const { tools } = (await call(e, admin, 'GET', '/api/kb/tools?repo=kb-team-helix')).body;
-    assert.deepEqual(tools.filter((t) => t.runtime).map((t) => t.tool), ['computer']);
-    assert.equal((await computerOf(admin, 'kb-org-acme')).runtime, undefined);
-
-    // The team's managers switch the tool, not its shell.
-    const put = (me, body) => call(e, me, 'PUT', '/api/kb/tools', { tool: 'computer', team: 'helix', ...body });
-    let res = await put(manager, { runtime: 'slicc-kernel' });
-    assert.equal(res.status, 403);
-    assert.equal(await runtimeFor(e, target(SLACK, 'slack', 'C1')), 'just-bash');
-    res = await put(admin, { runtime: 'docker' });
-    assert.equal(res.status, 400);
-    res = await put(admin, { runtime: 'slicc-kernel', tool: 'post_message' });
-    assert.equal(res.status, 400);
-    res = await put(admin, { runtime: 'slicc-kernel', team: 'nobody' });
-    assert.equal(res.status, 404);
-    assert.equal(e.DB.rows('SELECT COUNT(*) AS n FROM agent_tool_options')[0].n, 0);
-
-    res = await put(admin, { runtime: 'slicc-kernel' });
-    assert.equal(res.status, 200);
-    assert.equal(res.body.runtime.runtime, 'slicc-kernel');
-    assert.equal(res.body.runtime.by, 'Ada');
-    assert.equal(await runtimeFor(e, target(SLACK, 'slack', 'C1')), 'slicc-kernel');
-    computer = await computerOf(manager);
-    assert.equal(computer.runtime.runtime, 'slicc-kernel');
-    assert.equal(computer.runtime.by, 'Ada');
-    // Choosing a shell turns nothing on.
-    assert.deepEqual(await toolsFor(e, target(SLACK, 'slack', 'C1')), []);
-    assert.deepEqual(computer.team, { enabled: false });
-
-    res = await put(admin, { runtime: 'just-bash' });
-    assert.equal(res.body.runtime.runtime, 'just-bash');
-    assert.equal(await runtimeFor(e, target(SLACK, 'slack', 'C1')), 'just-bash');
-  });
-
-  it('have the kernel\'s image, one of those in the images bucket', async () => {
+  it('have the computer\'s image, one of those in the images bucket, which the admin team chooses', async () => {
     const index = (...names) => JSON.stringify({
       v: 2,
       images: names.map((name) => ({
@@ -270,6 +265,12 @@ describe('agent tools', () => {
       .body.tools.find((t) => t.tool === 'computer');
     let computer = await computerOf(manager);
     assert.deepEqual(computer.image, { image: 'base' });
+    assert.equal(computer.mayImage, false);
+    assert.equal((await computerOf(admin)).mayImage, true);
+    // Only the Computer tool has one, and only a team: a customer's knowledge base shows none.
+    const { tools } = (await call(e, admin, 'GET', '/api/kb/tools?repo=kb-team-helix')).body;
+    assert.deepEqual(tools.filter((t) => t.image).map((t) => t.tool), ['computer']);
+    assert.equal((await computerOf(admin, 'kb-org-acme')).image, undefined);
     assert.deepEqual(computer.images, ['base', 'data'].map((name) => ({
       name,
       title: name.toUpperCase(),
@@ -280,26 +281,28 @@ describe('agent tools', () => {
     })));
     assert.equal((await computerOf(admin, 'kb-org-acme')).images, undefined);
 
+    // The team's managers switch the tool, not its image.
     const put = (me, body) => call(e, me, 'PUT', '/api/kb/tools', { tool: 'computer', team: 'helix', ...body });
     assert.equal((await put(manager, { image: 'data' })).status, 403);
     let res = await put(admin, { image: 'gpu' });
     assert.equal(res.status, 400);
     assert.match(res.body.error, /give image: base or data/);
+    assert.equal((await put(admin, { image: 'data', tool: 'post_message' })).status, 400);
     assert.equal((await put(admin, { image: 'data', team: 'nobody' })).status, 404);
-    // One that is refused changes nothing, not even the shell that came with it.
-    assert.equal((await put(admin, { runtime: 'slicc-kernel', image: 'gpu' })).status, 400);
     assert.equal(e.DB.rows('SELECT COUNT(*) AS n FROM agent_tool_options')[0].n, 0);
 
-    // The shell and its image in one, or the image alone.
-    res = await put(admin, { runtime: 'slicc-kernel', image: 'data' });
+    res = await put(admin, { image: 'data' });
     assert.equal(res.status, 200);
-    assert.equal(res.body.runtime.runtime, 'slicc-kernel');
     assert.deepEqual([res.body.image.image, res.body.image.by], ['data', 'Ada']);
-    assert.deepEqual(await shellFor(e, target(SLACK, 'slack', 'C1')), { runtime: 'slicc-kernel', image: 'data' });
-    res = await put(admin, { image: 'base' });
     assert.deepEqual(Object.keys(res.body).sort(), ['image', 'ok', 'team', 'tool']);
+    assert.equal(await imageFor(e, target(SLACK, 'slack', 'C1')), 'data');
     computer = await computerOf(manager);
-    assert.deepEqual([computer.image.image, computer.runtime.runtime], ['base', 'slicc-kernel']);
+    assert.deepEqual([computer.image.image, computer.image.by], ['data', 'Ada']);
+    // Choosing an image turns nothing on.
+    assert.deepEqual(await toolsFor(e, target(SLACK, 'slack', 'C1')), []);
+    assert.deepEqual(computer.team, { enabled: false });
+    res = await put(admin, { image: 'base' });
+    assert.equal((await computerOf(manager)).image.image, 'base');
 
     // An image the bucket lost stays the team's choice, and shows as it is.
     await put(admin, { image: 'data' });
@@ -511,7 +514,10 @@ describe('reacting as the opspile app', () => {
   });
 });
 
-/** A Cloudflare Computer workspace in memory: just-bash over one filesystem that stays. */
+/**
+ * A Cloudflare Computer workspace in memory, standing in for the kernel's, which Node cannot
+ * run: just-bash, a bash interpreter, over one filesystem that stays.
+ */
 function fakeWorkspace() {
   const fs = new InMemoryFs();
   const runs = [];
@@ -587,6 +593,8 @@ describe('the agent\'s switchable tools', () => {
       },
       capture(step('bash', { command: 'cut -d, -f2 data.csv | sort -r; ls' })),
       capture(step('bash', { command: 'cat missing.txt' })),
+      // Longer than a typical staff reply (src/agent/draftlength.js): refused, nothing is sent.
+      capture(step('post_message', { text: 'word '.repeat(100) })),
       capture(step('post_message', { text: '@Cy Customer, purges take up to 5 minutes.' })),
       capture(step('add_reaction', { message: '1792584000.000100', emoji: ':tada:' })),
       capture(fauxAssistantMessage('Posted the purge time.')),
@@ -598,7 +606,9 @@ describe('the agent\'s switchable tools', () => {
     assert.match(system, /<posting>\nThe team turned on post_message/);
     assert.match(system, /You may react to a message with an emoji instead \(add_reaction\)/);
     assert.match(system, /<computer>\nYou have a computer: the bash tool runs commands in a shell of your own, with the working directory \/workspace/);
-    const [pwd, sum, missing, post, reacted] = results;
+    const [pwd, sum, missing, tooLong, post, reacted] = results;
+    assert.ok(tooLong.error);
+    assert.match(tooLong.text, /^The reply is 499 characters, longer than you may post yourself[^]*Nothing was posted\./);
     assert.equal(pwd.text.trim(), '/workspace');
     // The file is still there for the next command.
     assert.equal(sum.text.trim(), '2\n1\ndata.csv');
@@ -624,7 +634,12 @@ describe('the agent\'s switchable tools', () => {
     const stopped = computerEnv(async () => ({
       runtime: {
         exec: async (command, options) => ({
-          result: async () => ({ exitCode: 124, stdout: '', stderr: `stopped after ${options.timeoutMs} ms\n` }),
+          result: async () => {
+            await new Promise((resolve) => {
+              setTimeout(resolve, options.timeoutMs + 5);
+            });
+            return { exitCode: 143, stdout: '', stderr: `stopped after ${options.timeoutMs} ms\n` };
+          },
         }),
       },
     }));
@@ -632,29 +647,24 @@ describe('the agent\'s switchable tools', () => {
     const onOutput = (t) => {
       out += t;
     };
-    const r = await stopped.exec('sleep 5', { timeout: 1, onOutput });
+    const r = await stopped.exec('sleep 5', { timeout: 0.02, onOutput });
     assert.equal(r.ok, false);
     assert.equal(r.error.code, 'timeout');
-    assert.equal(out, 'stopped after 1000 ms\n');
+    assert.equal(out, 'stopped after 20 ms\n');
     assert.equal((await stopped.exec(['ls'], {})).error.code, 'spawn_error');
   });
 
-  it('are told what the shell of their computer has, by the shell and image their team chose', async () => {
+  it('are told what the shell of their computer has, by the image their team chose', async () => {
     const guide = (shell) => agentToolsExtension({
       env: env(),
       hasThread: true,
       target: async () => target(SLACK, 'slack', 'C1'),
       ...(shell ? { shell } : {}),
     }, ['computer']).sections.find((s) => s.key === 'computer').render({});
-    const justBash = await guide();
-    assert.equal(await guide(async () => ({ runtime: 'just-bash' })), justBash);
-    assert.match(justBash, /The shell is just-bash: cat, grep, sed, awk, jq,/);
-    assert.match(justBash, /use its \.requests\.ndjson file with jq:/);
-
-    // With the kernel, what its image says it has (scripts/computer-images.mjs).
+    // What its image says it has (scripts/computer-images.mjs).
     const { images } = await build();
     const shellOf = (image) => async () => ({
-      runtime: 'slicc-kernel', image: image.name, tools: image.tools, commands: commandsOf(image),
+      image: image.name, tools: image.tools, commands: commandsOf(image),
     });
     const base = await guide(shellOf(images[0]));
     assert.match(base, /^You have a computer: the bash tool runs commands in a shell of your own, with the working directory \/workspace/);
@@ -663,12 +673,17 @@ describe('the agent\'s switchable tools', () => {
     // It has a JavaScript interpreter, and is told what of node that is not.
     assert.match(base, /It is not node: no require, no npm packages, no fetch \(use curl, and pipe to it\), no child processes\. There is no npm, node or python, and no other binaries\./);
     assert.doesNotMatch(base, /just-bash|sqlite3/);
+    assert.match(base, /grep, rg, sed,/);
     assert.doesNotMatch(base, /GitHub CLI/);
     const github = await guide(shellOf(images[2]));
-    assert.match(github, /, qjs, gh\. curl reaches the internet;/);
+    assert.match(github, /, qjs, dot \(Graphviz\), gh\. curl reaches the internet;/);
     assert.match(github, /gh \(GitHub CLI\) reads GitHub: .* It needs \$GH_TOKEN, a secret the team keeps for api\.github\.com: without it gh does not run .* Use it to read: creating, commenting on or merging anything on GitHub is for people\./);
+    const browser = await guide(shellOf(images.find((i) => i.name === 'browser')));
+    assert.match(browser, /, playwright-cli\. curl reaches the internet;/);
+    assert.match(browser, / playwright-cli drives a browser, Chromium on Cloudflare Browser Run, signed in nowhere\. Each command is a process of its own, and the browser keeps its tabs/);
+    assert.doesNotMatch(base, /playwright-cli/);
     const data = await guide(shellOf(images[1]));
-    assert.match(data, /curl, dig, host, nslookup, openssl, git, qjs, rg, sqlite3, strings\. curl reaches the internet;/);
+    assert.match(data, /curl, dig, host, nslookup, openssl, git, qjs, dot \(Graphviz\), sqlite3, strings\. curl reaches the internet;/);
     for (const text of [base, data]) {
       // Both have jq, and say nothing of plain http: the kernel ends TLS for its programs.
       assert.doesNotMatch(text, /There is no jq|http:\/\/ only/);
@@ -676,10 +691,12 @@ describe('the agent\'s switchable tools', () => {
       // The rest is the same computer: its uploads, and the commands a person runs.
       assert.match(text, /uploads\/ in that directory is read-only/);
       assert.match(text, /request_bash asks a person on the team/);
+      // A link posted in the thread for Adobe to see opens, with its password, but only to look.
+      assert.match(text, /Never send anything from the thread, the knowledge bases or your files to a site that is not the customer's or Adobe's, .* The one exception is a link a person posted in the thread for Adobe to see, .* you may open it with curl or the browser exactly as they posted it, nothing added, and give that site the password or access code they posted for it, in a command too\. .* do not refuse or ask the team first\. There, only look: do not sign in with an account, sign up, .* never repeat the password in your note, the draft or the knowledge bases\./);
     }
     // An image without jq says so, and what to read JSON with instead.
     const plain = await guide(async () => ({
-      runtime: 'slicc-kernel', image: 'text', tools: 'cat, sed', commands: ['cat', 'sed'],
+      image: 'text', tools: 'cat, sed', commands: ['cat', 'sed'],
     }));
     assert.match(plain, /There is no jq here: read JSON with grep, sed and awk\./);
     assert.match(plain, /use its \.requests\.ndjson file with grep and awk:/);
@@ -687,21 +704,22 @@ describe('the agent\'s switchable tools', () => {
     assert.doesNotMatch(plain, /qjs|dig|DNS|openssl/);
     assert.match(plain, /There is no npm, node or python, and no other binaries\./);
     // An image the bucket does not have (or no bucket): the agent looks for itself.
-    const unknown = await guide(async () => ({ runtime: 'slicc-kernel', image: 'gone' }));
+    const unknown = await guide(async () => ({ image: 'gone' }));
     assert.match(unknown, /The shell is GNU bash with real programs: ls \/usr\/bin lists them\. curl reaches/);
     assert.doesNotMatch(unknown, /There is no jq/);
-    // A shell that cannot be asked about is just-bash's text, not a failed prompt.
+    // A shell that cannot be asked about, or none, is the same: not a failed prompt.
     const failing = async () => {
       throw new Error('storage');
     };
-    assert.equal(await guide(failing), justBash);
+    assert.equal(await guide(failing), unknown);
+    assert.equal(await guide(), unknown);
   });
 
   it('are absent while off', async () => {
     const ext = agentToolsExtension({ env: env(), hasThread: true }, []);
     assert.deepEqual((ext.tools || []).map((t) => t.name), []);
     const seed = agentToolsExtension({ env: env(), hasThread: false }, ['post_message', 'computer']);
-    assert.deepEqual((seed.tools || []).map((t) => t.name), ['bash']);
+    assert.deepEqual((seed.tools || []).map((t) => t.name), ['bash', 'view_image']);
     const on = agentToolsExtension({ env: env(), hasThread: true }, ['post_message']);
     assert.deepEqual((on.tools || []).map((t) => t.name), ['post_message', 'add_reaction']);
   });
@@ -797,6 +815,37 @@ describe('requesting channel members', () => {
     assert.equal(calls.posts.length, 0);
   });
 
+  it('names a customer who asked by their account\'s address, though they are no person here', async () => {
+    const { e, calls, run } = setup();
+    e.DB.sqlite.prepare(`INSERT INTO messages (source, tenant, channel_id, id, thread, at, author,
+        author_key) VALUES ('teams', 'TN1', '19:abc@thread.tacv2', '1792584000100', ?, ?, 'Cu',
+        'teams:TN1:aad-cu')`).run(TEAMS, '2026-10-21T10:01:00Z');
+    e.DB.sqlite.exec(`INSERT INTO identities (source, tenant, user_id, kind, name, email, fetched_at)
+      VALUES ('teams', 'TN1', 'aad-cu', 'person', 'Cu Stomer', 'cu@client.example',
+        '2026-10-21T10:00:00Z')`);
+    const r = await run(target(TEAMS, 'teams', '19:abc@thread.tacv2'), {
+      action: 'add', emails: ['colleague@client.example'], message: '1792584000100',
+    });
+    assert.equal(r.error, false, r.text);
+    assert.deepEqual(calls.teams[0].requester, {
+      name: 'Cu', email: 'cu@client.example', aadObjectId: 'aad-cu',
+    });
+  });
+
+  it('takes no address or account of a bot that wrote the message', async () => {
+    const { e, calls, run } = setup();
+    e.DB.sqlite.prepare(`INSERT INTO messages (source, tenant, channel_id, id, thread, at, author,
+        author_key) VALUES ('teams', 'TN1', '19:abc@thread.tacv2', '1792584000200', ?, ?, 'Flow',
+        'teams:TN1:bot-flow')`).run(TEAMS, '2026-10-21T10:02:00Z');
+    e.DB.sqlite.exec(`INSERT INTO identities (source, tenant, user_id, kind, name, email, fetched_at)
+      VALUES ('teams', 'TN1', 'bot-flow', 'bot', 'Flow', 'flow@client.example',
+        '2026-10-21T10:00:00Z')`);
+    await run(target(TEAMS, 'teams', '19:abc@thread.tacv2'), {
+      action: 'add', emails: ['colleague@client.example'], message: '1792584000200',
+    });
+    assert.deepEqual(calls.teams[0].requester, { name: 'Flow', email: null, aadObjectId: null });
+  });
+
   it('posts a Slack request in #general for AEM Ops Automation, and hands it to the relay', async () => {
     const { calls, run } = setup();
     const r = await run(target(SLACK, 'slack', 'C1'), {
@@ -814,11 +863,71 @@ describe('requesting channel members', () => {
     }]);
   });
 
+  it('tells the agent of the guest invitations the relay offers for addresses with no account', async () => {
+    const { run } = setup({
+      SLACK_AUTOMATION: {
+        submit: async () => ({
+          ok: true,
+          posted: [
+            { invite: ['a@client.example', 'b@client.example'], channelId: 'C1', adminOnly: false },
+            { invite: ['c@other.example'], channelId: 'C1', adminOnly: true },
+          ],
+          notes: [],
+          skipped: null,
+          requester: null,
+        }),
+      },
+    });
+    const r = await run(target(SLACK, 'slack', 'C1'), {
+      action: 'add', emails: ['a@client.example', 'b@client.example', 'c@other.example'], message: '1792584000.000100',
+    });
+    assert.equal(r.error, false, r.text);
+    assert.doesNotMatch(r.text, /confirmation\(s\)/);
+    assert.match(r.text, /offered to send guest invitations to a@client\.example, b@client\.example, which an admin or any full member \(not a guest\) of this channel can click/);
+    assert.match(r.text, /guest invitations to c@other\.example, which no invite rule approves on its own, so an admin has to click it/);
+    assert.match(r.text, /do not see #general: tell them in your reply/);
+  });
+
+  it('finds a message of a root folded into the thread since the agent read its threads', async () => {
+    const { e, calls, run } = setup();
+    const folded = 'slack:E1:C1:1792584100.000200';
+    e.DB.sqlite.prepare(`INSERT INTO threads (thread, source, tenant, channel_id, root_id, org,
+        team, kind, channel_name, path, any_at, updated_at, logical_thread)
+      VALUES (?, 'slack', 'E1', 'C1', '1792584100.000200', 'acme', 'helix', 'channel', 'aem-acme',
+        'channels/x/', ?, ?, ?)`).run(folded, '2026-10-21T10:02:00Z', '2026-10-21T10:02:00Z', SLACK);
+    e.DB.sqlite.prepare(`INSERT INTO messages (source, tenant, channel_id, id, thread, at, author,
+        person) VALUES ('slack', 'E1', 'C1', '1792584100.000200', ?, ?, 'Bo', 2)`)
+      .run(folded, '2026-10-21T10:02:00Z');
+    // The agent's target was read before the fold: its own root only.
+    const r = await run(target(SLACK, 'slack', 'C1'), {
+      action: 'add', emails: ['guest@client.example'], message: '1792584100.000200',
+    });
+    assert.equal(r.error, false, r.text);
+    assert.equal(calls.slack.length, 1);
+  });
+
+  it('takes the message as read_thread prints it, with "message", or as a link to it', async () => {
+    assert.equal(messageIdOf('1792584000.000100'), '1792584000.000100');
+    assert.equal(messageIdOf(' message 1792584000.000100 '), '1792584000.000100');
+    assert.equal(messageIdOf(`${SLACK}|1792584000.000100`), '1792584000.000100');
+    assert.equal(messageIdOf('https://acme.slack.example/archives/C1/p1792584000000100'), '1792584000.000100');
+    assert.equal(messageIdOf('https://acme.slack.example/archives/C1/p1792584000000100?thread_ts=1792583000.000100&cid=C1'), '1792584000.000100');
+    assert.equal(messageIdOf('p1792584000000100'), '1792584000.000100');
+    assert.equal(messageIdOf('https://teams.microsoft.com/l/message/19:abc@thread.tacv2/1792584000000?tenantId=TN1'), '1792584000000');
+    assert.equal(messageIdOf('1792584000000'), '1792584000000');
+    const { calls, run } = setup();
+    const r = await run(target(SLACK, 'slack', 'C1'), {
+      action: 'add', emails: ['guest@client.example'], message: 'https://acme.slack.example/archives/C1/p1792584000000100',
+    });
+    assert.equal(r.error, false, r.text);
+    assert.equal(calls.slack.length, 1);
+  });
+
   it('asks nothing for a message that is not in the thread, a bad address, or a tool switched off', async () => {
     const { e, calls, run } = setup();
     const teams = target(TEAMS, 'teams', '19:abc@thread.tacv2');
     let r = await run(teams, { action: 'add', emails: ['a@client.example'], message: '999' });
-    assert.match(r.text, /Nothing was requested: give the id of the message/);
+    assert.equal(r.text, 'Nothing was requested: no message 999 is in your thread: give the id of the message in your thread that asked for it, as read_thread shows it after "message" (its latest: 1792584000000)');
     r = await run(teams, { action: 'add', emails: ['not an address'], message: '1792584000000' });
     assert.match(r.text, /not an email address: not an address/);
     r = await run(teams, { action: 'add', emails: [], message: '1792584000000' });

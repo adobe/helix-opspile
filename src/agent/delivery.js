@@ -15,6 +15,8 @@ import {
 } from './deliver.js';
 import { mentionedOutside } from './members.js';
 import { modelProblem } from './model.js';
+import { relatedNote } from './related.js';
+import { rearmIdle } from './wakeups.js';
 
 /**
  * How a thread agent is told about messages. `agent` is the ThreadAgent (its `env`, `ctx`,
@@ -65,8 +67,12 @@ export async function verdictsOf(agent, messages) {
   return out;
 }
 
-/** Wakes the agent a day after message `mark`, unless another one comes first. */
+/**
+ * Wakes the agent a day after message `mark`, unless another one comes first; and counts the
+ * wake-ups it set with wakeup_after_idle from `mark` again (src/agent/wakeups.js).
+ */
 export async function armIdle(agent, mark) {
+  await rearmIdle(agent, mark);
   const previous = await agent.ctx.storage.get('idle');
   if (previous) {
     await agent.cancelSchedule(previous).catch(() => false);
@@ -119,6 +125,11 @@ async function tell(agent, { retry }) {
     return { result: 'skip', reason: 'no agent for this thread' };
   }
   const entry = await entryMessages(env, t.key);
+  // A root folded into the entry since its target was read (src/rethread.js) is one of its
+  // threads now: the tools' next look at the target reads it again, so they find its messages.
+  if (entry && entry.threads.some((k) => !(t.threads || []).includes(k)) && agent.forgetTarget) {
+    agent.forgetTarget();
+  }
   const mark = await storage.get('mark');
   const unseen = (entry ? entry.messages : []).filter((m) => !mark || markOf(m) > mark);
   // Its own posts (post_message) come back as messages; it is not told about them.
@@ -150,7 +161,12 @@ async function tell(agent, { retry }) {
     console.log(JSON.stringify({ route: 'agent', members: 'failed', error: e.message }));
     return null;
   });
-  const input = deliveryText(entry, fresh, verdicts, { first: !mark, outside });
+  // On first contact, what its thread is linked with across a partner and its customers.
+  const related = mark ? '' : await relatedNote(env, t).catch((e) => {
+    console.log(JSON.stringify({ route: 'agent', related: 'failed', error: e.message }));
+    return '';
+  });
+  const input = deliveryText(entry, fresh, verdicts, { first: !mark, outside, related });
   await agent.syncTools();
   await agent.syncMcp();
   await agent.syncUploads(entry);

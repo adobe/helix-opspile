@@ -55,6 +55,8 @@ header .count { display: inline-grid; place-items: center;
   margin-left: calc(var(--spectrum-spacing-50) + var(--spectrum-spacing-75));
   line-height: 1; }
 header .count[hidden] { display: none; }
+/* Inbox's number opens the admin team's open requests (ui/header.js). */
+header .count:not(.total), .pagemenu .count { cursor: pointer; }
 /* Phones: the pages are a menu under the one you are on. */
 .pagemenu { inset: calc(var(--head, calc(var(--spectrum-spacing-700) + var(--spectrum-spacing-50))) - var(--spectrum-spacing-75)) auto auto var(--spectrum-spacing-100); margin: 0; min-width: calc(var(--spectrum-spacing-100) * 22 + var(--spectrum-spacing-75));
   padding: calc(var(--spectrum-spacing-50) + var(--spectrum-spacing-75));
@@ -68,16 +70,7 @@ header .count[hidden] { display: none; }
  }
 .pagemenu .count[hidden] { display: none; }
 
-/* A page's tools (the inbox's label review), after a divider. */
-header .divider { width: var(--spectrum-border-width-100); flex: none; }
-header .divider[hidden] { display: none; }
-header .tool { display: inline-flex; align-items: center; height: var(--ctl); flex: none;
- white-space: nowrap; }
-header .tool[hidden] { display: none; }
-header .tool:hover { color: var(--ink); background: var(--hover); }
-header .tool svg, header .mode svg { flex: none; }
-
-/* The modes a page is in (reviewing labels, viewing as someone): a pill each, on the right,
+/* The modes a page is in (viewing as someone): a pill each, on the right,
    with the ✕ that leaves it. */
 header .mode { display: inline-flex; align-items: center; gap: calc(var(--spectrum-spacing-50) + var(--spectrum-spacing-75)); height: var(--ctl);
   flex: none; white-space: nowrap; }
@@ -129,6 +122,23 @@ header .note { white-space: nowrap; }
 .menu .keys dd { margin: 0; text-align: right; }
 .menu kbd { font: var(--spectrum-font-size-50) ui-monospace, monospace; border: var(--spectrum-border-width-100) solid var(--line); padding: 0 var(--spectrum-spacing-75);
  }
+/* A menu in columns (the inbox's: you and your view; notifications and the agent; the look, the
+   keyboard and logging out): one under the other, a single column as on a phone, until the
+   screen is wide enough for them side by side, under who you are, each as tall as the menu and
+   a line between them. A column with nothing shown in it (viewing as someone) is not there. Tab
+   goes down a column, then on to the next, as they are read. */
+@media (min-width: 1000px) {
+  .menu:has(> .cols) { width: max-content; }
+  .menu .cols { display: grid; grid-auto-flow: column; grid-auto-columns: calc(var(--spectrum-spacing-100) * 36);
+    border-top: var(--spectrum-border-width-100) solid var(--line); }
+  .menu .col { padding: 0 var(--spectrum-spacing-200); }
+  .menu .col:first-child { padding-left: 0; }
+  .menu .col:last-child { padding-right: 0; }
+  .menu .col:not(:has(> section:not([hidden]))) { display: none; }
+  .menu .col:has(> section:not([hidden])) ~ .col:has(> section:not([hidden])) { border-left: var(--spectrum-border-width-100) solid var(--line); }
+  .menu .col > section { border-top-width: 0; }
+  .menu .col > section:not([hidden]) ~ section { border-top-width: var(--spectrum-border-width-100); }
+}
 
 /* A touch screen: the same controls, taller, on every page. */
 @media (hover: none) and (pointer: coarse) {
@@ -142,7 +152,7 @@ header .note { white-space: nowrap; }
 @media (max-width: 699px) {
   header { padding: 0 var(--spectrum-spacing-100) 0 var(--spectrum-spacing-200); }
   header h1 { margin: 0; }
-  header h1 a, header .tool { font-size: 0; }
+  header h1 a { font-size: 0; }
 
   header .divider { display: none; }
   nav.pages a:not([aria-current]) { display: none; }
@@ -223,6 +233,7 @@ header .note { white-space: nowrap; }
   --s2-icon-checkmark: url("data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyMCAyMCI+PHBhdGggZD0iTTcuODY0MjYsMTUuNzM0MzhjLS4yMjI2NiwwLS40MzM1OS0uMDk4NjMtLjU3NjE3LS4yNjk1M2wtMy43NDcwNy00LjQ5ODA1Yy0uMjY1NjItLjMxODM2LS4yMjE2OC0uNzkxOTkuMDk1Ny0xLjA1NjY0LjMxNzM4LS4yNjU2Mi43OTAwNC0uMjIzNjMsMS4wNTY2NC4wOTU3bDMuMTUzMzIsMy43ODYxMyw3LjQzOTQ1LTkuNDY4NzVjLjI1NTg2LS4zMjYxNy43Mjg1Mi0uMzgxODQsMS4wNTI3My0uMTI2OTUuMzI2MTcuMjU1ODYuMzgyODEuNzI3NTQuMTI2OTUsMS4wNTI3M2wtOC4wMTE3MiwxMC4xOTgyNGMtLjEzOTY1LjE3ODcxLS4zNTI1NC4yODQxOC0uNTc5MS4yODcxMWgtLjAxMDc0WiIvPjwvc3ZnPg==");
   --s2-icon-search: url("data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyMCAyMCI+PHBhdGggZD0ibTE4LjUzIDE3LjQ3LTUuMDgzLTUuMDg0QzE0LjQxNyAxMS4xODYgMTUgOS42NiAxNSA4YzAtMy44Ni0zLjE0LTctNy03UzEgNC4xNCAxIDhzMy4xNCA3IDcgN2MxLjY2IDAgMy4xODUtLjU4NCA0LjM4Ni0xLjU1M2w1LjA4NCA1LjA4M2MuMTQ2LjE0Ny4zMzguMjIuNTMuMjJzLjM4NC0uMDczLjUzLS4yMmMuMjkzLS4yOTMuMjkzLS43NjcgMC0xLjA2TTggMTMuNWMtMy4wMzIgMC01LjUtMi40NjgtNS41LTUuNVM0Ljk2OCAyLjUgOCAyLjVzNS41IDIuNDY4IDUuNSA1LjUtMi40NjggNS41LTUuNSA1LjUiLz48L3N2Zz4=");
   --s2-icon-close: url("data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyMCAyMCI+PHBhdGggZD0ibTExLjA2MDYxLDEwbDUuMjA2NDgtNS4yMDYwNWMuMjkyOTctLjI5Mjk3LjI5Mjk3LS43Njc1OCwwLTEuMDYwNTVzLS43Njc1OC0uMjkyOTctMS4wNjA1NSwwbC01LjIwNjU0LDUuMjA2MDVMNC43OTM0NiwzLjczMzRjLS4yOTI5Ny0uMjkyOTctLjc2NzU4LS4yOTI5Ny0xLjA2MDU1LDBzLS4yOTI5Ny43Njc1OCwwLDEuMDYwNTVsNS4yMDY0OCw1LjIwNjA1LTUuMjA2NDgsNS4yMDYwNWMtLjI5Mjk3LjI5Mjk3LS4yOTI5Ny43Njc1OCwwLDEuMDYwNTUuMTQ2NDguMTQ2NDguMzM4MzguMjE5NzMuNTMwMjcuMjE5NzNzLjM4Mzc5LS4wNzMyNC41MzAyNy0uMjE5NzNsNS4yMDY1NC01LjIwNjA1LDUuMjA2NTQsNS4yMDYwNWMuMTQ2NDguMTQ2NDguMzM4MzguMjE5NzMuNTMwMjcuMjE5NzNzLjM4Mzc5LS4wNzMyNC41MzAyNy0uMjE5NzNjLjI5Mjk3LS4yOTI5Ny4yOTI5Ny0uNzY3NTgsMC0xLjA2MDU1bC01LjIwNjQ4LTUuMjA2MDVaIi8+PC9zdmc+");
+  --s2-icon-volume-off: url("data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyMCAyMCI+PHBhdGggZD0ibTE4Ljc4MDI3LDE3LjczOTI2TDIuMjgwMjcsMS4yMzkyNmMtLjI5Mjk3LS4yOTI5Ny0uNzY3NTgtLjI5Mjk3LTEuMDYwNTUsMHMtLjI5Mjk3Ljc2NzU4LDAsMS4wNjA1NWwyLjcyMTY4LDIuNzIxNjhoLS42OTE0MWMtMS4yNDAyMywwLTIuMjUsMS4wMDk3Ny0yLjI1LDIuMjV2NS41YzAsMS4yNDAyMywxLjAwOTc3LDIuMjUsMi4yNSwyLjI1aDEuNjI4OTFjLjE5ODI0LDAsLjM5MTYuMDgwMDguNTMwMjcuMjE4NzVsMi42MDM1MiwyLjYwNDQ5Yy4zMzU5NC4zMzU5NC43ODEyNS41MTM2NywxLjIzNTM1LjUxMzY3LjIyNTU5LDAsLjQ1MzEyLS4wNDM5NS42NzA5LS4xMzQ3Ny42NTcyMy0uMjcxNDgsMS4wODEwNS0uOTA2MjUsMS4wODEwNS0xLjYxNzE5di00LjUyNjM3bDYuNzE5NzMsNi43MTk3M2MuMTQ2NDguMTQ2NDguMzM3ODkuMjE5NzMuNTMwMjcuMjE5NzNzLjM4Mzc5LS4wNzMyNC41MzAyNy0uMjE5NzNjLjI5Mjk3LS4yOTI5Ny4yOTI5Ny0uNzY3NTgsMC0xLjA2MDU1Wm0tOS4yODAyNy0xLjEzMjgxYzAsLjE0NTUxLS4wOTY2OC4yMDgwMS0uMTU0My4yMzE0NS0uMDU4NTkuMDI0NDEtLjE3MDkuMDQ2ODgtLjI3MjQ2LS4wNTM3MWwtMi42MDM1Mi0yLjYwNDQ5Yy0uNDI0OC0uNDI0OC0uOTg5MjYtLjY1ODItMS41OTA4Mi0uNjU4MmgtMS42Mjg5MWMtLjQxMzA5LDAtLjc1LS4zMzY5MS0uNzUtLjc1di01LjVjMC0uNDEzMDkuMzM2OTEtLjc1Ljc1LS43NWgyLjE5MTQxbDQuMDU4NTksNC4wNTg1OXY2LjAyNjM3WiIvPjxwYXRoIGQ9Im04LjI1ODc5LDQuMDczMjRsLjgxNDQ1LS44MTQ0NWMuMTA0NDktLjEwMjU0LjIxNTgyLS4wNzYxNy4yNzI0Ni0uMDU0NjkuMDcwMzEuMDI5My4xNTQzLjA5Mjc3LjE1NDMuMjMxNDV2Mi41OTA4MmMwLC40MTQwNi4zMzU5NC43NS43NS43NXMuNzUtLjMzNTk0Ljc1LS43NXYtMi41OTA4MmMwLS43MDk5Ni0uNDIzODMtMS4zNDQ3My0xLjA4MDA4LTEuNjE3MTktLjY1NzIzLS4yNzA1MS0xLjQwNDMtLjEyMjA3LTEuOTA3MjMuMzc5ODhsLS44MTQ0NS44MTQ0NWMtLjI5Mjk3LjI5Mjk3LS4yOTI5Ny43Njc1OCwwLDEuMDYwNTVzLjc2NzU4LjI5Mjk3LDEuMDYwNTUsMFoiLz48cGF0aCBkPSJtMTMuMjIyNjYsOS44MjUyYy4wNDAwNC4zODU3NC4zNjUyMy42NzI4NS43NDUxMi42NzI4NS4wMjUzOSwwLC4wNTE3Ni0uMDAwOTguMDc4MTItLjAwMzkxLjQxMjExLS4wNDI5Ny43MTE5MS0uNDExMTMuNjY4OTUtLjgyMzI0LS4wOTk2MS0uOTYyODktLjU3MzI0LTEuNzkzOTUtMS4yOTg4My0yLjI3NzM0LS4zNDQ3My0uMjI4NTItLjgxMDU1LS4xMzU3NC0xLjA0MDA0LjIwODAxLS4yMjk0OS4zNDQ3My0uMTM2NzIuODEwNTUuMjA4MDEsMS4wNDAwNC4zNDc2Ni4yMzE0NS41ODU5NC42NzM4My42Mzg2NywxLjE4MzU5WiIvPjxwYXRoIGQ9Im0xNy4yNSwxMC4wMTc1OGMwLC44NjYyMS0uMjg0MTgsMS42ODY1Mi0uODAwNzgsMi4zMDk1Ny0uMjYzNjcuMzE5MzQtLjIxODc1Ljc5MTk5LjA5OTYxLDEuMDU2NjQuMTQwNjIuMTE1MjMuMzA5NTcuMTcxODguNDc4NTIuMTcxODguMjE0ODQsMCwuNDI5NjktLjA5Mjc3LjU3ODEyLS4yNzE0OC43MzgyOC0uODkyNTgsMS4xNDQ1My0yLjA1MjczLDEuMTQ0NTMtMy4yNjY2LDAtMS42ODU1NS0uNzk3ODUtMy4yNjU2Mi0yLjA4MzAxLTQuMTI0MDItLjM0NzY2LS4yMjk0OS0uODExNTItLjEzNjcyLTEuMDQxMDIuMjA3MDMtLjIyOTQ5LjM0NDczLS4xMzY3Mi44MTA1NS4yMDcwMywxLjA0MTAyLjg3NDAyLjU4MzAxLDEuNDE2OTksMS42ODU1NSwxLjQxNjk5LDIuODc1OThaIi8+PC9zdmc+");
   /* Overlays in the content color, so they show on light and dark alike: faint for a selected
      or hovered list row, stronger for a Menu item under the pointer or a pressed row (Spectrum
      CSS Menu's item hover). */
@@ -425,7 +436,9 @@ header .note { white-space: nowrap; }
 .spectrum .fld.grow { flex: 1; }
 .spectrum .fld > :is(input, select) { width: 100%; }
 /* SearchField: a field that filters or finds says so with the magnifier at its start, and
-   is named for assistive technology (aria-label); it has no visible label and no placeholder. */
+   is named for assistive technology (aria-label); it has no visible label and no placeholder.
+   Its input is always `type="search"`, which the rule names so that it outranks a page's
+   rule for every field (`.spectrum input:not(…)`, which sets the padding the magnifier needs). */
 .spectrum .s2-search { position: relative; display: block; min-width: 0; }
 .spectrum .s2-search::before {
   content: "";
@@ -439,7 +452,7 @@ header .note { white-space: nowrap; }
   mask: var(--s2-icon-search) center / contain no-repeat;
   pointer-events: none;
 }
-.spectrum .s2-search > input {
+.spectrum .s2-search > input[type="search"] {
   width: 100%;
   min-height: var(--s2-ctl);
   padding-inline: calc(var(--spectrum-component-edge-to-visual-100) + var(--spectrum-workflow-icon-size-75) + var(--spectrum-text-to-visual-100)) var(--spectrum-component-edge-to-text-100);
@@ -547,6 +560,7 @@ header .note { white-space: nowrap; }
 }
 .spectrum .menu { font-size: var(--spectrum-font-size-100); }
 .spectrum .menu section { border-top-color: var(--spectrum-gray-200); }
+.spectrum .menu :is(.cols, .col) { border-color: var(--spectrum-gray-200); }
 .spectrum .menu h4 {
   color: var(--spectrum-neutral-subdued-content-color-default);
   font-size: var(--spectrum-font-size-75);
@@ -627,19 +641,23 @@ header .note { white-space: nowrap; }
   font-size: var(--spectrum-font-size-50);
   font-weight: var(--spectrum-bold-font-weight);
 }
-/* The page's tools stand apart from the pages by the space alone: S2's app chrome has no Divider. */
-.spectrum header .divider { height: var(--spectrum-component-height-75); }
-/* The page's tools: quiet ActionButtons. */
-.spectrum header .tool {
-  gap: var(--spectrum-text-to-visual-100);
-  padding: 0 var(--spectrum-component-edge-to-text-100);
-  color: var(--spectrum-neutral-content-color-default);
-  background: transparent;
-  border: 0;
-  border-radius: var(--s2-radius);
+.spectrum header .count:not(.total):hover, .spectrum .pagemenu .count:hover {
+  background: var(--spectrum-accent-background-color-hover);
 }
-.spectrum header .tool:hover:not(:disabled) { color: var(--spectrum-neutral-content-color-hover); background: var(--spectrum-gray-100); }
-.spectrum header .tool svg, .spectrum header .mode svg { width: var(--spectrum-workflow-icon-size-50); height: var(--spectrum-workflow-icon-size-50); }
+/* The questions thread agents ask you: the agent's purple, with its bubble, as in the inbox. */
+.spectrum header .count.asks, .spectrum .pagemenu .count.asks {
+  display: inline-flex; align-items: center; gap: var(--spectrum-spacing-50);
+  background: var(--spectrum-purple-background-color-default);
+}
+.spectrum header .count.asks:hover, .spectrum .pagemenu .count.asks:hover {
+  background: var(--spectrum-purple-background-color-default);
+  filter: brightness(0.92);
+}
+.spectrum header .count.asks[hidden], .spectrum .pagemenu .count.asks[hidden] { display: none; }
+.spectrum header .count.asks .bubble-ico, .spectrum .pagemenu .count.asks .bubble-ico {
+  position: static; flex: none; padding: 0; color: inherit; background: none;
+  width: var(--spectrum-spacing-200); height: var(--spectrum-spacing-200);
+}
 /* The modes a page is in: Spectrum 2's Tag, with its clear button. */
 .spectrum header .mode {
   padding: 0 var(--spectrum-spacing-75) 0 var(--spectrum-component-edge-to-text-75);
@@ -647,16 +665,11 @@ header .note { white-space: nowrap; }
   border-radius: var(--s2-radius);
   color: var(--spectrum-neutral-content-color-default);
 }
-.spectrum header .mode.review {
-  background: var(--spectrum-accent-subtle-background-color-default);
-  border-color: var(--spectrum-accent-visual-color);
-}
 .spectrum header .mode.as {
   background: var(--spectrum-notice-subtle-background-color-default);
   border-color: var(--spectrum-notice-visual-color);
 }
 .spectrum header .mode:hover:not(:disabled) { color: var(--spectrum-neutral-content-color-hover); }
-.spectrum header .mode.review:hover:not(:disabled) { background: var(--spectrum-accent-subtle-background-color-default); }
 .spectrum header .mode.as:hover:not(:disabled) { background: var(--spectrum-notice-subtle-background-color-default); }
 .spectrum header .mode .x {
   width: var(--spectrum-component-height-50);
@@ -758,6 +771,146 @@ header .note { white-space: nowrap; }
 .spectrum .s2-chevron.right { rotate: -90deg; }
 .spectrum .s2-chevron.right:dir(rtl) { rotate: 90deg; }
 
+/* What to follow, suggested (ui/followsuggest.js): where an empty personal view would be, and in
+   a dialog from your menu's Following on every page (ui/follow.js). */
+dialog.followsheet .top { display: flex; align-items: center; justify-content: space-between; gap: var(--spectrum-spacing-200); }
+dialog.followsheet .close { flex: none; display: grid; place-items: center; padding: 0; border: 0; cursor: pointer; }
+.spectrum .fs-lead { margin: 0; font-size: var(--spectrum-font-size-100); line-height: var(--spectrum-line-height-200); color: var(--spectrum-neutral-subdued-content-color-default); }
+dialog.followsheet { width: min(calc(var(--spectrum-spacing-100) * 70), 94vw); max-height: 86vh; padding: 0; overflow: hidden; }
+dialog.followsheet form { display: flex; flex-direction: column; max-height: 86vh; }
+dialog.followsheet .fs-body { overflow: auto; }
+.fs { display: flex; flex-direction: column; gap: var(--spectrum-spacing-300); }
+.fs-list { display: flex; flex-direction: column; gap: var(--spectrum-spacing-300); }
+.fs-kind ul { margin: 0; padding: 0; list-style: none; }
+.fs-row { display: flex; align-items: center; gap: var(--spectrum-spacing-200); }
+.fs-name { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.spectrum dialog.followsheet { color: var(--ink); background: var(--spectrum-background-layer-2-color); border: 0; border-radius: var(--spectrum-corner-radius-extra-large-default); box-shadow: var(--s2-elevated); }
+.spectrum dialog.followsheet::backdrop { background: var(--spectrum-overlay-color); }
+.spectrum dialog.followsheet .top { padding: var(--spectrum-spacing-400) var(--spectrum-spacing-400) var(--spectrum-spacing-200); }
+.spectrum dialog.followsheet h2 { margin: 0; font-size: var(--spectrum-font-size-300); font-weight: var(--spectrum-bold-font-weight); }
+.spectrum dialog.followsheet .close { width: var(--spectrum-spacing-600); height: var(--spectrum-spacing-600); border-radius: var(--s2-radius); color: var(--spectrum-neutral-content-color-default); background: transparent; }
+.spectrum dialog.followsheet .close:hover { background: var(--spectrum-gray-200); }
+.spectrum dialog.followsheet .fs-body { padding: 0 var(--spectrum-spacing-400) var(--spectrum-spacing-400); }
+.spectrum .fs-kind h3 { margin: 0 0 var(--spectrum-spacing-75); font-size: var(--spectrum-font-size-75); font-weight: var(--spectrum-bold-font-weight); color: var(--spectrum-neutral-subdued-content-color-default); }
+.spectrum .fs-row { min-height: var(--s2-ctl); padding: var(--spectrum-spacing-75) 0; border-bottom: var(--spectrum-border-width-100) solid var(--spectrum-gray-200); }
+.spectrum .fs-row:last-child { border-bottom: 0; }
+.spectrum .fs-nm { font-size: var(--spectrum-font-size-100); color: var(--spectrum-neutral-content-color-default); }
+.spectrum .fs-of, .spectrum .fs-why { font-size: var(--spectrum-font-size-75); color: var(--spectrum-neutral-subdued-content-color-default); }
+.spectrum .fs-note { margin: 0; font-size: var(--spectrum-font-size-100); color: var(--spectrum-neutral-subdued-content-color-default); }
+
+/* Following and muting (ui/follow.js), every page's: Follow a ToggleButton, quiet and small, or a
+   split one whose chevron opens who follows it (a Menu of checkable rows); Mute a ToggleButton
+   beside it, with S2's volume-off icon. Selected, each is filled, as a ToggleButton is. */
+.spectrum .fo { display: inline-flex; align-items: center; gap: var(--spectrum-spacing-75); flex: none; vertical-align: middle; }
+.spectrum .fo .fo-follow { display: inline-flex; gap: 0; }
+.spectrum .fo :is(.fo-b, .fo-more, .fo-mute) {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--spectrum-spacing-75);
+  min-height: var(--spectrum-component-height-75);
+  padding: 0 var(--spectrum-component-edge-to-text-75);
+  border: var(--spectrum-border-width-100) solid var(--spectrum-gray-300);
+  border-radius: var(--s2-pill);
+  background: transparent;
+  font: inherit;
+  font-size: var(--spectrum-font-size-75);
+  font-weight: var(--spectrum-bold-font-weight);
+  white-space: nowrap;
+  color: var(--spectrum-neutral-content-color-default);
+  cursor: pointer;
+  transition: background-color var(--s2-ease), color var(--s2-ease), border-color var(--s2-ease);
+}
+.spectrum .fo-follow.split .fo-b { border-start-end-radius: 0; border-end-end-radius: 0; }
+.spectrum .fo-follow.split .fo-more {
+  margin-inline-start: calc(-1 * var(--spectrum-border-width-100));
+  padding: 0 var(--spectrum-spacing-75);
+  border-start-start-radius: 0;
+  border-end-start-radius: 0;
+}
+.spectrum .fo :is(.fo-b, .fo-more, .fo-mute):hover { background: var(--spectrum-gray-200); color: var(--spectrum-neutral-content-color-hover); }
+.spectrum .fo :is(.fo-b, .fo-more, .fo-mute):focus-visible { outline: var(--s2-focus); outline-offset: var(--spectrum-focus-indicator-gap); }
+.spectrum .fo :is(.fo-b, .fo-mute)[aria-pressed="true"] { color: var(--spectrum-gray-25); background: var(--spectrum-neutral-background-color-selected-default); border-color: transparent; }
+.spectrum .fo :is(.fo-b, .fo-mute)[aria-pressed="true"]:hover { background: var(--spectrum-neutral-background-color-selected-hover); }
+.spectrum .fo :is(.fo-b, .fo-more, .fo-mute):disabled { cursor: progress; }
+.spectrum .fo .fo-more[aria-expanded="true"] .s2-chevron { rotate: 180deg; }
+.spectrum .fo .fo-n {
+  min-width: var(--spectrum-spacing-300);
+  padding: 0 var(--spectrum-spacing-50);
+  border-radius: var(--s2-pill);
+  background: var(--spectrum-accent-background-color-default);
+  color: var(--spectrum-white);
+  font-size: var(--spectrum-font-size-50);
+  text-align: center;
+}
+.spectrum .fo-ico {
+  display: inline-block;
+  flex: none;
+  width: var(--spectrum-workflow-icon-size-50);
+  height: var(--spectrum-workflow-icon-size-50);
+  background: currentColor;
+  mask: var(--s2-icon-volume-off) center / contain no-repeat;
+}
+.spectrum .menu.fo-pop {
+  position: fixed;
+  inset: auto;
+  width: auto;
+  min-width: calc(var(--spectrum-spacing-100) * 30);
+  max-width: calc(100vw - var(--spectrum-spacing-400));
+  margin: 0;
+}
+.spectrum .menu .fo-h { padding: var(--spectrum-spacing-75) var(--spectrum-spacing-100); font-size: var(--spectrum-font-size-75); font-weight: var(--spectrum-bold-font-weight); color: var(--spectrum-neutral-subdued-content-color-default); }
+.spectrum .menu .fo-h.sub { padding-bottom: 0; }
+.spectrum .fo-pop .fo-sep { margin: var(--spectrum-spacing-75) 0; border-top: var(--spectrum-border-width-100) solid var(--spectrum-gray-200); }
+.spectrum .menu .item[role="menuitemcheckbox"] .ck { visibility: hidden; }
+.spectrum .menu .item[role="menuitemcheckbox"][aria-checked="true"] .ck { visibility: visible; }
+.spectrum .menu .item:disabled { cursor: default; color: var(--spectrum-disabled-content-color); }
+.spectrum .menu .item .fo-who { flex: 1; text-align: start; }
+.spectrum .menu .item .fo-ico { width: calc(var(--spectrum-spacing-50) + var(--spectrum-spacing-200)); color: var(--spectrum-neutral-subdued-content-color-default); }
+.spectrum .menu .item small { font-size: var(--spectrum-font-size-75); color: var(--spectrum-neutral-subdued-content-color-default); }
+.spectrum .fo-pop .fo-another { display: grid; gap: var(--spectrum-spacing-50); padding: var(--spectrum-spacing-75) var(--spectrum-spacing-100); }
+.spectrum .fo-pop .fo-find { min-height: var(--s2-ctl); }
+.spectrum .fo-pop .fo-hint { margin: var(--spectrum-spacing-75) var(--spectrum-spacing-100) var(--spectrum-spacing-50); max-width: calc(var(--spectrum-spacing-100) * 34); font-size: var(--spectrum-font-size-75); }
+/* What a change did, where the page has no note of its own (ui/follow.js): S2's Toast. */
+.spectrum .fo-toast {
+  position: fixed;
+  z-index: 50;
+  bottom: var(--spectrum-spacing-300);
+  left: 50%;
+  translate: -50% 0px;
+  display: flex;
+  align-items: center;
+  gap: var(--spectrum-spacing-300);
+  max-width: calc(100vw - var(--spectrum-spacing-400));
+  min-height: var(--spectrum-toast-height);
+  padding: var(--spectrum-spacing-100) var(--spectrum-spacing-100) var(--spectrum-spacing-100) var(--spectrum-spacing-300);
+  font-size: var(--spectrum-font-size-100);
+  color: var(--spectrum-white);
+  background: var(--spectrum-neutral-subdued-background-color-default);
+  border-radius: var(--spectrum-corner-radius-large-default);
+  box-shadow: var(--s2-elevated);
+  transition: opacity var(--s2-pop-in), translate var(--s2-pop-in);
+}
+@starting-style {
+  .spectrum .fo-toast { opacity: 0; translate: -50% var(--spectrum-spacing-200); }
+}
+.spectrum .fo-toast button {
+  flex: none;
+  min-height: var(--spectrum-component-height-75);
+  padding: 0 var(--spectrum-component-edge-to-text-75);
+  border: var(--spectrum-border-width-200) solid var(--spectrum-white);
+  border-radius: var(--s2-pill);
+  background: transparent;
+  font: inherit;
+  font-size: var(--spectrum-font-size-75);
+  font-weight: var(--spectrum-bold-font-weight);
+  color: var(--spectrum-white);
+  cursor: pointer;
+}
+.spectrum .fo-toast button:hover { background: var(--spectrum-transparent-white-200); }
+@media (forced-colors: active) {
+  .spectrum .fo-ico { background: CanvasText; }
+}
+
 /* Folds (<details>) open as S2's Disclosure does: the panel grows from nothing and fades in
    (ease-out), and folds away faster (ease-in). This is ::details-content, so a browser without
    it snaps, as before; one without interpolate-size only fades. A fold rendered open (the pages
@@ -801,4 +954,303 @@ header .note { white-space: nowrap; }
    not match it; popovers draw no underlay). */
 @media (prefers-reduced-motion: reduce) {
   .spectrum *, .spectrum *::before, .spectrum *::after, .spectrum dialog::backdrop { transition-duration: var(--spectrum-animation-duration-0) !important; }
+}
+
+/* A person's parts (ui/person.js), as both people cards draw them: the inbox's profile card and a
+   member's card on their team's overview. Spectrum 2: an Avatar, Tags (a technology's in the
+   informative tint, a link where it goes somewhere), a sparkline of their weeks, and their
+   profile's description as body text with its source a quiet Link. */
+.ps-av { position: relative; display: inline-grid; flex: none; place-items: center; overflow: hidden; border-radius: 50%;
+  width: var(--spectrum-component-height-100); height: var(--spectrum-component-height-100); }
+.ps-av img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
+.ps-av.big { width: var(--spectrum-spacing-700); height: var(--spectrum-spacing-700); }
+.ps-av.small { width: var(--spectrum-spacing-400); height: var(--spectrum-spacing-400); }
+.spectrum .ps-av { color: var(--spectrum-white); font-size: var(--spectrum-font-size-50); font-weight: var(--spectrum-bold-font-weight); }
+.spectrum .ps-av.big { font-size: var(--spectrum-font-size-200); }
+.ps-freq { display: flex; align-items: center; gap: var(--spectrum-spacing-200); }
+.ps-freq > div { display: flex; flex-direction: column; min-width: 0; }
+.spectrum .ps-freq b { font-size: var(--spectrum-font-size-100); font-weight: var(--spectrum-bold-font-weight); }
+.ps-spark { display: block; flex: none; width: calc(var(--spectrum-spacing-1000) - var(--spectrum-spacing-50)); height: var(--spectrum-spacing-500); }
+.spectrum .ps-spark polyline { fill: none; stroke: var(--spectrum-gray-600); stroke-width: var(--spectrum-border-width-200); stroke-linejoin: round; vector-effect: non-scaling-stroke; }
+.spectrum .ps-spark .area { fill: var(--spectrum-gray-100); }
+.spectrum .ps-freq .ps-spark polyline { stroke: var(--spectrum-indigo-visual-color); }
+.spectrum .ps-freq .ps-spark .area { fill: var(--spectrum-indigo-subtle-background-color-default); }
+/* A line in its person's or customer's color (`data-tint`, ui/person.js's TINTS and ui/overview.js's
+   tintIcons): their initials' hue, or the Spectrum 2 color nearest their favicon's. */
+.spectrum .ps-spark[data-tint] polyline { stroke: var(--tint); }
+.spectrum .ps-spark[data-tint] .area { fill: var(--tint-area); }
+.ps-spark[data-tint="red"] { --tint: var(--spectrum-red-visual-color); --tint-area: var(--spectrum-red-subtle-background-color-default); }
+.ps-spark[data-tint="orange"] { --tint: var(--spectrum-orange-visual-color); --tint-area: var(--spectrum-orange-subtle-background-color-default); }
+.ps-spark[data-tint="yellow"] { --tint: var(--spectrum-yellow-visual-color); --tint-area: var(--spectrum-yellow-subtle-background-color-default); }
+.ps-spark[data-tint="chartreuse"] { --tint: var(--spectrum-chartreuse-visual-color); --tint-area: var(--spectrum-chartreuse-subtle-background-color-default); }
+.ps-spark[data-tint="celery"] { --tint: var(--spectrum-celery-visual-color); --tint-area: var(--spectrum-celery-subtle-background-color-default); }
+.ps-spark[data-tint="green"] { --tint: var(--spectrum-green-visual-color); --tint-area: var(--spectrum-green-subtle-background-color-default); }
+.ps-spark[data-tint="seafoam"] { --tint: var(--spectrum-seafoam-visual-color); --tint-area: var(--spectrum-seafoam-subtle-background-color-default); }
+.ps-spark[data-tint="cyan"] { --tint: var(--spectrum-cyan-visual-color); --tint-area: var(--spectrum-cyan-subtle-background-color-default); }
+.ps-spark[data-tint="turquoise"] { --tint: var(--spectrum-turquoise-visual-color); --tint-area: var(--spectrum-turquoise-subtle-background-color-default); }
+.ps-spark[data-tint="blue"] { --tint: var(--spectrum-blue-visual-color); --tint-area: var(--spectrum-blue-subtle-background-color-default); }
+.ps-spark[data-tint="indigo"] { --tint: var(--spectrum-indigo-visual-color); --tint-area: var(--spectrum-indigo-subtle-background-color-default); }
+.ps-spark[data-tint="purple"] { --tint: var(--spectrum-purple-visual-color); --tint-area: var(--spectrum-purple-subtle-background-color-default); }
+.ps-spark[data-tint="fuchsia"] { --tint: var(--spectrum-fuchsia-visual-color); --tint-area: var(--spectrum-fuchsia-subtle-background-color-default); }
+.ps-spark[data-tint="magenta"] { --tint: var(--spectrum-magenta-visual-color); --tint-area: var(--spectrum-magenta-subtle-background-color-default); }
+.ps-spark[data-tint="pink"] { --tint: var(--spectrum-pink-visual-color); --tint-area: var(--spectrum-pink-subtle-background-color-default); }
+.ps-spark[data-tint="cinnamon"] { --tint: var(--spectrum-cinnamon-visual-color); --tint-area: var(--spectrum-cinnamon-subtle-background-color-default); }
+.ps-spark[data-tint="brown"] { --tint: var(--spectrum-brown-visual-color); --tint-area: var(--spectrum-brown-subtle-background-color-default); }
+/* What they know, and for whom: each label over its tags, which wrap across the card. */
+.ps-knows, .ps-keys { display: flex; flex-direction: column; gap: var(--spectrum-spacing-75); margin: 0; }
+.ps-knows dd, .ps-keys dd { display: flex; flex-wrap: wrap; gap: var(--spectrum-spacing-75); min-width: 0; margin: 0 0 var(--spectrum-spacing-100); }
+.ps-knows dd:last-child, .ps-keys dd:last-child { margin-bottom: 0; }
+.ps-keys { padding-top: var(--spectrum-spacing-200); }
+.spectrum .ps-keys { border-top: var(--spectrum-border-width-100) solid var(--spectrum-gray-200); }
+.spectrum :is(.ps-knows, .ps-keys) dt { color: var(--spectrum-neutral-subdued-content-color-default); font-size: var(--spectrum-font-size-75); padding-top: var(--spectrum-spacing-50); }
+.spectrum .ps-chip { display: inline-flex; align-items: center; max-width: 100%; padding: var(--spectrum-spacing-50) var(--spectrum-spacing-100); overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  color: var(--spectrum-neutral-content-color-default); background: var(--spectrum-gray-100); border-radius: var(--spectrum-corner-radius-small-size-medium); font-size: var(--spectrum-font-size-75); }
+.spectrum .ps-chip.tech { background: var(--spectrum-informative-subtle-background-color-default); }
+.spectrum a.ps-chip { text-decoration: none; }
+.spectrum a.ps-chip:hover { box-shadow: inset 0 0 0 var(--spectrum-border-width-100) var(--spectrum-gray-500); }
+.spectrum a.ps-chip.tech:hover { box-shadow: inset 0 0 0 var(--spectrum-border-width-100) var(--spectrum-informative-visual-color); }
+.spectrum a.ps-chip:focus-visible { outline: var(--s2-focus); }
+.spectrum .ps-org { display: inline-flex; align-items: center; gap: var(--spectrum-spacing-75); max-width: 100%; font-size: var(--spectrum-font-size-75); }
+.spectrum .ps-org span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.spectrum a.ps-org { color: var(--link); text-decoration: none; }
+.spectrum a.ps-org:hover { text-decoration: underline; }
+.spectrum .ps-org .ico { width: var(--spectrum-spacing-300); height: var(--spectrum-spacing-300); }
+/* Their profile on a team: its description, and under it where it is. */
+.ps-profile { display: flex; flex-direction: column; gap: var(--spectrum-spacing-50); }
+.ps-profile p { margin: 0; }
+.spectrum .ps-profile p { color: var(--spectrum-neutral-content-color-default); font-size: var(--spectrum-font-size-100); line-height: var(--spectrum-line-height-200); }
+.spectrum .ps-profile .ps-src { color: var(--spectrum-neutral-subdued-content-color-default); font-size: var(--spectrum-font-size-75); }
+.spectrum .ps-profile a.ps-src:hover { color: var(--link); }
+
+/* FMC block diagrams (src/fmc.js): a customer's stack drawing in the inbox, a knowledge base's
+   diagrams in the editor. Agents, storages and channels on the card, edges half as thick as nodes,
+   groups in shades of grey; the colors are Spectrum 2's, so they follow the color scheme. */
+.fmc { display: block; max-width: 100%; height: auto; margin: 0px auto; overflow: visible; }
+.fmc text { font-family: var(--s2-font); fill: var(--ink); }
+.fmc .fmc-label, .fmc .fmc-flabel { font-size: var(--spectrum-font-size-75); }
+.fmc .fmc-flabel { fill: var(--mute); }
+.fmc .fmc-note, .fmc .fmc-clabel, .fmc .fmc-rlabel { font-size: var(--spectrum-font-size-50); }
+.fmc .fmc-note, .fmc .fmc-clabel { fill: var(--mute); }
+.fmc .fmc-code { font-family: var(--s2-code); }
+.fmc .fmc-node .fmc-shape { fill: var(--card); stroke: var(--spectrum-gray-800); stroke-width: var(--spectrum-border-width-200); }
+.fmc .fmc-figure { fill: none; stroke: var(--spectrum-gray-800); stroke-width: var(--spectrum-border-width-100); }
+.fmc .fmc-dot, .fmc .fmc-arrow, .fmc .fmc-rarrow { fill: var(--spectrum-gray-800); }
+.fmc .fmc-edge { fill: none; stroke: var(--spectrum-gray-800); stroke-width: var(--spectrum-border-width-100); }
+.fmc .fmc-frame .fmc-shape { fill: var(--spectrum-gray-100); stroke: none; }
+.fmc .fmc-frame.fmc-depth-1 .fmc-shape { fill: var(--spectrum-gray-200); }
+.fmc .fmc-frame.fmc-depth-2 .fmc-shape, .fmc .fmc-frame.fmc-depth-3 .fmc-shape { fill: var(--spectrum-gray-300); }
+.fmc .fmc-frame.fmc-white .fmc-shape { fill: var(--card); }
+.fmc .fmc-frame-agent .fmc-shape, .fmc .fmc-frame-storage .fmc-shape, .fmc .fmc-frame-ushape .fmc-shape,
+.fmc .fmc-frame.fmc-frame-agent .fmc-shape, .fmc .fmc-frame.fmc-frame-storage .fmc-shape, .fmc .fmc-frame.fmc-frame-ushape .fmc-shape { fill: var(--card); stroke: var(--spectrum-gray-800); stroke-width: var(--spectrum-border-width-200); }
+.fmc .fmc-frame.fmc-frame-set .fmc-shape, .fmc .fmc-frame-set .fmc-inner { fill: var(--card); stroke: var(--spectrum-gray-800); stroke-width: var(--spectrum-border-width-100); }
+.fmc .fmc-frame-set .fmc-inner { fill: none; }
+.fmc .fmc-frame.fmc-grey .fmc-shape { fill: var(--spectrum-gray-100); }
+/* Zones of an architecture, each a faint tint of its own (FMC: few colors, and muted). */
+.fmc .fmc-frame.fmc-zone-edge .fmc-shape { fill: color-mix(in srgb, var(--spectrum-celery-100) 35%, var(--card)); }
+.fmc .fmc-frame.fmc-zone-pipe .fmc-shape { fill: color-mix(in srgb, var(--spectrum-cyan-100) 35%, var(--card)); }
+.fmc .fmc-frame.fmc-zone-author .fmc-shape { fill: color-mix(in srgb, var(--spectrum-fuchsia-100) 35%, var(--card)); }
+.fmc .fmc-frame.fmc-zone-dev .fmc-shape { fill: color-mix(in srgb, var(--spectrum-indigo-100) 35%, var(--card)); }
+.fmc .fmc-frame.fmc-zone-oversight .fmc-shape { fill: color-mix(in srgb, var(--spectrum-yellow-100) 35%, var(--card)); }
+.fmc .fmc-dashed .fmc-shape { stroke-dasharray: var(--spectrum-spacing-100) var(--spectrum-spacing-75); }
+.fmc [data-part] { cursor: default; outline: none; }
+.fmc [data-part]:focus-visible .fmc-shape { stroke: var(--accent); }
+.fmc .fmc-node, .fmc .fmc-edge, .fmc .fmc-arrow { transition: opacity var(--s2-ease); }
+/* A stack drawing (ui/stack.js): a customer's in the inbox, a team's on its overview. Its layers,
+   top to bottom, each a row of its parts, and the flows between them as arrows behind the parts.
+   A part under the pointer lights its flows. Its frame is the page's. */
+.stk .stk-sum, .stk .stk-notes { font-size: var(--spectrum-font-size-100); line-height: 1.5; color: var(--mute); }
+.stk .stk-sum p, .stk .stk-notes p { margin: 0 0 var(--spectrum-spacing-100); }
+.stk .stk-notes { padding-top: var(--spectrum-spacing-100); border-top: var(--spectrum-border-width-100) solid var(--line); }
+.stk .stk-draw { position: relative; display: flex; flex-direction: column; gap: var(--spectrum-spacing-400); padding: var(--spectrum-spacing-200) 0px; }
+/* The parts as a list until the diagram is drawn (or for good, when it cannot be): hidden while
+   the renderer loads, which is quick once the browser has it. */
+.stk .stk-draw[aria-busy="true"] .stk-rows { visibility: hidden; }
+.stk .stk-draw.drawn .stk-rows { display: none; }
+.stk .stk-svg:empty { display: none; }
+.stk .stk-svg { overflow: auto; }
+.stk .stk-layer { position: relative; display: grid; grid-template-columns: 8em 1fr; align-items: start; gap: var(--spectrum-spacing-200); }
+.stk .stk-ln { padding-top: var(--spectrum-spacing-100); color: var(--faint); font-size: var(--spectrum-font-size-75); font-weight: var(--spectrum-bold-font-weight); }
+.stk .stk-parts { display: flex; flex-wrap: wrap; gap: var(--spectrum-spacing-200); }
+.stk .stk-part { --layer: var(--faint); position: relative; display: flex; flex-direction: column; gap: var(--spectrum-spacing-50); min-width: 7em; max-width: 14em;
+  padding: var(--spectrum-spacing-100) var(--spectrum-spacing-200); background: var(--card); border: var(--spectrum-border-width-100) solid var(--line);
+  border-left: var(--spectrum-border-width-400) solid var(--layer); border-radius: var(--s2-radius); font-size: var(--spectrum-font-size-100);
+  transition: opacity var(--s2-ease), border-color var(--s2-ease); }
+.stk .stk-part:focus-visible { outline: var(--s2-focus); }
+.stk .stk-part b { font-weight: var(--spectrum-bold-font-weight); }
+.stk .stk-part small { color: var(--mute); font-size: var(--spectrum-font-size-75); line-height: 1.4; }
+.stk .stk-part small code { font-size: var(--spectrum-font-size-50); }
+.stk .stk-draw.lit .stk-part { opacity: 0.45; }
+.stk .stk-draw.lit .stk-part.on { opacity: 1; border-color: var(--accent); border-left-color: var(--layer); }
+.stk .stk-layer[data-layer="edge"] .stk-part { --layer: var(--cyan); }
+.stk .stk-layer[data-layer="site"] .stk-part { --layer: var(--accent); }
+.stk .stk-layer[data-layer="content"] .stk-part { --layer: var(--lime); }
+.stk .stk-layer[data-layer="code"] .stk-part { --layer: var(--slate); }
+.stk .stk-layer[data-layer="commerce"] .stk-part { --layer: var(--orange); }
+.stk .stk-layer[data-layer="martech"] .stk-part { --layer: var(--purple); }
+.stk .stk-layer[data-layer="identity"] .stk-part { --layer: var(--pink); }
+.stk-draw.lit .fmc .fmc-edge, .stk-draw.lit .fmc .fmc-arrow, .stk-draw.lit .fmc .fmc-channel, .stk-draw.lit .fmc .fmc-node[data-part] { opacity: 0.3; }
+.stk-draw.lit .fmc .fmc-node.on, .stk-draw.lit .fmc .fmc-node[data-part].on, .stk-draw.lit .fmc .fmc-edge.on, .stk-draw.lit .fmc .fmc-arrow.on { opacity: 1; }
+.stk-draw.lit .fmc .fmc-edge.on { stroke: var(--accent); }
+.stk-draw.lit .fmc .fmc-arrow.on { fill: var(--accent); }
+.stk-draw.lit .fmc .fmc-node.on .fmc-shape { stroke: var(--accent); }
+.stk .stk-cap { min-height: calc(var(--spectrum-font-size-75) * 1.5); color: var(--mute); font-size: var(--spectrum-font-size-75); line-height: 1.5; }
+.stk .stk-cap b { color: var(--ink); font-weight: var(--spectrum-bold-font-weight); }
+.stk .stk-more { display: flex; flex-wrap: wrap; align-items: center; gap: var(--spectrum-spacing-75); font-size: var(--spectrum-font-size-75); }
+.stk .stk-mh { margin-right: var(--spectrum-spacing-75); color: var(--faint); }
+.stk .stk-chip { padding: var(--spectrum-spacing-50) var(--spectrum-spacing-100); border: var(--spectrum-border-width-100) solid var(--line); border-radius: var(--s2-radius); color: var(--mute); }
+@media (max-width: 640px) { .stk .stk-layer { grid-template-columns: 1fr; gap: var(--spectrum-spacing-75); } }
+
+/* ==== The sidebar (ui/sidenav.js): Teams', Customers' and Topics' =============================
+   Spectrum 2's side navigation on the frame's layer: a SearchField with the add button on top,
+   the rows under it, which scroll, and a footer with the filter on its left and the sort on its
+   right. Every row is one line, as tall as a control: a visual, the name, a quiet number. */
+.sidenav { display: flex; flex-direction: column; min-height: 0; overflow: hidden; }
+.sidenav .navtop { flex: none; display: flex; align-items: center; gap: var(--spectrum-spacing-75); padding-bottom: var(--spectrum-spacing-200); }
+.sidenav .navtop .s2-search { flex: 1; }
+.sidenav .navlist {
+  flex: 1; min-height: 0; overflow: auto; overscroll-behavior: contain; scrollbar-width: thin;
+  display: flex; flex-direction: column; gap: var(--spectrum-side-navigation-item-to-item);
+  margin: 0 calc(-1 * var(--spectrum-spacing-100)); padding: var(--spectrum-border-width-200) var(--spectrum-spacing-100) var(--spectrum-spacing-300);
+}
+.sidenav :is(.navsub, .navtree) { display: flex; flex-direction: column; gap: var(--spectrum-side-navigation-item-to-item); margin: 0; padding: 0; list-style: none; }
+.sidenav .navfoot {
+  flex: none; display: flex; align-items: center; gap: var(--spectrum-spacing-75);
+  min-height: calc(var(--s2-ctl) + var(--spectrum-spacing-200));
+  border-top: var(--spectrum-border-width-100) solid var(--spectrum-gray-200);
+}
+.sidenav .navfoot .fill { flex: 1; }
+/* A section's header: SideNav's, small, medium weight, subdued; the gap above it is the rows'. */
+.sidenav .navhead {
+  margin: calc(var(--spectrum-side-navigation-item-to-header) - var(--spectrum-side-navigation-item-to-item)) 0 calc(var(--spectrum-side-navigation-header-to-item) - var(--spectrum-side-navigation-item-to-item));
+  padding: 0 var(--spectrum-component-edge-to-text-100);
+  color: var(--spectrum-neutral-subdued-content-color-default);
+  font-size: var(--spectrum-font-size-75);
+  font-weight: var(--spectrum-medium-font-weight);
+  line-height: var(--spectrum-line-height-100);
+}
+.sidenav .navlist > .navhead:first-child { margin-top: 0; }
+/* A row: a button, or a tree's item with its fold and its button (`.pick`). */
+.sidenav .navrow {
+  flex: none; display: flex; align-items: center; gap: var(--spectrum-text-to-visual-100);
+  width: 100%; height: var(--s2-ctl); min-width: 0; margin: 0;
+  padding: 0 var(--spectrum-component-edge-to-text-100);
+  color: var(--spectrum-neutral-content-color-default);
+  font-size: var(--spectrum-font-size-100);
+  line-height: var(--spectrum-line-height-100);
+  text-align: start; white-space: nowrap;
+  background: transparent; border: 0;
+  border-radius: var(--spectrum-corner-radius-100);
+  cursor: pointer;
+  transition: background-color var(--s2-ease);
+}
+.sidenav .navrow:hover { background: var(--s2-hover); color: var(--spectrum-neutral-content-color-hover); }
+.sidenav .navrow:focus-visible, .sidenav .navrow > button:focus-visible { outline: var(--s2-focus); outline-offset: calc(-1 * var(--spectrum-focus-indicator-thickness)); }
+/* The one open: SideNav's selected item, a gray fill and the name in bold. */
+.sidenav .navrow.on, .sidenav .navrow.on:hover { background: var(--spectrum-gray-200); }
+.sidenav .navrow.on .nm { font-weight: var(--spectrum-bold-font-weight); }
+.sidenav .navrow .nm { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.sidenav .navrow .nm i { color: var(--spectrum-neutral-subdued-content-color-default); }
+.sidenav .navrow .nm .sep { color: var(--spectrum-neutral-subdued-content-color-default); }
+.sidenav .navrow .n {
+  flex: none; min-width: 3ch; text-align: end;
+  color: var(--spectrum-neutral-subdued-content-color-default);
+  font-size: var(--spectrum-font-size-75);
+  font-variant-numeric: tabular-nums;
+}
+.sidenav .navrow.on .n { color: var(--spectrum-neutral-content-color-default); }
+.sidenav .navrow > .pick {
+  flex: 1; display: flex; align-items: center; gap: var(--spectrum-text-to-visual-100);
+  min-width: 0; height: 100%; margin: 0; padding: 0;
+  color: inherit; font: inherit; text-align: start;
+  background: none; border: 0; border-radius: 0; cursor: pointer;
+}
+.sidenav .navrow > .pick:hover { background: none; }
+/* Its visual: an icon, a letter on a gray square, or a color, all of one size. */
+.sidenav .navrow :is(.ico, .navtile) { flex: none; width: var(--spectrum-workflow-icon-size-100); height: var(--spectrum-workflow-icon-size-100); border-radius: var(--spectrum-corner-radius-75); }
+.sidenav .navrow .ico { object-fit: contain; }
+.sidenav .navrow .ico.none { background: var(--spectrum-gray-200); }
+.sidenav .navrow .ico + .ico { margin-inline-start: calc(-1 * var(--spectrum-spacing-200)); box-shadow: 0 0 0 var(--spectrum-border-width-200) var(--frame); }
+.sidenav .navtile {
+  display: inline-grid; place-items: center;
+  color: var(--spectrum-gray-700); background: var(--spectrum-gray-200);
+  font-size: var(--spectrum-font-size-50); font-weight: var(--spectrum-bold-font-weight); line-height: 1;
+}
+/* What waits for someone: Disclosure's chevron, the label, a Badge with how many. */
+.sidenav .chev {
+  flex: none; width: var(--spectrum-workflow-icon-size-75); height: var(--spectrum-workflow-icon-size-75);
+  background: var(--spectrum-neutral-subdued-content-color-default);
+  mask: var(--s2-icon-chevron) center / contain no-repeat;
+  rotate: -90deg; transition: rotate var(--s2-ease);
+}
+.sidenav :is([aria-expanded="true"] > .chev, .chev[aria-expanded="true"]) { rotate: 0deg; }
+.sidenav .chev.none { visibility: hidden; }
+.sidenav button.chev { padding: 0; border: 0; border-radius: var(--spectrum-corner-radius-75); cursor: pointer; }
+.sidenav button.chev:hover { background: var(--spectrum-neutral-content-color-default); }
+.sidenav .navbadge {
+  flex: none; display: inline-grid; place-items: center;
+  min-width: var(--spectrum-component-height-50); height: var(--spectrum-component-height-50);
+  padding: 0 var(--spectrum-spacing-75);
+  color: var(--spectrum-black); background: var(--spectrum-notice-background-color-default);
+  border-radius: var(--spectrum-component-height-50);
+  font-size: var(--spectrum-font-size-50); font-weight: var(--spectrum-bold-font-weight);
+  font-variant-numeric: tabular-nums;
+}
+.sidenav .navsub .navrow { padding-inline-start: calc(var(--spectrum-component-edge-to-text-100) + var(--spectrum-workflow-icon-size-75) + var(--spectrum-text-to-visual-100)); }
+.sidenav .navrow.d1 { padding-inline-start: calc(var(--spectrum-component-edge-to-text-100) + var(--spectrum-workflow-icon-size-75) + var(--spectrum-text-to-visual-100)); }
+.sidenav .navsub .navsub .navrow { padding-inline-start: calc(var(--spectrum-component-edge-to-text-100) + 2 * (var(--spectrum-workflow-icon-size-75) + var(--spectrum-text-to-visual-100))); }
+.sidenav .navnote, .sidenav .navempty {
+  padding: var(--spectrum-spacing-75) var(--spectrum-component-edge-to-text-100);
+  color: var(--spectrum-neutral-subdued-content-color-default);
+  font-size: var(--spectrum-font-size-75);
+}
+/* The footer's buttons and the add button: quiet ActionButtons, the footer's small. */
+.sidenav .navbtn {
+  display: inline-flex; align-items: center; gap: var(--spectrum-text-to-visual-75);
+  min-width: 0; height: var(--spectrum-component-height-75); padding: 0 var(--spectrum-spacing-100);
+  color: var(--spectrum-neutral-subdued-content-color-default);
+  font-size: var(--spectrum-font-size-75); font-weight: var(--spectrum-medium-font-weight);
+  background: transparent; border: 0; border-radius: var(--spectrum-corner-radius-100);
+}
+.sidenav .navbtn > span { overflow: hidden; text-overflow: ellipsis; }
+.sidenav .navbtn:hover { color: var(--spectrum-neutral-content-color-hover); background: var(--s2-hover); }
+.sidenav .navbtn.on { color: var(--spectrum-accent-content-color-default); }
+.sidenav .navbtn svg { flex: none; width: var(--spectrum-workflow-icon-size-75); height: var(--spectrum-workflow-icon-size-75); }
+.sidenav .navadd {
+  flex: none; display: inline-grid; place-items: center;
+  width: var(--s2-ctl); height: var(--s2-ctl); padding: 0;
+  background: transparent; border: 0; border-radius: var(--s2-radius);
+}
+.sidenav .navadd:hover { background: var(--s2-hover); }
+.sidenav .navadd svg { width: var(--spectrum-workflow-icon-size-100); height: var(--spectrum-workflow-icon-size-100); }
+/* The footer's menus: a Popover with a Menu of radio and checkbox items. */
+.navmenu {
+  position: fixed; inset: auto; margin: 0;
+  min-width: calc(var(--spectrum-spacing-100) * 26); max-width: calc(100vw - var(--spectrum-spacing-200));
+  padding: var(--spectrum-spacing-75);
+  color: var(--spectrum-neutral-content-color-default);
+  background: var(--spectrum-background-layer-2-color);
+  border: var(--spectrum-border-width-100) solid var(--spectrum-gray-200);
+  border-radius: var(--spectrum-corner-radius-large-default);
+  box-shadow: var(--s2-elevated);
+}
+.navmenu .navmgroup + .navmgroup { margin-top: var(--spectrum-spacing-75); padding-top: var(--spectrum-spacing-75); border-top: var(--spectrum-border-width-100) solid var(--spectrum-gray-200); }
+.navmenu .navmhead {
+  padding: var(--spectrum-spacing-75) var(--spectrum-component-edge-to-text-100) var(--spectrum-spacing-50);
+  color: var(--spectrum-neutral-subdued-content-color-default);
+  font-size: var(--spectrum-font-size-75); font-weight: var(--spectrum-bold-font-weight);
+}
+.navmenu .navmitem {
+  display: flex; align-items: center; gap: var(--spectrum-text-to-visual-100);
+  width: 100%; min-height: var(--s2-ctl); padding: 0 var(--spectrum-component-edge-to-text-100);
+  font-size: var(--spectrum-font-size-100); text-align: start; white-space: nowrap;
+  background: none; border: 0; border-radius: var(--spectrum-corner-radius-100);
+}
+.navmenu .navmitem:hover, .navmenu .navmitem:focus-visible { background: var(--s2-down); }
+.navmenu .navmitem:focus-visible { outline: var(--s2-focus); outline-offset: calc(-1 * var(--spectrum-focus-indicator-thickness)); }
+.navmenu .navmitem .ck { flex: none; width: var(--spectrum-workflow-icon-size-75); height: var(--spectrum-workflow-icon-size-75); }
+.navmenu .navmitem[aria-checked="true"] .ck { background: var(--spectrum-accent-content-color-default); mask: var(--s2-icon-checkmark) center / contain no-repeat; }
+.navmenu .navmitem .lb { flex: 1; }
+.navmenu .navmitem .dt { padding-inline-start: var(--spectrum-spacing-300); color: var(--spectrum-neutral-subdued-content-color-default); font-size: var(--spectrum-font-size-75); }
+@media (forced-colors: active) {
+  .sidenav .chev, .navmenu .navmitem[aria-checked="true"] .ck { background: CanvasText; }
 }

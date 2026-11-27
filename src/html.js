@@ -17,7 +17,9 @@
  * for empty lines, and the size it gives an image.
  *
  * The markdown shows what Teams shows: markdown someone typed into Teams as text (`**`, a
- * backtick, `1.` at the start of a line) is escaped, since Teams shows it as typed.
+ * backtick, `1.` at the start of a line) is escaped, since Teams shows it as typed. *
+ * Markdown has no colours: `htmlDropped` names what the markdown loses (text in more than one
+ * colour, highlights), so an agent knows to read the message as it was sent.
  */
 
 /* eslint-disable no-param-reassign -- the trees are made here and changed in place */
@@ -92,7 +94,57 @@ function px(node, name) {
   return p[name] || (new RegExp(`${name}:\\s*(\\d+)px`, 'i').exec(String(p.style || '')) || [])[1];
 }
 
-/** hast to mdast, for Teams' elements and the ones written differently here. */
+/** A colour that is the one around it: none of its own. */
+const SAME = /^(?:inherit|initial|unset|revert|currentcolor|transparent|none)$/;
+
+/** A CSS property's value in an element's style, lower case without spaces, or ''. */
+function styled(node, names) {
+  const style = String((node.properties && node.properties.style) || '');
+  let value = '';
+  for (const decl of style.split(';')) {
+    const i = decl.indexOf(':');
+    if (i > 0 && names.includes(decl.slice(0, i).trim().toLowerCase())) {
+      value = decl.slice(i + 1).replace(/!important/i, '').replace(/\s+/g, '').toLowerCase();
+    }
+  }
+  return SAME.test(value) ? '' : value;
+}
+
+/**
+ * What a Teams message's HTML shows that its markdown cannot: `color` when its text is in more
+ * than one colour, `highlight` when some of it has a background and some not. A colour all of
+ * the text has (pasted from a document) says nothing, so it is not counted.
+ *
+ * @param {string} html
+ * @returns {string[]}
+ */
+export function htmlDropped(html) {
+  if (!html) {
+    return [];
+  }
+  const colors = new Set();
+  const backgrounds = new Set();
+  const walk = (node, color, background) => {
+    if (node.type === 'text') {
+      if (node.value.replace(NBSP, ' ').trim()) {
+        colors.add(color);
+        backgrounds.add(background);
+      }
+      return;
+    }
+    let c = color;
+    let b = background;
+    if (node.type === 'element') {
+      const font = node.tagName === 'font' ? String(node.properties.color || '').toLowerCase() : '';
+      c = styled(node, ['color']) || (SAME.test(font) ? '' : font) || color;
+      b = styled(node, ['background-color', 'background']) || (node.tagName === 'mark' ? 'mark' : '') || background;
+    }
+    (node.children || []).forEach((x) => walk(x, c, b));
+  };
+  walk(fromHtml(String(html), { fragment: true }), '', '');
+  return [colors.size > 1 && 'color', backgrounds.size > 1 && 'highlight'].filter(Boolean);
+}
+
 const fromHast = {
   // Markdown has no underline.
   u: (state, node) => state.all(node),
@@ -118,16 +170,30 @@ const fromHast = {
 };
 
 /**
- * Teams message HTML to markdown.
+ * What a person's own rich text may say (the customer portal's text box): no image, since a
+ * message's images are its files, and no link but to the web or a mail address; its words stay.
+ */
+const typed = {
+  ...fromHast,
+  img: () => undefined,
+  a: (state, node) => (/^(https?:\/\/|mailto:)/i.test(String(node.properties.href || ''))
+    ? fromHast.a(state, node) : state.all(node)),
+};
+
+/**
+ * Teams message HTML to markdown. With `typed`, the HTML is a text box's, which a person (or
+ * whatever writes in their name) sends: its images and its links to anything but the web or a
+ * mail address are left out.
  *
  * @param {string} html
+ * @param {{ typed?: boolean }} [options]
  */
-export function htmlToMarkdown(html) {
+export function htmlToMarkdown(html, options = {}) {
   if (!html) {
     return '';
   }
   const tree = fromHtml(String(html), { fragment: true });
   prepare(tree);
-  const mdast = toMdast(tree, { handlers: fromHast });
+  const mdast = toMdast(tree, { handlers: options.typed ? typed : fromHast });
   return writeMarkdown(mdast);
 }

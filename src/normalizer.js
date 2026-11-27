@@ -19,9 +19,10 @@ import { attachmentsOf, exportThreads, queueExport } from './clickhouse.js';
 import { ensureChannelKnowledgeBases } from './kb.js';
 import { LABEL_DELAY_SECONDS, labelThread } from './label.js';
 import { VECTORIZE_DELAY_SECONDS, vectorizeThread } from './vectors.js';
+import { linkThread } from './threadlinks.js';
 import { dethread, rethread, RETHREAD_DELAY_SECONDS } from './rethread.js';
 import {
-  getChannel, getIdentity, loadRules, toAuthor, updateChannelName,
+  botIdentity, getChannel, getIdentity, loadRules, toAuthor, updateChannelName,
 } from './lookup.js';
 import { discordApi } from './discord.js';
 import { quoteMarkdown, withoutQuotes } from './markdown.js';
@@ -29,19 +30,26 @@ import { discordToMarkdown, discordTokens } from './discordmd.js';
 import {
   blockUsers, slackBlocksToMarkdown, slackLabels, slackToMarkdown,
 } from './slackmd.js';
-import { htmlToMarkdown } from './html.js';
+import { htmlDropped, htmlToMarkdown } from './html.js';
 import {
-  isRenameNotice, normalize, slackLinkIn, teamsEventText, teamsEventUsers,
+  isChannelNotice, normalize, slackLinkIn, teamsEventText, teamsEventUsers,
 } from './normalize.js';
 import { withSlackFiles } from './slackfiles.js';
 import { copyThreadFiles } from './threadfiles.js';
 import { isTeamsFileKey, withTeamsFiles } from './teamsfiles.js';
 import { followChange, refile } from './refile.js';
 import { runCatchUp } from './catchup.js';
+import { IMPORT_VIA, runImport } from './history.js';
 import { notifyRoom } from './notify.js';
 import { signalFacts } from './resolve.js';
 import { teamsOf } from './shares.js';
+import { portalMarkdown } from './portalsource.js';
+import { recordLobby } from './portalrequests.js';
+import { teamsFollowing } from './follows.js';
 import { classify } from './rules.js';
+import { threadKind } from './alertbots.js';
+import { isWatched, WATCH_DELAY_SECONDS } from './agent/watches.js';
+import { notifyWatched } from './watches.js';
 import {
   advanceWatermark, applyReaction, findMessage, indexMessage, mentionedByName, recordMentions,
   previewOf, replaceReactions, titleOf,
@@ -49,9 +57,37 @@ import {
 
 export { notifyRoom };
 
+/**
+ * A thread whose label gained or lost technologies (`tech`, src/label.js) or areas: the open
+ * inboxes of the teams that follow one of them, and of the people who do (in the rooms of its
+ * teams), list it again, so a thread that now shows a technology they follow comes in, and one
+ * that no longer does goes. Best effort, as every room's.
+ */
+async function announceFollowed(env, key, tech, areas) {
+  if (!env.ROOMS) {
+    return;
+  }
+  const changed = tech ? [...tech.gained, ...tech.lost] : [];
+  const moved = areas ? [...areas.gained, ...areas.lost] : [];
+  const row = await env.DB.prepare('SELECT thread, team, source, channel_id FROM threads WHERE thread = ?')
+    .bind(key).first();
+  const [teams, following] = await Promise.all([
+    row ? teamsOf(env, row) : [],
+    teamsFollowing(env, changed, moved),
+  ]);
+  const rooms = [...new Set([...teams, ...following])];
+  if (rooms.length) {
+    await notifyRoom(env, rooms, {
+      type: 'thread', thread: key, tech: changed, ...(moved.length ? { areas: moved } : {}),
+    });
+  }
+}
+
 const messageKeyOf = (m) => `${m.source}:${m.tenant}:${m.channelId}:${m.id}`;
 
 const MAX_MENTIONS = 20;
+/** The people of a customer portal lobby who get an account with each of its events. */
+const MAX_LOBBY_ACCOUNTS = 50;
 
 /** A Slack bot's name (bots.info), cached in `identities` like a user. */
 async function botName(env, ref) {
@@ -85,14 +121,27 @@ async function botName(env, ref) {
   }
 }
 
-/** `{ author, person }`: the frontmatter author and the D1 person id, if known. */
-async function resolveAuthor(env, ref) {
+/**
+ * `{ author, person }`: the frontmatter author and the D1 person id, if known. A bot with a bot
+ * id (`message`'s platform and tenant, as its author key) is staff when an admin said it is
+ * Adobe's (`ours`, src/lookup.js botIdentity), and goes by the name an admin gave it.
+ */
+async function resolveAuthor(env, ref, message = {}) {
   if (!ref.userId) {
     const slackBot = ref.botId && ref.source !== 'teams';
     const name = ref.name || (slackBot ? await botName(env, ref) : null);
+    const kind = ref.kind || 'bot';
+    const bot = ref.botId && kind === 'bot' && message.source && message.tenant
+      ? await botIdentity(env, {
+        source: message.source, tenant: message.tenant, botId: ref.botId, name, avatar: ref.avatar,
+      })
+      : null;
     return {
       author: {
-        kind: ref.kind || 'bot', name: name || ref.botId || null, org: null, staff: false,
+        kind,
+        name: (bot && bot.display_name) || name || ref.botId || null,
+        org: null,
+        staff: Boolean(bot) && toAuthor(env, bot).staff,
       },
       person: null,
     };
@@ -126,7 +175,7 @@ export async function processReaction(env, key, r) {
     at: r.at,
     removed: r.removed,
   });
-  const row = await env.DB.prepare('SELECT team, kind, source, channel_id FROM threads WHERE thread = ?')
+  const row = await env.DB.prepare('SELECT thread, team, kind, source, channel_id FROM threads WHERE thread = ?')
     .bind(msg.thread).first();
   // Every team whose inbox has the thread: a shared channel's too.
   const rooms = env.ROOMS ? await teamsOf(env, row) : [];
@@ -216,6 +265,9 @@ async function toMarkdown(env, message) {
   }
   if (message.format === 'discord') {
     return discordMarkdown(env, message);
+  }
+  if (message.format === 'portal') {
+    return [portalMarkdown(message.text), message.files].filter(Boolean).join('\n\n');
   }
   if (message.format !== 'mrkdwn') {
     return message.text;
@@ -357,14 +409,38 @@ export async function processKey(env, key, cache = {}) {
   if (!obj) {
     return { key, result: 'missing' };
   }
+  // The history import's (src/history.js): a thread that was over before the inbox began. It is
+  // filed and indexed like any, but wakes nobody: no agent, label, vectors, full-text items,
+  // file copies, export job (the cron's sweep exports it) or announcement.
+  const imported = Boolean(obj.customMetadata && obj.customMetadata.via === IMPORT_VIA);
   // Slack Connect files arrive as stubs: what files.info says about them, kept in pile 1.
   // Teams files are copied into pile 1, and the images among them shown inline.
   const payload = await withSlackFiles(env, key, JSON.parse(await obj.text()));
-  const op = normalize(key, await withTeamsFiles(env, key, payload));
+  const op = normalize(key, await withTeamsFiles(env, key, payload), obj.customMetadata || {});
   if (op.op === 'skip') {
     return { key, result: 'skip', reason: op.reason };
   }
+  if (op.op === 'lobby') {
+    // A customer portal lobby as it is now: the request the admin pages show. Its people are
+    // accounts from then on, so a reply from the inbox can mention one who has not written yet.
+    const recorded = await recordLobby(env, op.lobby);
+    if (recorded.result === 'lobby') {
+      for (const m of (op.lobby.members || []).slice(0, MAX_LOBBY_ACCOUNTS)) {
+        if (m && m.id && m.joined && (m.name || m.email)) {
+          // eslint-disable-next-line no-await-in-loop
+          await getIdentity(env, {
+            source: 'portal', tenant: op.lobby.domain, userId: m.id, name: m.name, email: m.email,
+          });
+        }
+      }
+    }
+    return { key, ...recorded };
+  }
   if (op.op === 'reaction') {
+    if (op.reaction.userRef) {
+      // The portal's event names who reacted: their account is known before it is looked up.
+      await getIdentity(env, op.reaction.userRef);
+    }
     return processReaction(env, key, op.reaction);
   }
   if (op.op === 'channel') {
@@ -385,7 +461,7 @@ export async function processKey(env, key, cache = {}) {
   }
   // eslint-disable-next-line no-param-reassign
   cache.rules = cache.rules || await loadRules(env);
-  const lookup = { ...message, refresh: isRenameNotice(message) };
+  const lookup = { ...message, refresh: isChannelNotice(message) };
   const channel = await getChannel(env, lookup, undefined, {
     // The lookup found the channel renamed: its threads follow, from where they are now, before
     // this message is filed where the rules say now.
@@ -404,7 +480,12 @@ export async function processKey(env, key, cache = {}) {
   await ensureChannelKnowledgeBases(env, cls, cache);
 
   const deleted = op.op === 'delete';
-  const { author, person } = await resolveAuthor(env, message.authorRef);
+  const { author, person } = await resolveAuthor(env, message.authorRef, message);
+  // The portal names whom a message mentions: their accounts, before they are looked up.
+  for (const ref of (message.mentionRefs || []).slice(0, MAX_MENTIONS)) {
+    // eslint-disable-next-line no-await-in-loop
+    await getIdentity(env, ref);
+  }
   // Before it is indexed: an edit, an unfurl or a Teams reaction rewrites a message D1 already has.
   // Only people's messages: a bot's does not make a thread unread either (`counted`).
   const posted = Boolean(env.ROOMS) && !deleted && author.kind === 'person' && fresh(message)
@@ -412,6 +493,9 @@ export async function processKey(env, key, cache = {}) {
   if (!deleted) {
     await recordBots(env, message);
   }
+  // What the platform showed that the markdown cannot (src/html.js): the agent's raw_message
+  // shows the message as it was sent.
+  const dropped = !deleted && message.format === 'html' ? htmlDropped(message.text) : [];
   const meta = {
     source: message.source,
     thread: message.thread,
@@ -421,9 +505,15 @@ export async function processKey(env, key, cache = {}) {
     subject: message.subject,
     editedAt: message.editedAt,
     deletedAt: message.deletedAt,
+    dropped: dropped.length ? dropped : undefined,
     raw: [key],
     permalink: message.permalink,
   };
+  const authorKey = (message.authorRef.userId || message.authorRef.botId)
+    ? `${message.source}:${message.tenant}:${message.authorRef.userId || message.authorRef.botId}` : null;
+  // The thread's kind: the channel's, but an alert where a bot that only posts alerts started it
+  // (src/alertbots.js). Everything below goes by it, not by the channel's.
+  const kind = await threadKind(env, cls.kind, message, authorKey, cache);
   const body = deleted ? '' : await toMarkdown(env, message);
   const path = channelPath({ ...message, org: cls.org, team: cls.team });
   const written = await writeMessage(env.CHANNELS, path, {
@@ -432,8 +522,7 @@ export async function processKey(env, key, cache = {}) {
 
   await indexMessage(env.DB, {
     ...message,
-    authorKey: (message.authorRef.userId || message.authorRef.botId)
-      ? `${message.source}:${message.tenant}:${message.authorRef.userId || message.authorRef.botId}` : null,
+    authorKey,
     author: author.name,
     person,
     staff: author.staff,
@@ -443,13 +532,14 @@ export async function processKey(env, key, cache = {}) {
     preview: deleted ? null : previewOf(body),
     org: cls.org,
     team: cls.team,
-    kind: cls.kind,
+    kind,
     channelName: channel.name,
     path: path.slice(0, path.lastIndexOf('/') + 1),
     // For the klickhaus export (src/clickhouse.js), which reads D1 only.
     authorKind: author.kind,
     edited: Boolean(message.editedAt),
     attachments: deleted ? 0 : attachmentsOf(body),
+    imported,
   });
   if (message.reactions) {
     await replaceReactions(
@@ -473,11 +563,12 @@ export async function processKey(env, key, cache = {}) {
   }, deleted ? [] : await mentionsOf(env, message, body, person, cache));
 
   // The message's files, copied for the agents (src/threadfiles.js), in a job of their own.
-  if (written && !deleted && env.FILES && attachmentsOf(body)) {
+  if (written && !deleted && !imported && env.FILES && attachmentsOf(body)) {
     await env.NORMALIZE.send({ files: message.thread });
   }
-  // A reply whose root we have never seen: fetch the thread's history once.
-  if (message.id !== message.rootId && !deleted) {
+  // A reply whose root we have never seen: fetch the thread's history once. The import has the
+  // whole thread already, its root perhaps a moment behind.
+  if (message.id !== message.rootId && !deleted && !imported) {
     const root = await findMessage(env.DB, { ...message, id: message.rootId });
     if (!root) {
       await requestBackfill(env, {
@@ -493,40 +584,49 @@ export async function processKey(env, key, cache = {}) {
   // A person's reply in the platform thread of a root that was folded into another conversation:
   // it is a conversation of its own now (src/rethread.js dethread), before its agent is poked and
   // the inboxes hear of the message. The group it left is exported again; this one is below.
-  if (message.id !== message.rootId && !deleted && cls.kind === 'channel' && author.kind === 'person') {
+  if (message.id !== message.rootId && !deleted && !imported && kind === 'channel'
+    && author.kind === 'person') {
     const split = await dethread(env, message.thread);
     if (split.group) {
       await queueExport(env, [split.group, ...split.split]);
     }
   }
   // A thread agent reads every new message of its thread (only in channels where it is on).
-  const poke = written && !deleted && cls.kind === 'channel' && await agentEnabled(env, message.channelId, cls.team);
+  const poke = written && !deleted && !imported && kind === 'channel'
+    && await agentEnabled(env, message.channelId, cls.team);
   // A new root may continue an earlier thread (a repeat alert, a follow-up). Its agent is
   // poked once that is decided, so it is the group's agent, not one of the root's own.
-  if (message.id === message.rootId && !deleted && env.VECTORS && env.AI) {
+  if (message.id === message.rootId && !deleted && !imported && env.VECTORS && env.AI) {
     await env.NORMALIZE.send({ rethread: message.thread, ...(poke ? { poke: true } : {}) }, {
       delaySeconds: RETHREAD_DELAY_SECONDS,
     });
   } else if (poke) {
     await env.NORMALIZE.send({ agent: message.thread }, { delaySeconds: AGENT_DELAY_SECONDS });
   }
-  if (cls.kind === 'channel' && author.kind === 'person' && env.AI) {
+  if (kind === 'channel' && author.kind === 'person' && !imported && env.AI) {
     await env.NORMALIZE.send({ label: message.thread }, { delaySeconds: LABEL_DELAY_SECONDS });
+  }
+  // A thread agent watches this thread (src/agent/watches.js): it hears of a burst of new
+  // messages once, a minute after the first.
+  if (written && !deleted && !imported && !message.editedAt && kind !== 'ignore'
+    && await isWatched(env, message.thread, author)) {
+    await env.NORMALIZE.send({ watched: message.thread }, { delaySeconds: WATCH_DELAY_SECONDS });
   }
   // Its vector, and the thread's; a deletion (whoever's) takes the message's vector away. The
   // full-text index (SEARCH) has the bots' messages too.
   const vectors = (author.kind === 'person' || deleted) && env.CONTENT && env.AI;
-  if (cls.kind === 'channel' && (vectors || env.SEARCH)) {
+  if (kind === 'channel' && !imported && (vectors || env.SEARCH)) {
     await env.NORMALIZE.send({ vectorize: message.thread }, {
       delaySeconds: VECTORIZE_DELAY_SECONDS,
     });
   }
   // Its row in klickhaus (src/clickhouse.js), after the label job; a burst exports once.
-  if (written) {
+  if (written && !imported) {
     await queueExport(env, message.thread);
   }
-  const rooms = env.ROOMS ? await teamsOf(env, {
-    team: cls.team, source: message.source, channel_id: message.channelId,
+  // An import is tens of thousands of messages: announced, every open inbox would reload with each.
+  const rooms = env.ROOMS && !imported ? await teamsOf(env, {
+    team: cls.team, source: message.source, channel_id: message.channelId, thread: message.thread,
   }) : [];
   // Who to notify (ui/inbox.js): the people a message just posted (not a backfill, a replay or a
   // catch-up long after) newly mentions, the people whose thread it is, and who wrote it.
@@ -535,18 +635,22 @@ export async function processKey(env, key, cache = {}) {
   await notifyRoom(env, rooms, {
     type: 'thread',
     thread: message.thread,
+    // An alert's (a bot's post in an alert channel): an inbox that does not list alerts need not
+    // reload at once for it (ui/inbox.js `reloadSoon`). Most of what is announced is alerts.
+    ...(kind === 'alert' ? { alert: true } : {}),
     ...(mentions.length || involved.length ? {
       mentions, involved, by: person, author: author.name, at: message.at,
     } : {}),
   });
   return {
-    key, result: written ? op.op : 'unchanged', org: cls.org, team: cls.team, kind: cls.kind,
+    key, result: written ? op.op : 'unchanged', org: cls.org, team: cls.team, kind,
   };
 }
 
 /** Whom a queue job works for: its thread, where it names one (src/cogs/meter.js). */
 export function jobSubject(body) {
   const thread = body.label || body.vectorize || body.rethread || body.agent || body.files
+    || body.watched || body.link
     || (body.backfill && body.backfill.thread)
     || (body.export && [].concat(body.export).length === 1 && [].concat(body.export)[0]);
   return typeof thread === 'string' ? { thread } : {};
@@ -560,6 +664,11 @@ const exportKey = (keys) => {
 
 /** A job's last delivery: the queue retries it five times (`maxRetries`, cloudflare.config.ts). */
 const LAST_ATTEMPT = 6;
+/**
+ * A thread's link job after its label: by then its vector is written too (both wait
+ * LABEL_DELAY_SECONDS and VECTORIZE_DELAY_SECONDS after its latest message).
+ */
+export const LINK_DELAY_SECONDS = 60;
 
 /**
  * Queue consumer for NORMALIZE. Each message is acknowledged on its own; a failure is
@@ -581,9 +690,12 @@ export async function consume(batch, baseEnv, meter = null) {
       || (body.backfill && `backfill:${body.backfill.thread}`)
       || (body.rethread && `rethread:${body.rethread}`)
       || (body.agent && `agent:${body.agent}`)
+      || (body.watched && `watched:${body.watched}`)
+      || (body.link && `link:${body.link}`)
       || (body.files && `files:${body.files}`)
       || (body.refile && `refile:${body.refile.source}:${body.refile.channelId}`)
-      || (body.catchup && `catchup:${body.catchup.channelId}`);
+      || (body.catchup && `catchup:${body.catchup.channelId}`)
+      || (body.import && `import:${body.import.source}:${body.import.channelId}`);
     try {
       let r;
       if (body.backfill) {
@@ -603,22 +715,45 @@ export async function consume(batch, baseEnv, meter = null) {
       } else if (body.catchup) {
         // eslint-disable-next-line no-await-in-loop
         r = { key, ...await runCatchUp(env, body.catchup) };
+      } else if (body.import) {
+        // eslint-disable-next-line no-await-in-loop
+        r = { key, ...await runImport(env, body.import) };
       } else if (body.refile) {
         // eslint-disable-next-line no-await-in-loop
         r = { key, ...await refile(env, body.refile) };
       } else if (body.files) {
         // eslint-disable-next-line no-await-in-loop
         r = { key, ...await copyThreadFiles(env, body.files) };
+      } else if (body.watched) {
+        // eslint-disable-next-line no-await-in-loop
+        r = { key, ...await notifyWatched(env, body.watched) };
       } else if (body.agent) {
         // eslint-disable-next-line no-await-in-loop
         r = { key, ...await pokeAgent(env, body.agent, { retry: msg.attempts < LAST_ATTEMPT }) };
       } else if (body.label) {
+        const force = Boolean(body.force);
         // eslint-disable-next-line no-await-in-loop
-        r = { key, ...await labelThread(env, body.label) };
+        r = { key, ...await labelThread(env, body.label, new Date(), { force }) };
         if (r.result === 'labeled' || r.result === 'titled') {
           // eslint-disable-next-line no-await-in-loop
           await queueExport(env, body.label, { delaySeconds: 0 });
         }
+        // Its links to a partner's or customers' threads (src/threadlinks.js), once its vector is
+        // written too; not an imported thread's (nobody works those).
+        if (r.result === 'labeled' && !r.imported) {
+          // eslint-disable-next-line no-await-in-loop
+          await env.NORMALIZE.send({ link: body.label }, { delaySeconds: LINK_DELAY_SECONDS });
+        }
+        // An imported thread's first label is no news: thousands of them, labeled when asked
+        // for (scripts/replay.mjs --imported), would reload every inbox that follows what they
+        // show with each.
+        if ((r.tech || r.areas) && !r.imported) {
+          // eslint-disable-next-line no-await-in-loop
+          await announceFollowed(env, body.label, r.tech, r.areas);
+        }
+      } else if (body.link) {
+        // eslint-disable-next-line no-await-in-loop
+        r = { key, ...await linkThread(env, body.link) };
       } else if (body.export) {
         // eslint-disable-next-line no-await-in-loop
         r = { key, ...await exportThreads(env, body.export, { at: body.at || null }) };

@@ -19,11 +19,103 @@
 import { cachedGraph } from './graph.js';
 
 const APPS = 'installedApps?$expand=teamsAppDefinition($expand=bot)';
+const BETA = 'https://graph.microsoft.com/beta';
+const APP_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+// An app definition's id: base64 of the app id, its version and its state.
+const DEFINITION_ID = /^[A-Za-z0-9+/=_-]{1,300}$/;
+/** The largest icon passed on; Teams asks for a 192 × 192 PNG. */
+const MAX_ICON_BYTES = 1024 * 1024;
+/** Image types an icon is passed on as; never SVG, which a browser could run. */
+const ICON_TYPE = /^image\/(png|jpeg|gif|webp)$/;
 
 /**
- * The bots among the apps installed in one Teams team, `{ id, name }` by the bot's app id
- * (the id a mention carries) and the app's name (what Teams writes when someone mentions it).
- * A failed request gives `{ status, error }` instead.
+ * The inbox's URL of a Teams app's color icon (`teamsBotIcon`), for the definition installed:
+ * a new version of the app is a new definition, and so a new URL. Null without the ids.
+ */
+export function botIconPath(teamsAppId, definitionId) {
+  if (!APP_ID.test(teamsAppId || '') || !DEFINITION_ID.test(definitionId || '')) {
+    return null;
+  }
+  return `/api/bots/icon?app=${encodeURIComponent(teamsAppId)}&def=${encodeURIComponent(definitionId)}`;
+}
+
+/**
+ * GET /api/bots/icon?app=&def=: the color icon of a Teams app's definition, for the inbox's
+ * pictures of its bot (Teams gives a bot's messages none). Graph has it in beta only
+ * (`appCatalogs/teamsApps/…/appDefinitions/…/colorIcon`, application permission
+ * `AppCatalog.Read.All`): a store app's is a public URL, fetched without the token; an app of
+ * the tenant's own is Graph's hosted content, fetched with it. Only PNG, JPEG, GIF and WebP
+ * are passed on, cached a day at the edge and in the browser; 404 otherwise, so the inbox shows
+ * the initials.
+ */
+export async function teamsBotIcon(env, url, { graph, cache } = {}) {
+  const app = url.searchParams.get('app') || '';
+  const def = url.searchParams.get('def') || '';
+  const none = (reason) => {
+    if (reason) {
+      console.warn(JSON.stringify({ route: 'bots', icon: 'failed', reason }));
+    }
+    return Response.json({ error: 'no icon' }, { status: 404 });
+  };
+  if (!botIconPath(app, def)) {
+    return none();
+  }
+  const store = cache === undefined ? (typeof caches !== 'undefined' && caches.default) || null : cache;
+  const key = new Request(`https://opspile.cache/bots/icon/${app}/${encodeURIComponent(def)}`);
+  const hit = store && await store.match(key);
+  if (hit) {
+    return hit;
+  }
+  const g = graph || await cachedGraph(env);
+  const res = await g(`${BETA}/appCatalogs/teamsApps/${app}/appDefinitions/${encodeURIComponent(def)}/colorIcon`);
+  if (!res.ok) {
+    await res.body?.cancel();
+    return none(`colorIcon ${res.status}`);
+  }
+  const { webUrl } = await res.json().catch(() => ({}));
+  let target;
+  try {
+    target = new URL(webUrl);
+  } catch {
+    return none('no webUrl');
+  }
+  if (target.protocol !== 'https:') {
+    return none('webUrl not https');
+  }
+  // The token goes to Graph only.
+  const got = target.hostname === 'graph.microsoft.com'
+    ? await g(target.href, { headers: { accept: 'image/*' } })
+    : await fetch(target.href);
+  const type = (got.headers.get('content-type') || '').split(';')[0].trim().toLowerCase();
+  if (!got.ok || !ICON_TYPE.test(type)
+    || Number(got.headers.get('content-length') || 0) > MAX_ICON_BYTES) {
+    await got.body?.cancel();
+    return none(`icon ${got.status} ${type}`.trim());
+  }
+  const bytes = await got.arrayBuffer();
+  if (bytes.byteLength > MAX_ICON_BYTES) {
+    return none('icon too large');
+  }
+  const out = new Response(bytes, {
+    headers: {
+      'content-type': type,
+      'cache-control': 'private, max-age=86400',
+      'x-content-type-options': 'nosniff',
+      'content-security-policy': "default-src 'none'",
+    },
+  });
+  if (store) {
+    const shared = new Response(bytes, { headers: { 'content-type': type, 'cache-control': 'max-age=86400' } });
+    await store.put(key, shared);
+  }
+  return out;
+}
+
+/**
+ * The bots among the apps installed in one Teams team, `{ id, name, icon }` by the bot's app
+ * id (the id a mention carries), with the app's name (what Teams writes when someone mentions
+ * it) and the inbox's URL of its icon (`botIconPath`). A failed request gives
+ * `{ status, error }` instead.
  */
 export async function installedBots(graph, groupId) {
   const bots = new Map();
@@ -39,7 +131,8 @@ export async function installedBots(graph, groupId) {
     for (const { teamsAppDefinition: def } of data.value || []) {
       const id = def && def.bot && def.bot.id;
       if (id) {
-        bots.set(id, { id, name: def.displayName || null });
+        const icon = botIconPath(def.teamsAppId, def.id);
+        bots.set(id, { id, name: def.displayName || null, ...(icon ? { icon } : {}) });
       }
     }
     next = data['@odata.nextLink'] || null;
@@ -85,14 +178,16 @@ export async function syncInstalledBots(env, { graph, now = Date.now() } = {}) {
     for (const b of bots) {
       if (!named.has(b.id)) {
         named.add(b.id);
-        // The app's name is how Teams mentions the bot; the name it posts under stays.
+        // The app's name is how Teams mentions the bot; the name it posts under stays. Its
+        // picture is the app's icon (Teams gives its messages none), of the version installed.
         // eslint-disable-next-line no-await-in-loop
         await env.DB.prepare(`INSERT INTO identities (source, tenant, user_id, kind, name, handle,
-            fetched_at) VALUES ('teams', ?, ?, 'bot', ?, ?, ?)
+            fetched_at, avatar) VALUES ('teams', ?, ?, 'bot', ?, ?, ?, ?)
           ON CONFLICT (source, tenant, user_id) DO UPDATE SET
             name = COALESCE(identities.name, excluded.name),
-            handle = COALESCE(excluded.handle, identities.handle)`)
-          .bind(tenant, b.id, b.name, b.name, at).run();
+            handle = COALESCE(excluded.handle, identities.handle),
+            avatar = COALESCE(excluded.avatar, identities.avatar)`)
+          .bind(tenant, b.id, b.name, b.name, at, b.icon || null).run();
       }
       // eslint-disable-next-line no-await-in-loop
       await env.DB.prepare(`INSERT INTO bot_teams (source, tenant, bot_id, group_id, at, installed)

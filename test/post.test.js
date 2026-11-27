@@ -16,12 +16,14 @@ import {
 } from 'node:test';
 import {
   channelPlace, checkState, connections, finishAuth, knownMentions, learnMembers, makeState,
-  mentionable, post,
+  keepTeamsPost, mentionable, post,
   postableChannels, seal, slackText, splitMentions, teamsMessage, unseal, writtenMentions,
 } from '../src/post.js';
 import { htmlToMarkdown } from '../src/html.js';
 import { suggestMentions } from '../src/mention-match.js';
+import { normalize } from '../src/normalize.js';
 import { d1 } from './d1.js';
+import { fakeBucket, quiet } from './fakes.js';
 
 // Made-up keys, ids and people only.
 const KEY = Buffer.alloc(32, 7).toString('base64url');
@@ -194,6 +196,26 @@ describe('mentions', () => {
     assert.deepEqual(await writtenMentions(e, key, '@Bob Builder'), [{ ...bob, id: 'U9' }]);
   });
 
+  it('finds @Names that are not all letters, and mentions them on Slack', async () => {
+    const e = withAccounts(env());
+    const key = 'slack:E1:C1:1.1';
+    const add = e.DB.sqlite.prepare(`INSERT INTO identities (source, tenant, user_id, kind, name,
+      fetched_at) VALUES ('slack', 'E1', ?, 'person', ?, '2026-10-21T10:00:00Z')`);
+    // Made-up names as Slack shows them: a company after a dash, pronouns, an apostrophe, accents.
+    add.run('U31', 'Cy Young - Acme');
+    add.run('U32', 'Di Duck (she/her)');
+    add.run('U33', 'Ed O\u2019Hare');
+    add.run('U34', 'Fe\u0301lix Nu\u0301n\u0303ez');
+    const text = '@Cy Young - Acme one small fix.\n\n(@Di Duck (she/her)), **@Ed O\u2019Hare**'
+      + ' and @Fe\u0301lix Nu\u0301n\u0303ez: thanks!';
+    const found = await writtenMentions(e, key, text);
+    assert.deepEqual(found.map((m) => m.id).sort(), ['U31', 'U32', 'U33', 'U34']);
+    assert.equal(
+      slackText(text, found),
+      '<@U31> one small fix.\n\n(<@U32>), *<@U33>* and <@U34>: thanks!',
+    );
+  });
+
   it('mentions the account a person uses when they have two of one name', async () => {
     const e = withAccounts(env());
     const key = 'slack:E1:C1:1.1';
@@ -349,6 +371,36 @@ describe('mentions', () => {
         'teams:T:u-zed')`).run();
     const { people } = await (await mentionable(e, 'teams:T:G:19:c:5', 'B', inTeam)).json();
     assert.deepEqual(people.map((p) => [p.name, p.member]), [['Bo Zed', true], ['Bob Builder', false]]);
+  });
+
+  it('says who is not in the Teams team, once its members are listed in full', async () => {
+    const e = withAccounts(env());
+    e.DB.sqlite.prepare(`INSERT INTO identities (source, tenant, user_id, kind, name, fetched_at)
+      VALUES ('teams', 'T', 'u-bea', 'person', 'Bea Inside', '2026-10-21T10:00:00Z')`).run();
+    e.DB.sqlite.prepare(`INSERT INTO channel_members (source, tenant, channel_id, user_id)
+      VALUES ('teams', 'T', '19:c', 'u-bea')`).run();
+    const ask = async () => (await mentionable(e, 'teams:T:G:19:c:5', 'b', inTeam, { pool: true })).json();
+    // Never listed: nobody can be said to be out.
+    let { people, pool } = await ask();
+    assert.deepEqual(people.map((p) => [p.name, p.member, Boolean(p.outside)]), [
+      ['Bea Inside', true, false], ['Bob Builder', false, false],
+    ]);
+    e.DB.sqlite.prepare('UPDATE channels SET members_at = ? WHERE channel_id = ?')
+      .run('2026-10-21T10:00:00Z', '19:c');
+    ({ people, pool } = await ask());
+    assert.deepEqual(people.map((p) => [p.name, Boolean(p.outside)]), [
+      ['Bea Inside', false], ['Bob Builder', true],
+    ]);
+    assert.equal(pool.accounts.find((a) => a.id === 'u-bob').outside, true);
+    assert.deepEqual(suggestMentions(pool, 'b'), people);
+    // A list that failed, or a shared channel's, says nothing of it.
+    for (const set of ["members_error = 'graph members 403'", 'shared = 1']) {
+      e.DB.sqlite.prepare(`UPDATE channels SET ${set} WHERE channel_id = ?`).run('19:c');
+      // eslint-disable-next-line no-await-in-loop
+      assert.ok(!(await ask()).people.some((p) => p.outside), set);
+      e.DB.sqlite.prepare(`UPDATE channels SET members_error = NULL, shared = 0
+        WHERE channel_id = ?`).run('19:c');
+    }
   });
 
   it('lists the channel\'s members once a week, and looks up the ones it never saw', async () => {
@@ -613,6 +665,34 @@ describe('connecting and posting', () => {
     assert.deepEqual(JSON.parse(sent.init.body), { channel: 'C1', thread_ts: '1.1', text: 'On it.' });
   });
 
+  it('sends a table to Slack as a markdown block, with mentions, the text as mrkdwn', async () => {
+    const e = withAccounts(env());
+    await e.DB.sqlite.prepare(`INSERT INTO user_tokens (person, platform, user_id, access_token,
+      updated_at) VALUES (1, 'slack', 'U1', ?, '2026-10-21T10:00:00Z')`).run(await seal(e, 'xoxp-ada'));
+    const text = '@Bob Builder, **per minute**:\n\n| UTC | total |\n|---|---|\n| 13:18 | 16,172 |';
+    const res = await post(e, ME, { thread: 'slack:E1:C1:1.1', text, mentions: [{ id: 'U2' }] }, inTeam);
+    assert.equal(res.status, 200);
+    const sent = JSON.parse(calls.find((c) => c.u.endsWith('/chat.postMessage')).init.body);
+    assert.deepEqual(sent.blocks, [{ type: 'markdown', text: text.replace('@Bob Builder', '<@U2>') }]);
+    assert.match(sent.text, /^<@U2>, \*per minute\*:/);
+  });
+
+  it('sends a table as text alone when Slack refuses its blocks', async () => {
+    const e = env();
+    await e.DB.sqlite.prepare(`INSERT INTO user_tokens (person, platform, user_id, access_token,
+      updated_at) VALUES (1, 'slack', 'U1', ?, '2026-10-21T10:00:00Z')`).run(await seal(e, 'xoxp-ada'));
+    const inner = globalThis.fetch;
+    globalThis.fetch = async (url, init) => (String(url).endsWith('/chat.postMessage')
+      && JSON.parse(init.body).blocks
+      ? (calls.push({ u: String(url), init }), Response.json({ ok: false, error: 'invalid_blocks' }))
+      : inner(url, init));
+    const res = await post(e, ME, { thread: 'slack:E1:C1:1.1', text: '| a |\n|---|\n| 1 |' }, inTeam);
+    assert.equal(res.status, 200);
+    const posts = calls.filter((c) => c.u.endsWith('/chat.postMessage'));
+    assert.equal(posts.length, 2);
+    assert.equal(JSON.parse(posts[1].init.body).blocks, undefined);
+  });
+
   it('keeps a folded root in its group once a reply of the group goes to its thread', async () => {
     const e = env();
     await e.DB.sqlite.prepare(`INSERT INTO user_tokens (person, platform, user_id, access_token,
@@ -711,6 +791,44 @@ describe('connecting and posting', () => {
     }]);
   });
 
+  it('says whom a Teams reply mentions who is not in its Teams team, listed again first', async () => {
+    const e = withAccounts(env());
+    const state = await makeState(e, 1, 'teams');
+    await finishAuth(e, ME, 'teams', new URL(`https://opspile.test/api/auth/teams/callback?code=c&state=${state}`));
+    e.DB.sqlite.prepare("UPDATE identities SET email = 'bob@staff.example' WHERE user_id = 'u-bob'").run();
+    e.DB.sqlite.prepare(`INSERT INTO identities (source, tenant, user_id, kind, name, fetched_at)
+      VALUES ('teams', 'T', 'u-bea', 'person', 'Bea Inside', '2026-10-21T10:00:00Z')`).run();
+    e.DB.sqlite.prepare(`INSERT INTO channel_members (source, tenant, channel_id, user_id)
+      VALUES ('teams', 'T', '19:c', 'u-bea')`).run();
+    e.DB.sqlite.prepare('UPDATE channels SET members_at = ? WHERE channel_id = ?')
+      .run(new Date(Date.now() - 60 * 1000).toISOString(), '19:c');
+    let team = [{ userId: 'u-bea', email: null, displayName: 'Bea Inside' }];
+    const graphed = [];
+    const learn = {
+      graph: async (path) => {
+        graphed.push(path);
+        return Response.json({ value: team });
+      },
+      getIdentity: async () => null,
+    };
+    const reply = async (text, mentions) => (await post(e, ME, {
+      thread: 'teams:T:G:19:c:5', text, mentions,
+    }, inTeam, [], { learn })).json();
+    // Bob is not in the team, listed again just now: the answer says so, with his address.
+    const out = await reply('thanks @Bob Builder and @Bea Inside', ['u-bob', 'u-bea']);
+    assert.equal(out.ok, true);
+    assert.deepEqual(out.outside, [{ name: 'Bob Builder', email: 'bob@staff.example' }]);
+    assert.equal(graphed.length, 1);
+    // A member, or a bot of the team, is no one to tell about.
+    assert.equal((await reply('thanks @Bea Inside @helper', ['u-bea', 'b-help'])).outside, undefined);
+    // Added since: the list from over half a minute ago is listed again, and he is in.
+    team = [...team, { userId: 'u-bob', email: 'bob@staff.example', displayName: 'Bob Builder' }];
+    e.DB.sqlite.prepare('UPDATE channels SET members_at = ? WHERE channel_id = ?')
+      .run(new Date(Date.now() - 60 * 1000).toISOString(), '19:c');
+    assert.equal((await reply('thanks @Bob Builder', ['u-bob'])).outside, undefined);
+    assert.equal(graphed.length, 2);
+  });
+
   it('starts a Slack thread in a channel, and says which entry it will be', async () => {
     const e = env();
     await finishAuth(e, ME, 'slack', new URL(`https://opspile.test/api/auth/slack/callback?code=c&state=${await makeState(e, 1, 'slack')}`));
@@ -755,6 +873,59 @@ describe('connecting and posting', () => {
     }
     assert.equal((await post(e, ME, { channel: 'slack:E1:C1', root: '1.2', text: 'x' }, () => false)).status, 404);
     assert.deepEqual(calls, []);
+  });
+
+  it('keeps a Teams reply as Graph answered it, so it shows before its notification', async () => {
+    const e = env();
+    const queued = [];
+    e.RAW = fakeBucket();
+    e.NORMALIZE = { send: async (body) => queued.push(body) };
+    await finishAuth(e, ME, 'teams', new URL(`https://opspile.test/api/auth/teams/callback?code=c&state=${await makeState(e, 1, 'teams')}`));
+    const inner = globalThis.fetch;
+    const message = {
+      id: '1793796099000',
+      replyToId: '5',
+      createdDateTime: '2026-10-21T10:00:00.000Z',
+      lastModifiedDateTime: '2026-10-21T10:00:00.000Z',
+      from: { user: { id: 'u-ada', displayName: 'Ada' } },
+      body: { contentType: 'html', content: 'On it.' },
+    };
+    globalThis.fetch = async (url, init) => (String(url).includes('/replies')
+      ? Response.json(message, { status: 201 }) : inner(url, init));
+    const later = [];
+    const res = await post(e, ME, { thread: 'teams:T:G:19:c:5', text: 'On it.' }, inTeam, [], {
+      waitUntil: (p) => later.push(p),
+    });
+    assert.equal(res.status, 200);
+    assert.equal((await res.json()).id, '1793796099000');
+    const [key] = await Promise.all(later);
+    assert.equal(key, 'teams/T/G1/19:c/2026/10/21/1792576800000-1793796099000.json');
+    assert.deepEqual(queued, [{ key }]);
+    const kept = JSON.parse(e.RAW.objects.get(key).body);
+    assert.deepEqual(kept.channelIdentity, { teamId: 'G1', channelId: '19:c' });
+    assert.equal(e.RAW.objects.get(key).options.customMetadata.via, 'post');
+    // What the normalizer makes of it: the reply, in its thread.
+    const { message: m } = normalize(key, kept);
+    assert.equal(m.id, '1793796099000');
+    assert.equal(m.channelId, '19:c');
+  });
+
+  it('posts all the same when keeping the Teams reply fails, or Graph answered no message', async () => {
+    const e = env();
+    e.RAW = {
+      put: async () => {
+        throw new Error('R2 down');
+      },
+    };
+    e.NORMALIZE = { send: async () => {} };
+    await finishAuth(e, ME, 'teams', new URL(`https://opspile.test/api/auth/teams/callback?code=c&state=${await makeState(e, 1, 'teams')}`));
+    const inner = globalThis.fetch;
+    globalThis.fetch = async (url, init) => (String(url).includes('/replies')
+      ? Response.json({ id: '7', createdDateTime: '2026-10-21T10:00:00Z' }, { status: 201 })
+      : inner(url, init));
+    const res = await quiet(() => post(e, ME, { thread: 'teams:T:G:19:c:5', text: 'x' }, inTeam));
+    assert.equal(res.status, 200);
+    assert.equal(await keepTeamsPost(e, { tenant: 'T' }, { id: '7' }), null);
   });
 
   it('starts no thread without a channel, or in one that is not a conversation', async () => {

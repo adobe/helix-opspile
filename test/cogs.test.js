@@ -25,6 +25,7 @@ import {
 import {
   accountRows, meterRows, replaceDay, replaceHours, resources, rollupCogs, seatRows, volumeRows,
 } from '../src/cogs/rollup.js';
+import { underlying } from '../src/d1batch.js';
 import { AGENT_EMAIL } from '../src/drafts.js';
 import { assignedArm, MODEL } from '../src/experiments.js';
 import { jobSubject } from '../src/normalizer.js';
@@ -147,6 +148,42 @@ describe('cogs: meter', () => {
     const m = new Meter(env);
     assert.equal(m.env({ thread: 't' }), env);
     assert.deepEqual(await m.flush(), { points: 0 });
+  });
+
+  it('keeps the D1 binding under it, so what is kept by the database lasts across requests', () => {
+    const binding = metaDb();
+    const base = { DB: binding, USAGE: { writeDataPoint() {} } };
+    const one = new Meter(base).env({ thread: 't' });
+    const two = new Meter(base).env({});
+    assert.notEqual(one.DB, binding, 'metered');
+    assert.equal(underlying(one.DB), binding);
+    assert.equal(underlying(two.DB), underlying(one.DB));
+    // A request's session (src/d1session.js) too.
+    const s = { prepare() {}, batch() {} };
+    const replicated = { ...base, DB: { ...binding, withSession: () => s } };
+    const session = new Meter(replicated).env({}).DB.withSession();
+    assert.equal(underlying(session), s);
+  });
+
+  it('reaches AI Search over RPC, where every property is a method of the other side', async () => {
+    // A Workers RPC stub: any property is a callable stub, `bind` and `apply` too, which the other
+    // side does not have.
+    const remote = { search: async () => ({ chunks: [] }), upload: async (n) => ({ id: `item-${n}` }), delete: async () => {} };
+    const stub = (path = []) => new Proxy(() => {}, {
+      get: (_, prop) => (typeof prop === 'symbol' ? undefined : stub([...path, prop])),
+      apply: (_, __, args) => {
+        const fn = remote[path[path.length - 1]];
+        if (!fn || path.some((p) => ['bind', 'apply', 'call'].includes(p))) {
+          throw new Error(`The RPC receiver does not implement the method "${path[path.length - 1]}".`);
+        }
+        return fn(...args);
+      },
+    });
+    const m = new Meter({ USAGE: usage(), SEARCH: stub() }, { via: 'queue' });
+    const env = m.env({ org: 'acme', team: 'helix' });
+    assert.deepEqual(await env.SEARCH.items.upload('n', 'text', {}), { id: 'item-n' });
+    await env.SEARCH.items.delete('i1');
+    assert.deepEqual(await env.SEARCH.search({ query: 'q' }), { chunks: [] });
   });
 
   it('counts D1 rows, R2 operations, queue operations, Workers AI, Vectorize and AI Search', async () => {

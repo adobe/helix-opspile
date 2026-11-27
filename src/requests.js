@@ -12,6 +12,7 @@
 
 import { json } from './http.js';
 import { PLATFORMS } from './platforms.js';
+import { announceRequest } from './requestkeys.js';
 
 /**
  * Channel assignment requests (migration 0028). A team manager does not assign channels: they
@@ -20,6 +21,11 @@ import { PLATFORMS } from './platforms.js';
  * the team, or is shared with it when another team holds it), or declines it with a reason.
  * The manager may withdraw an open request. One request per channel and team is open at a
  * time; decided ones stay, so the manager sees the outcome.
+ *
+ * A request may ask for a move (`move`, migration 0071): confirmed, the channel is filed under the
+ * team even when another team holds it, instead of being shared with it. The thread agent files
+ * those from its sidebar, for the person who asked there (src/agent/channelrequest.js), with the
+ * thread whose sidebar it was (`thread`).
  *
  * This module keeps the rows; src/admin.js routes them and confirms.
  */
@@ -58,6 +64,8 @@ function shape(r) {
     decidedAt: r.decided_at,
     reason: r.reason,
     outcome: r.outcome,
+    move: Boolean(r.move),
+    thread: r.thread || null,
     channel: {
       source: r.source,
       tenant: r.tenant || null,
@@ -81,11 +89,18 @@ export async function getRequest(env, id) {
 
 /**
  * Requests, the open ones first (oldest first: who waited longest), then the decided ones,
- * latest first. `teams` (slugs) limits them to those teams, `status` to open or decided ones.
+ * latest first. `teams` (slugs) limits them to those teams, `status` to open or decided ones,
+ * `channel` (`{ source, channelId }`) to that channel's.
  */
-export async function listRequests(env, { teams = null, status = null, limit = LIMIT } = {}) {
+export async function listRequests(env, {
+  teams = null, status = null, channel = null, limit = LIMIT,
+} = {}) {
   const where = [];
   const args = [];
+  if (channel) {
+    where.push('r.source = ? AND r.channel_id = ?');
+    args.push(channel.source, channel.channelId);
+  }
   if (teams) {
     where.push('r.team IN (SELECT value FROM json_each(?))');
     args.push(JSON.stringify(teams));
@@ -115,9 +130,12 @@ export async function openCount(env, teams = null) {
 /**
  * POST /api/admin/requests `{ team, source, channelId, note? }`: asks the admin team to put a
  * channel in a team's inbox. Refused for a channel opspile has not seen, one that is in the
- * team's inbox already, and when the same request is open (409, with that request).
+ * team's inbox already, and when the same request is open (409, with that request). With `move`
+ * (the agent's, src/agent/channelrequest.js; not from the API) it asks to file the channel under
+ * the team, refused only when it is filed there already; `thread` is the entry whose sidebar
+ * asked.
  */
-export async function createRequest(env, me, body) {
+export async function createRequest(env, me, body, { move = false, thread = null } = {}) {
   const team = clean(body.team);
   const channelId = clean(body.channelId);
   const source = clean(body.source);
@@ -134,17 +152,22 @@ export async function createRequest(env, me, body) {
   if (!seen) {
     return json({ error: 'the inbox has not seen this channel' }, 404);
   }
+  // A move is for a channel filed elsewhere: one only shared with the team can still move to it.
   const here = await env.DB.prepare(`SELECT 1 FROM threads WHERE source = ?1 AND channel_id = ?2
       AND team = ?3
-    UNION SELECT 1 FROM channel_teams WHERE source = ?1 AND channel_id = ?2 AND team = ?3 LIMIT 1`)
-    .bind(source, channelId, team).first();
+    UNION SELECT 1 FROM channel_teams WHERE source = ?1 AND channel_id = ?2 AND team = ?3
+      AND NOT ?4 LIMIT 1`)
+    .bind(source, channelId, team, move ? 1 : 0).first();
   if (here) {
-    return json({ error: 'this channel is in the team\'s inbox already' }, 409);
+    return json({
+      error: move ? 'this channel is filed under the team already' : 'this channel is in the team\'s inbox already',
+    }, 409);
   }
   const [by, name, at] = stamp(me);
   const row = await env.DB.prepare(`INSERT INTO channel_requests (source, channel_id, team, note,
-      requested_by, requested_name, requested_at) VALUES (?, ?, ?, ?, ?, ?, ?)
-    ON CONFLICT DO NOTHING RETURNING id`).bind(source, channelId, team, note, by, name, at).first();
+      requested_by, requested_name, requested_at, move, thread) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ON CONFLICT DO NOTHING RETURNING id`)
+    .bind(source, channelId, team, note, by, name, at, move ? 1 : 0, thread).first();
   if (!row) {
     const open = await env.DB.prepare(`SELECT id FROM channel_requests WHERE source = ?
       AND channel_id = ? AND team = ? AND status = 'open'`).bind(source, channelId, team).first();
@@ -153,8 +176,9 @@ export async function createRequest(env, me, body) {
     }, 409);
   }
   console.log(JSON.stringify({
-    route: 'admin', request: 'created', by: me.id, id: row.id, team,
+    route: 'admin', request: 'created', by: me.id, id: row.id, team, move, via: thread ? 'agent' : 'page',
   }));
+  await announceRequest(env, 'channel', row.id);
   return json({ ok: true, request: await getRequest(env, row.id) });
 }
 

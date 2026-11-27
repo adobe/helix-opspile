@@ -14,6 +14,8 @@ import { json } from './http.js';
 import { linkedMessage, messageRef } from './messagelinks.js';
 import { notifyRoom } from './notify.js';
 import { cleanSources, lookAt, sourcesOf } from './sources.js';
+import { draftFileResponse, filesOf, savedFiles } from './draftfiles.js';
+import { PUBLIC_NOW } from './follows.js';
 import {
   AGENT_EMAIL, changeOf, keepForUndo, recordDraftEvent, textHash, undoneDiscard,
 } from './draftevents.js';
@@ -39,14 +41,29 @@ const PREVIEW = 140;
  * inbox has it (a shared channel's too), and every member thread.
  */
 /**
- * SQL, `?1` the thread: `WITH t AS (the thread, `k` its entry's key) SELECT t.*, shares` (the
- * teams its channel is shared with, as JSON, in `sharesOf`'s order), for `entryFields`; more
- * columns may follow, then `FROM t`.
+ * SQL, `?1` the thread: `WITH t AS (the thread, `k` its entry's key) SELECT t.*, shares, follows`
+ * (the teams its channel is shared with, as JSON, in `sharesOf`'s order, and the teams that
+ * follow a technology the entry shows, an area it is in, or a customer whose people posted in it
+ * when it is public, in `followingTeams`'), for
+ * `entryFields`; more columns may follow, then `FROM t`.
  */
 export const ENTRY_ROW = `WITH t AS (SELECT thread, org, team, logical_thread, source, tenant,
       channel_id, COALESCE(logical_thread, thread) AS k FROM threads WHERE thread = ?1)
   SELECT t.*, (SELECT json_group_array(c.team ORDER BY c.added_at, c.team) FROM channel_teams c
-      WHERE c.source = t.source AND c.channel_id = t.channel_id) AS shares`;
+      WHERE c.source = t.source AND c.channel_id = t.channel_id) AS shares,
+    (SELECT json_group_array(team) FROM (SELECT f.team FROM threads x
+      JOIN thread_tech g ON g.thread = x.thread JOIN team_follows f ON f.tech = g.tech
+      WHERE (x.thread = t.k OR x.logical_thread = t.k) AND x.kind = 'channel'
+      UNION SELECT f.team FROM threads x
+      JOIN thread_areas a ON a.thread = x.thread
+      JOIN team_follows_by f ON f.kind = 'area' AND f.target = a.area
+      WHERE (x.thread = t.k OR x.logical_thread = t.k) AND x.kind = 'channel'
+      UNION SELECT r.value FROM threads x
+      JOIN thread_orgs o ON o.thread = x.thread AND o.role = 'customer' AND o.dismissed_at IS NULL
+        AND ${PUBLIC_NOW('o')}
+      JOIN rules r ON r.target = 'follow' AND r.field = 'org' AND r.pattern = '^' || o.org || '$'
+      WHERE (x.thread = t.k OR x.logical_thread = t.k) AND x.kind = 'channel' ORDER BY 1))
+      AS follows`;
 
 /** An entry from an `ENTRY_ROW` row, without its members' keys. */
 export function entryFields(row) {
@@ -54,12 +71,18 @@ export function entryFields(row) {
     key: row.k,
     org: row.org,
     team: row.team,
-    // The channel, for who may work it (src/shares.js, `mayWork`).
+    // The channel and the thread, for who may work it (src/shares.js, `mayWork`).
     source: row.source,
     tenant: row.tenant,
     channel_id: row.channel_id,
-    // Every team whose inbox has it (`teamsOf`): the one it is filed under, then the shares.
-    teams: [...new Set([row.team, ...JSON.parse(row.shares || '[]')].filter(Boolean))],
+    thread: row.thread,
+    // Every team whose inbox has it (`teamsOf`): the one it is filed under, then the shares,
+    // then the teams that follow a technology it shows.
+    teams: [...new Set([row.team, ...JSON.parse(row.shares || '[]'),
+      ...JSON.parse(row.follows || '[]')].filter(Boolean))],
+    // The teams that follow a technology it shows (src/follows.js): its agent has their
+    // knowledge bases as a shared channel's.
+    follows: JSON.parse(row.follows || '[]'),
   };
 }
 
@@ -92,6 +115,8 @@ const shape = (r) => ({
   body: r.body,
   mentions: mentionsOf(r.mentions),
   sources: sourcesOf(r.sources),
+  // Pictures that go with it when it is sent (src/draftfiles.js).
+  files: filesOf(r.files),
   by: { id: r.person, name: r.name || null },
   // Who saved its first version (src/draftevents.js).
   origin: r.origin ?? null,
@@ -167,15 +192,28 @@ export async function getDraft(env, key, canSee) {
 }
 
 /**
- * PUT /api/draft `{ thread, text, mentions?, sources?, base }`: saves the entry's draft as the
- * signed-in person. `base` is the `updated_at` of the draft the text was written from (null
- * if there was none); if the draft is no longer that version, nothing is saved and the
- * answer is 409 with the current draft, or null when it is gone. `sources` (src/sources.js)
- * replaces the draft's; left out, they stay, as when a person edits the text.
+ * GET /api/draft/file?thread=&id=: a file of the entry's draft (src/draftfiles.js).
  */
-export async function saveDraft(env, me, request, inTeam) {
+export async function getDraftFile(env, key, id, canSee) {
+  const e = await entryOf(env, key);
+  if (!e || !await canSee(e.teams, e)) {
+    return json({ error: 'not found' }, 404);
+  }
+  return draftFileResponse(env, draftOf(await draftsFor(env, e.keys), e.keys), id);
+}
+
+/**
+ * PUT /api/draft `{ thread, text, mentions?, sources?, files?, base }`: saves the entry's draft
+ * as the signed-in person. `base` is the `updated_at` of the draft the text was written from
+ * (null if there was none); if the draft is no longer that version, nothing is saved and the
+ * answer is 409 with the current draft, or null when it is gone. `sources` (src/sources.js)
+ * replaces the draft's; left out, they stay, as when a person edits the text. `files`, the ids
+ * of the draft's files to keep (src/draftfiles.js), takes the others off; left out, they stay.
+ * `added` are files stored for it just now (the agent's, `storeDraftFile`), after those.
+ */
+export async function saveDraft(env, me, request, inTeam, { added = [] } = {}) {
   const {
-    thread: key, text, mentions, sources, base = null,
+    thread: key, text, mentions, sources, files: keep, base = null,
   } = request || {};
   const body = String(text || '');
   if (!body.trim() || body.length > MAX_TEXT) {
@@ -199,21 +237,28 @@ export async function saveDraft(env, me, request, inTeam) {
       error: 'This draft was discarded or sent meanwhile', conflict: true, draft: null,
     }, 409);
   }
+  // Undo of a discard saves the same text again: the draft goes on as the one it was, its
+  // pictures too.
+  const undone = current ? null : await undoneDiscard(env, me, e.keys, body);
+  const pictures = savedFiles(current?.files || undone?.files || [], keep, added);
+  if (pictures.error) {
+    return json({ error: pictures.error }, 400);
+  }
   const version = nextVersion(current && current.updated_at);
   const picked = JSON.stringify(cleanMentions(mentions));
   const cited = JSON.stringify(given ? given.sources : (current?.sources || []));
-  // Undo of a discard saves the same text again: the draft goes on as the one it was.
-  const undone = current ? null : await undoneDiscard(env, me, e.keys, body);
+  const attached = JSON.stringify(pictures.files);
   // Who saved the first version, and the latest text they saved: what is sent is compared with it.
   const origin = undone?.origin ?? current?.origin ?? me.id;
   const created = undone?.draft || current?.created_at || version;
   let changes;
   if (current && current.thread === e.key) {
     ({ meta: { changes } } = await env.DB.prepare(`UPDATE drafts SET body = ?, mentions = ?,
-        sources = ?, person = ?, updated_at = ?,
+        sources = ?, files = ?, person = ?, updated_at = ?,
         origin_body = CASE WHEN origin = ? THEN ? ELSE origin_body END
       WHERE thread = ? AND updated_at = ?`)
-      .bind(body, picked, cited, me.id, version, me.id, body, e.key, current.updated_at).run());
+      .bind(body, picked, cited, attached, me.id, version, me.id, body, e.key, current.updated_at)
+      .run());
   } else {
     // A draft saved under a thread that has since been folded into a group moves to the
     // group's key. One that comes back by an Undo is still compared with its origin's text.
@@ -226,9 +271,10 @@ export async function saveDraft(env, me, request, inTeam) {
         .bind(current.thread, current.updated_at).run();
     }
     ({ meta: { changes } } = await env.DB.prepare(`INSERT INTO drafts (thread, body, mentions,
-        sources, person, created_at, updated_at, origin, origin_body) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        sources, files, person, created_at, updated_at, origin, origin_body)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT (thread) DO NOTHING`)
-      .bind(e.key, body, picked, cited, me.id, created, version, origin, proposed)
+      .bind(e.key, body, picked, cited, attached, me.id, created, version, origin, proposed)
       .run());
   }
   if (!changes) {
@@ -281,6 +327,8 @@ export async function discardDraft(env, me, request, inTeam, { sent = null } = {
       origin: current.origin,
       changed: sent ? changeOf(proposed ?? current.body, sent.text) : null,
       hash: sent ? null : await textHash(current.body),
+      // A discard keeps its pictures for an Undo.
+      files: sent ? null : current.files,
     });
     if (!sent && proposed != null && proposed !== current.body) {
       await keepForUndo(env, e, current.created_at, proposed);

@@ -14,15 +14,23 @@
  * The header of every page (its styles in ui/spectrum.css), as the global `Header`. It runs right after the
  * page's <header>, before the page's own script.
  *
- * The switch between the pages: Inbox and Agents for every member of a team (Agents read-only),
- * Teams too for team managers, and Orgs, Requests and COGS (what the inbox costs) too for the
- * admin team (with the number of open requests on Requests), and Topics (the topic map); and Stats, klickhaus' statistics of all threads in a new tab,
+ * The switch between the pages: Inbox, Teams, Customers (each with its agents, read-only but
+ * where you manage them) and Topics (the topic map) for every member of a team (Inbox, Teams and
+ * Customers, for their overviews, and Topics for Adobe's people on none, `staff` from /api/me,
+ * to find what to follow), and
+ * COGS (what the inbox costs) too for the admin team, whose requests (channels and people asked
+ * for, customers in the portal, bots, conflicts) are threads of its inbox, their number on Inbox
+ * (a click on the number opens them: the admin team's inbox, on its open requests, `REQUESTS`);
+ * the questions thread agents ask you (src/questions.js) have a number of their own beside it, for
+ * everyone on a team, purple with the agent's bubble as its badge in the inbox is (a click opens
+ * them: the inbox of the first one's team, on its open requests, `questionsHref`);
+ * and Stats, klickhaus' statistics of all threads in a new tab,
  * for whom /api/me gives it (`stats`). Each page
  * opens as it was left in this browser tab: the address of every page is kept (sessionStorage)
  * whenever it changes, so the inbox comes back with its team, filters, open thread and "view
- * as", the editor with its knowledge base and file, and each admin section with what was
- * picked in it. A page may send another elsewhere: the inbox sends Agents and Orgs to the
- * customer on screen, Teams to the team picked, and Stats to either (`stats`). The page you
+ * as", and Teams and Customers with what was picked in them, at its section and the file open
+ * there. A page may send another elsewhere: the inbox sends Customers to the customer on screen,
+ * Teams to the team picked, and Stats to either (`stats`). The page you
  * are on does nothing when clicked; on a phone it opens the menu of the others.
  *
  * The color scheme, in your menu's Appearance: the system's (as the browser prefers), light or
@@ -33,29 +41,35 @@
  */
 window.Header = (() => {
   const PAGES = [
-    { id: 'inbox', label: 'Inbox', href: '/inbox', title: 'Threads with customers, partners and vendors', member: true },
-    { id: 'agents', label: 'Agents', href: '/inbox/kb', title: 'Thread agents: their knowledge bases, channels, MCP servers and instructions', member: true },
-    { id: 'teams', label: 'Teams', href: '/inbox/admin?tab=teams', title: 'Ops teams: their members, channels and rules' },
-    { id: 'orgs', label: 'Orgs', href: '/inbox/admin?tab=orgs', title: 'Customers, partners and vendors', admin: true },
-    { id: 'requests', label: 'Requests', href: '/inbox/admin?tab=requests', title: 'Channels team managers asked for: confirm or decline', admin: true },
-    { id: 'topics', label: 'Topics', href: '/inbox/topics', title: 'What the threads are about: their topics, found from what was said, with the Adobe people, customers and Clef topics on each', admin: true },
-    { id: 'cogs', label: 'COGS', href: '/inbox/cogs', title: 'What the inbox costs at list prices: per service, message, thread, customer and month', admin: true },
+    { id: 'inbox', label: 'Inbox', href: '/inbox', title: 'Threads with customers, partners and vendors', member: true, internal: true },
+    { id: 'teams', label: 'Teams', href: '/inbox/admin?tab=teams', title: 'Ops teams, their people, channels and agents', member: true, internal: true },
+    { id: 'orgs', label: 'Customers', href: '/inbox/admin?tab=orgs', title: 'Customers, partners and vendors', member: true, internal: true },
+    { id: 'topics', label: 'Topics', href: '/inbox/topics', title: 'What the threads are about', member: true, internal: true },
+    { id: 'cogs', label: 'COGS', href: '/inbox/cogs', title: 'What the inbox costs, at list prices', admin: true },
     // On klickhaus, in a new tab: its address comes from /api/me (`stats.url`).
-    { id: 'stats', label: 'Stats', href: null, title: 'Statistics of all threads, every team\'s, in klickhaus (opens in a new tab)', external: true },
+    { id: 'stats', label: 'Stats', href: null, title: 'Statistics of all threads in klickhaus (opens in a new tab)', external: true },
   ];
   const KEY = 'opspile.page.';
+  /** The admin team's open requests: its inbox, filtered to them (ui/inbox.js, the Type card). */
+  const REQUESTS = '/inbox?team=admin&filters=1&f.type=request&f.resolved=open';
+  /** The open requests of team `team`'s inbox: the questions asked of you there. */
+  const questionsHref = (team) => `/inbox?team=${encodeURIComponent(team)}&filters=1&f.type=request&f.resolved=open`;
+  // What waits: the admin team's requests (for its members), and your questions, with the team
+  // of the first one.
+  const counts = { admin: 0, questions: 0, team: null };
+  const BUBBLE = '<svg class="bubble-ico" viewBox="0 0 16 16" aria-hidden="true" fill="currentColor"><path d="M3 2.5h10a1.5 1.5 0 0 1 1.5 1.5v5.5A1.5 1.5 0 0 1 13 11H8l-3.2 2.6V11H3a1.5 1.5 0 0 1-1.5-1.5V4A1.5 1.5 0 0 1 3 2.5z"/></svg>';
   const CHEV = '<svg class="chev" viewBox="0 0 16 16" aria-hidden="true"><path d="M4 6l4 4 4-4" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>';
   const COLORS = ['#c2410c', '#0f766e', '#7c3aed', '#be185d', '#1d4ed8', '#4d7c0f', '#a16207', '#0e7490'];
   const $ = (id) => document.getElementById(id);
   const phone = matchMedia('(max-width: 699px)');
   const opts = {
-    prefer: {}, fallback: {}, go: null, stats: null,
+    prefer: {}, fallback: {}, go: null, open: null, stats: null,
   };
   let shut = 0;
 
   const SCHEME = 'opspile.scheme';
   const SCHEMES = [
-    { id: 'system', label: 'System', title: 'Light or dark, as this device is set' },
+    { id: 'system', label: 'System' },
     { id: 'light', label: 'Light' },
     { id: 'dark', label: 'Dark' },
   ];
@@ -80,16 +94,20 @@ window.Header = (() => {
       b.setAttribute('aria-checked', String(b.dataset.scheme === s));
     }
   }
-  /** Appearance in your menu, before the keyboard's shortcuts and logging out. */
+  /**
+   * Appearance in your menu, before the keyboard's shortcuts and logging out: in the column
+   * they are in, where the menu has columns (the inbox's, on a wide screen).
+   */
   function schemeMenu() {
     const menu = $('menu');
     if (!menu || $('schemes')) return;
     const box = document.createElement('section');
     box.innerHTML = `<h4 id="schemesLabel">Appearance</h4><div id="schemes" role="radiogroup" aria-labelledby="schemesLabel">${
       SCHEMES.map((o) => `<button class="item" role="radio" aria-checked="false" data-scheme="${o.id}"${o.title ? ` title="${o.title}"` : ''}><span class="ck s2-check" aria-hidden="true"></span>${o.label}</button>`).join('')}</div>`;
-    const sections = [...menu.querySelectorAll(':scope > section')];
+    const sections = [...menu.querySelectorAll('section')];
     const before = sections.find((s) => s.querySelector('.keys')) || sections.at(-1);
-    menu.insertBefore(box, before || null);
+    if (before) before.before(box);
+    else menu.append(box);
     box.addEventListener('click', (e) => {
       const b = e.target.closest('[data-scheme]');
       if (!b) return;
@@ -109,12 +127,11 @@ window.Header = (() => {
     try { u = new URL(url, location.origin); } catch { return null; }
     if (u.origin !== location.origin) return null;
     if (u.pathname === '/inbox') return 'inbox';
-    if (u.pathname === '/inbox/kb') return 'agents';
     if (u.pathname === '/inbox/cogs') return 'cogs';
     if (u.pathname === '/inbox/topics') return 'topics';
     if (u.pathname !== '/inbox/admin') return null;
     const tab = u.searchParams.get('tab');
-    return ['orgs', 'requests'].includes(tab) ? tab : 'teams';
+    return tab === 'orgs' ? tab : 'teams';
   }
   /** Keeps an address (the page's own, by default) as where its page was left. */
   function remember(url = location.href) {
@@ -125,8 +142,8 @@ window.Header = (() => {
   }
   const kept = (id) => { try { return sessionStorage.getItem(KEY + id); } catch { return null; } };
   /**
-   * Where a page opens: where the page on screen sends it (`prefer`: the inbox sends Agents and
-   * Orgs to the customer on screen, Teams to its team), else as it was left, else where the
+   * Where a page opens: where the page on screen sends it (`prefer`: the inbox sends Customers
+   * to the customer on screen, Teams to its team), else as it was left, else where the
    * page on screen suggests (`fallback`), else its start.
    */
   function href(id) {
@@ -184,22 +201,30 @@ window.Header = (() => {
     }
   }
 
-  /** The pages you may open, once the page knows who you are (`me` from /api/me). */
-  function init(me, { prefer = {}, fallback = {}, go = null, count = true } = {}) {
+  /**
+   * The pages you may open, once the page knows who you are (`me` from /api/me). `go` opens
+   * another page (`id`, its address) for the page on screen; `open`, an address of the page on
+   * screen, in it (the inbox: the open requests, from the number on Inbox).
+   */
+  function init(me, {
+    prefer = {}, fallback = {}, go = null, open = null, count = true,
+  } = {}) {
     Object.assign(opts.prefer, prefer);
     Object.assign(opts.fallback, fallback);
     opts.go = go;
+    opts.open = open;
     opts.stats = me.stats?.url || null;
     const own = PAGES.filter((p) => !p.external);
     let shown = [];
     if (me.admin) shown = own;
     else if (me.manages?.length) shown = own.filter((p) => !p.admin);
     else if (me.teams?.length) shown = own.filter((p) => p.member);
+    else if (me.staff) shown = own.filter((p) => p.internal);
     if (opts.stats) shown = [...shown, ...PAGES.filter((p) => p.external)];
     const nav = $('pages');
     const item = (p) => (p.external
       ? `<a data-page="${p.id}" href="${href(p.id)}" title="${p.title}" target="_blank" rel="noopener">${p.label}<span class="ext" aria-hidden="true">↗</span></a>`
-      : `<a data-page="${p.id}" href="${p.href}" title="${p.title}">${p.label}${p.id === 'requests' ? '<span class="count" hidden></span>' : ''}</a>`);
+      : `<a data-page="${p.id}" href="${p.href}" title="${p.title}">${p.label}${p.id === 'inbox' && me.admin ? '<span class="count" hidden></span>' : ''}${p.id === 'inbox' && me.teams?.length ? '<span class="count asks" hidden></span>' : ''}</a>`);
     nav.innerHTML = shown.map(item).join('');
     nav.hidden = !shown.length;
     let menu = $('pagemenu');
@@ -212,26 +237,47 @@ window.Header = (() => {
       nav.after(menu);
     }
     menu.innerHTML = shown.map(item).join('');
-    setCount(Number(nav.dataset.count) || 0);
+    setCounts({});
+    if (count && me.questions?.open) setCounts({ questions: me.questions.open, team: me.questions.team });
     if (me.admin && count) {
       fetch('/api/admin/requests?count=1', { credentials: 'same-origin' })
         .then((r) => (r.ok ? r.json() : null))
-        .then((b) => { if (b) setCount(Number(b.open) || 0); })
+        .then((b) => { if (b) setCounts({ admin: Number(b.open) || 0 }); })
         .catch(() => {});
     }
   }
 
-  /** The number of open channel requests, on Requests. */
-  function setCount(n) {
-    $('pages').dataset.count = String(n);
-    for (const el of document.querySelectorAll('[data-page="requests"] .count:not(.total)')) {
-      el.textContent = String(n);
+  const waitText = (n, what, whom, from = '') => `${n} ${what}${n === 1 ? '' : 's'}${from} wait${n === 1 ? 's' : ''} for ${whom}`;
+  /**
+   * The numbers on Inbox: the admin team's requests that wait (`admin`, blue), and the questions
+   * thread agents asked you (`questions`, the first one's `team`, purple), each kept until it is
+   * given again. Both are threads of an inbox; the page you are on, on a phone, shows their sum.
+   */
+  function setCounts(next) {
+    Object.assign(counts, next);
+    $('pages').dataset.count = String(counts.admin + counts.questions);
+    const said = [
+      counts.admin ? waitText(counts.admin, 'request', 'the admin team') : '',
+      counts.questions ? waitText(counts.questions, 'question', 'you') : '',
+    ].filter(Boolean).join(', and ');
+    for (const el of document.querySelectorAll('[data-page="inbox"] .count:not(.total)')) {
+      const asks = el.classList.contains('asks');
+      const n = asks ? counts.questions : counts.admin;
+      if (asks) el.innerHTML = `${BUBBLE}${n}`;
+      else el.textContent = String(n);
       el.hidden = !n;
-      el.closest('a').title = n ? `${n} channel request${n === 1 ? '' : 's'} from team managers to confirm or decline`
-        : PAGES.find((p) => p.id === 'requests').title;
+      el.title = `${asks ? waitText(n, 'question', 'you', ' from thread agents') : waitText(n, 'request', 'the admin team')}`;
+      el.closest('a').title = said ? `${said}, in the inbox` : PAGES.find((p) => p.id === 'inbox').title;
     }
     sync();
   }
+  /** The number of the admin team's requests that wait, on Inbox: they are threads of its inbox. */
+  const setCount = (n) => setCounts({ admin: n });
+  /**
+   * Where a number on Inbox opens: the purple one, the inbox of your questions; the blue one (or
+   * the sum on a phone, when admin requests wait), the admin team's requests.
+   */
+  const countHref = (asks) => ((asks || !counts.admin) && counts.team ? questionsHref(counts.team) : REQUESTS);
 
   /** You, at the right end: your face (picture over initials), your name, `sub` under it; your menu. */
   function user(me, sub = '') {
@@ -277,6 +323,18 @@ window.Header = (() => {
       return;
     }
     const menu = $('pagemenu');
+    // The number on Inbox: the open requests, wherever you are (on a phone, the one on the page
+    // you are on, `.total`, opens the menu, where Inbox has its own).
+    const badge = a.dataset.page === 'inbox' && e.target.closest('.count:not(.total)');
+    if (badge && Number($('pages').dataset.count)) {
+      e.preventDefault();
+      if (menu?.matches(':popover-open')) menu.hidePopover();
+      const to = countHref(Boolean(badge.classList?.contains('asks')));
+      if (pageOf(location.href) === 'inbox' && opts.open) opts.open(to);
+      else if (opts.go) opts.go('inbox', to);
+      else location.assign(to);
+      return;
+    }
     if (a.hasAttribute('aria-current')) {
       e.preventDefault();
       if (a.closest('#pages') && phone.matches && Date.now() - shut > 300) {
@@ -309,6 +367,6 @@ window.Header = (() => {
   sync();
 
   return {
-    init, sync, setCount, user, role, remember, href, pageOf, stats, scheme,
+    init, sync, setCount, setCounts, user, role, remember, href, pageOf, stats, scheme, REQUESTS,
   };
 })();

@@ -1,5 +1,5 @@
 /*
- * Teams, Orgs and Requests (ui/admin.html), in Spectrum 2's look:
+ * Teams, Customers, Bots and Requests (ui/admin.html), in Spectrum 2's look:
  * after the page's own styles and ui/spectrum.css, which this adds to. Only Spectrum 2 tokens
  * (see ui/spectrum.css).
  *
@@ -16,6 +16,7 @@
  * - the pickers (a channel, a member): ComboBox, their list a Popover with Menu items.
  * - the status line: StatusLight, small; an error's text in the negative color, as HelpText.
  * - an org's type: SegmentedControl (ui/spectrum.css); its icon suggestions selectable Cards.
+ * - the sections of a team's or a customer's page: Tabs, quiet and compact, with Badges.
  * - "Pick a team." and the like: IllustratedMessage, without the illustration.
  */
 
@@ -37,7 +38,7 @@ button:disabled { opacity: .45; cursor: default; }
 
 code, .mono { font: var(--spectrum-font-size-75) var(--s2-code); }
 /* The header is every page's (ui/header.css). */
-main { flex: 1; display: grid; grid-template-columns: calc(var(--spectrum-spacing-100) * 40) 1fr; min-height: 0; }
+main { flex: 1; display: grid; grid-template-columns: calc(var(--spectrum-spacing-100) * 34) 1fr; min-height: 0; }
 main > section { overflow: auto; min-height: 0; }
 
 
@@ -59,13 +60,13 @@ label.only { display: flex; align-items: center; }
 .iconpick .host { max-width: 100%; overflow: hidden; text-overflow: ellipsis; }
 .iconpick.weak { opacity: .55; }
 .iconpick[aria-pressed="true"] { border-color: var(--accent); box-shadow: 0 0 0 var(--spectrum-border-width-100) var(--accent) inset; opacity: 1; }
-.icons .again { align-self: center; }
+.icons .again, .icons > .sub { align-self: center; }
 .tag { white-space: nowrap; }
 .tag.partner { color: var(--purple); border-color: var(--purple); }
 
 
 
-.title { display: flex; align-items: center; }
+.title { display: flex; flex: none; align-items: center; }
 .title input.big { flex: 1; }
 .title input.big:hover, .title input.big:focus { border-color: var(--line); background: var(--card); }
 table { width: 100%; border-collapse: collapse; }
@@ -94,6 +95,17 @@ td input { width: 100%; }
 .picks .pickrow .name { white-space: normal; display: flex; flex-direction: column; gap: var(--spectrum-border-width-100); }
 .picks .pickrow .ch { font-weight: 600; }
 .picks .pickrow .where { flex: none; text-align: right; font-size: var(--spectrum-font-size-100); padding-top: var(--spectrum-border-width-100); }
+/* The teams a channel moves to (ui/admin.js, `moveMenu`): a Popover under the channel's name,
+   in the top layer, since the table it is in scrolls sideways and would cut it off. The script
+   places it; its filter stays, the teams scroll under it. */
+.movepop { position: fixed; inset: auto; margin: 0; flex-direction: column; overflow: hidden;
+  width: calc(var(--spectrum-spacing-100) * 36); max-width: calc(100vw - var(--spectrum-spacing-200));
+  max-height: min(calc(var(--spectrum-spacing-100) * 50), calc(100vh - var(--spectrum-spacing-200))); }
+.movepop:popover-open { display: flex; }
+.movepop .opts { flex: 1; min-height: 0; overflow: auto; }
+.movepop .row { gap: var(--spectrum-spacing-100); }
+.movepop .what { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+td button.chan { text-align: start; white-space: normal; }
 mark { padding: 0 var(--spectrum-border-width-100); }
 
 td.nw { white-space: nowrap; }
@@ -113,7 +125,9 @@ tr.left td { opacity: .55; }
 #requestsTable td.note { min-width: calc(var(--spectrum-spacing-1000) + var(--spectrum-spacing-800)); }
 .preview { margin: 0 0 var(--spectrum-spacing-75); }
 .preview ul { margin: calc(var(--spectrum-spacing-50) + var(--spectrum-spacing-75)) 0 0; }
-#membersTable, #rulesTable, #channelsTable, #requestsTable { overflow-x: auto; }
+/* Wide tables scroll sideways in their card, never the page: the box each is drawn into
+   (`…Table`, ui/admin.js). */
+.card > [id$="Table"] { overflow-x: auto; }
 
 /*
  * Narrower screens. Under 1100px the list gets narrower. Under 700px (phones, a folded iPhone
@@ -121,13 +135,36 @@ tr.left td { opacity: .55; }
  * picked team or org has a back button, and tables scroll sideways in their card.
  */
 .title .back { display: none; }
+/* Back from a customer's portal request to the team it was opened from: on every screen. */
+.title .back.shown { display: grid; place-items: center; padding: 0; border: 0; background: none; }
+/* Opening a portal channel: the welcome message, and the teams it is shared with. */
+.portalopen textarea { width: 100%; resize: vertical; }
+.portalopen fieldset { display: flex; flex-wrap: wrap; min-width: 0; margin: 0; padding: 0; border: 0; }
+.portalopen input[type="checkbox"] { min-width: 0; }
+/* Two orgs that may be one (Customers): side by side, one under the other on a phone; in the
+   list, both icons, then both names. The less likely pairs fold away. */
+.pair { display: grid; grid-template-columns: 1fr 1fr; gap: var(--spectrum-spacing-300); }
+.pair .side { min-width: 0; }
+.pair .chans, .asks, .dups { margin: var(--spectrum-spacing-100) 0 0; padding-left: var(--spectrum-spacing-300); }
+@media (max-width: 699px) { .pair { grid-template-columns: 1fr; } }
+/* The review's queues (ui/admin.js, "review"): a pair as a link, its two icons (the second over
+   the first's edge), then its names; a fold's button above the rows it shows. */
+.qpair, .qicons { display: inline-flex; align-items: center; }
+.qfold { margin: 0 0 var(--spectrum-spacing-300); }
+/* Who follows a customer: you, then the teams, each a row with its Follow toggle; a channel's
+   teams on a customer's page, one per line. */
+ul.teams { margin: 0; padding: 0; list-style: none; }
+/* An unassigned channel's orgs: the suggested ones, then the popover; a new org's type in it. */
+td.picks-cell { white-space: normal; }
+.movepop .newtype { display: flex; align-items: center; gap: var(--spectrum-spacing-100); }
+.movepop .newtype[hidden] { display: none; }
 /* A text field under 16px makes iOS zoom in on it when it is focused: the large scale's body
    size (17px), on a touch screen. */
 @media (hover: none) and (pointer: coarse) {
   input:is([type="checkbox"], [type="radio"]) { font-size: var(--spectrum-font-size-100); }
 }
 @media (max-width: 1099px) {
-  main { grid-template-columns: minmax(calc(var(--spectrum-spacing-100) * 30), 34%) minmax(0, 1fr); }
+  main { grid-template-columns: minmax(calc(var(--spectrum-spacing-100) * 30), 30%) minmax(0, 1fr); }
 
 }
 @media (max-width: 699px) {
@@ -166,22 +203,33 @@ body main.instant :is(#list, #detail) { transition: none; }
 /* The parts the script writes: the title's heading, a row of a field and its button, a hint
    leading a card, a list's empty note, the new team's slug and a rule's priority. */
 .title h1 { margin: 0; }
+/* The sections of a team's or a customer's page (ui/admin.js, "sections"): tabs under its title,
+   in one line that scrolls sideways where it is too long. Never shorter than the tabs, where the
+   section fills the page's height (a knowledge base): it would scroll them up and down too. */
+.sections { display: flex; flex: none; align-items: stretch; overflow-x: auto; scrollbar-width: none; }
+.sections a { display: inline-flex; flex: none; align-items: center; text-decoration: none; white-space: nowrap; }
 .fill { flex: 1; }
 .inline { display: flex; gap: var(--spectrum-spacing-100); align-items: center; }
 .hint.lead { margin: 0 0 var(--spectrum-spacing-100); }
 .empty.pad { padding: var(--spectrum-spacing-100); }
-#ntSlug { width: calc(var(--spectrum-spacing-100) * 13 + var(--spectrum-spacing-75) + var(--spectrum-spacing-50)); }
 #rPriority { width: var(--spectrum-spacing-900); }
+/* The team wizard (ui/admin.js, `showGroup`): a checkbox per person, and the two ways to make
+   the team, one under the other. */
+#gPeople td:first-child { width: var(--spectrum-spacing-400); }
+#gPeople td input[type="checkbox"] { width: auto; }
+.wizteam .inline { margin: var(--spectrum-spacing-200) 0 var(--spectrum-spacing-100); }
+.wizteam .form { margin-left: var(--spectrum-spacing-400); }
 
 /* ==== Its look ================================================================================= */
 
 /* ---- the frame --------------------------------------------------------------------------- */
 
-/* Spectrum 2's app frame (ui/spectrum.css): the list navigates, on the frame's layer; what is
-   picked in it is the content area, one container on the base. Its content keeps to a width a
-   table still reads at, however wide the window is. */
+/* Spectrum 2's app frame (ui/spectrum.css): the list navigates, on the frame's layer (the
+   sidebar, ui/sidenav.js, its footer at the bottom); what is picked in it is the content area,
+   one container on the base. Its content keeps to a width a table still reads at, however wide
+   the window is. */
 .spectrum #list {
-  padding: var(--spectrum-spacing-100) var(--frame-gap) var(--frame-gap) var(--spectrum-spacing-300);
+  padding: var(--spectrum-spacing-100) var(--frame-gap) 0px var(--spectrum-spacing-300);
   background: transparent;
   border-right: 0;
 }
@@ -202,8 +250,8 @@ body main.instant :is(#list, #detail) { transition: none; }
 .spectrum code, .spectrum .mono { font-size: var(--spectrum-code-size-xs); }
 .spectrum .hint code { color: var(--spectrum-neutral-content-color-default); }
 
-/* Headings: in a card, a Heading (bold, the heading color, as written: "Members"); in the list,
-   SideNav's section header (small, medium weight, subdued). */
+/* Headings: in a card, a Heading (bold, the heading color, as written: "Members"); the list's
+   are the sidebar's (ui/spectrum.css). */
 .spectrum h2 {
   margin: var(--spectrum-spacing-400) 0 var(--spectrum-spacing-200);
   color: var(--spectrum-heading-color);
@@ -214,13 +262,6 @@ body main.instant :is(#list, #detail) { transition: none; }
   text-transform: none;
 }
 .spectrum h2:first-child { margin-top: 0; }
-.spectrum #list h2 {
-  margin: var(--spectrum-side-navigation-item-to-header) 0 var(--spectrum-side-navigation-header-to-item);
-  padding: 0 var(--spectrum-component-edge-to-text-100);
-  color: var(--spectrum-neutral-subdued-content-color-default);
-  font-size: var(--spectrum-font-size-75);
-  font-weight: var(--spectrum-medium-font-weight);
-}
 
 /* Fields and buttons at Spectrum 2's medium size: as tall as a control, the text inset as
    TextField and ActionButton have it. */
@@ -240,13 +281,10 @@ body main.instant :is(#list, #detail) { transition: none; }
 .spectrum .form > .what { flex-basis: 100%; }
 .spectrum .form .fld > :is(input, select) { min-width: 0; }
 .spectrum #ruleForm .fld:has(#rPriority) { width: calc(var(--spectrum-spacing-1000) + var(--spectrum-spacing-100)); }
-.spectrum #list .form .fld { flex: 1 1 0px; }
 .spectrum #ruleForm .fld.grow { flex: 2 1 calc(var(--spectrum-spacing-1000) * 2); }
 
-/* ---- the list: SearchField and ListView ------------------------------------------------- */
+/* ---- ListView: the rows of the pickers and the popovers ---------------------------------- */
 
-/* SearchField: a field as round as its height. */
-.spectrum #list .s2-search { margin-bottom: var(--spectrum-spacing-100); }
 .spectrum .row {
   gap: var(--spectrum-text-to-visual-300);
   min-height: var(--s2-ctl);
@@ -255,7 +293,6 @@ body main.instant :is(#list, #detail) { transition: none; }
   color: var(--spectrum-neutral-content-color-default);
   transition: background-color var(--s2-ease);
 }
-.spectrum #list .row + .row { margin-top: var(--spectrum-spacing-50); }
 .spectrum .row:hover { background: rgb(var(--spectrum-gray-900-rgb), var(--spectrum-table-row-hover-opacity)); }
 /* The one picked: ListView's highlight, the accent faintly, darker under the pointer. */
 .spectrum .row.on { background: rgb(var(--spectrum-blue-900-rgb), var(--spectrum-table-selected-row-background-opacity)); }
@@ -264,6 +301,9 @@ body main.instant :is(#list, #detail) { transition: none; }
 /* An org's icon: a thumbnail, rounded as a nested object is. */
 .spectrum .ico { width: var(--spectrum-workflow-icon-size-75); height: var(--spectrum-workflow-icon-size-75); border-radius: var(--spectrum-corner-radius-75); }
 .spectrum .ico.none { background: var(--spectrum-gray-200); }
+.spectrum .qpair { gap: var(--spectrum-text-to-visual-100); }
+.spectrum .qpair .ico + .ico { margin-inline-start: calc(-1 * var(--spectrum-spacing-75)); box-shadow: 0 0 0 var(--spectrum-border-width-200) var(--content); }
+.spectrum .qpair .sep { color: var(--spectrum-neutral-subdued-content-color-default); }
 /* Checkbox, small, with its label. */
 .spectrum label.only {
   gap: var(--spectrum-text-to-visual-75);
@@ -271,12 +311,16 @@ body main.instant :is(#list, #detail) { transition: none; }
   color: var(--spectrum-neutral-content-color-default);
   font-size: var(--spectrum-font-size-75);
 }
-.spectrum #list .form input { min-width: 0; }
-.spectrum #list > .hint { padding: 0 var(--spectrum-component-edge-to-text-100); }
+/* A new team or org (the admin team's): its form in the add button's Popover, a field a line. */
+.spectrum .newpop .form { margin-top: 0; padding: 0 var(--spectrum-component-edge-to-text-100); }
+.spectrum .newpop .form .fld { flex: 1 1 100%; }
+.spectrum .newpop .form input { min-width: 0; }
+.spectrum .newpop .form > .what { margin: 0; padding: 0; }
+.spectrum .newpop .status:empty { display: none; }
 
 /* ---- the detail: title, cards ------------------------------------------------------------ */
 
-.spectrum .title { gap: var(--spectrum-spacing-200); margin-bottom: var(--spectrum-spacing-400); }
+.spectrum .title { gap: var(--spectrum-spacing-200); min-height: var(--spectrum-component-height-200); margin-bottom: var(--spectrum-spacing-400); }
 .spectrum .title h1 {
   color: var(--spectrum-heading-color);
   font-size: var(--spectrum-heading-size-m);
@@ -301,6 +345,32 @@ body main.instant :is(#list, #detail) { transition: none; }
 .spectrum .title a { font-weight: var(--spectrum-medium-font-weight); text-decoration: none; border-radius: var(--spectrum-corner-radius-75); }
 .spectrum .title a:hover { text-decoration: underline; }
 .spectrum .title .ico { width: var(--spectrum-workflow-icon-size-100); height: var(--spectrum-workflow-icon-size-100); }
+
+/* Tabs, quiet, compact, size M: the sections of a team's or a customer's page. A divider under
+   them all; the open one's label in the content color with the selection indicator under it,
+   the others subdued, the content color under the pointer; the agent's counts beside the
+   labels as Badges, size S (positive where something is on, outlined where nothing is). */
+.spectrum .sections {
+  gap: var(--spectrum-tab-item-to-tab-item-horizontal-medium);
+  margin: calc(-1 * var(--spectrum-spacing-200)) 0 var(--spectrum-spacing-400);
+  box-shadow: inset 0 calc(-1 * var(--spectrum-border-width-200)) 0 var(--spectrum-gray-200);
+}
+.spectrum .sections a {
+  gap: var(--spectrum-text-to-visual-100);
+  min-height: var(--spectrum-tab-item-compact-height-medium);
+  color: var(--spectrum-neutral-subdued-content-color-default);
+  font-size: var(--spectrum-font-size-100);
+  font-weight: var(--spectrum-medium-font-weight);
+  border-bottom: var(--spectrum-border-width-200) solid transparent;
+  transition: color var(--s2-ease), border-color var(--s2-ease);
+}
+.spectrum .sections a:hover { color: var(--spectrum-neutral-content-color-hover); }
+.spectrum .sections a[aria-current] { color: var(--spectrum-neutral-content-color-default); border-bottom-color: var(--spectrum-neutral-content-color-default); }
+.spectrum .sections a:focus-visible { outline: var(--s2-focus); outline-offset: calc(-1 * var(--spectrum-focus-indicator-gap)); border-radius: var(--s2-radius); }
+.spectrum .sections .tag { font-weight: var(--spectrum-regular-font-weight); }
+.spectrum .sections .tag + .tag { margin-inline-start: calc(-1 * var(--spectrum-spacing-50)); }
+.spectrum .sections .tag.agent { background: var(--spectrum-positive-subtle-background-color-default); }
+.spectrum .sections .tag.missing { background: transparent; box-shadow: inset 0 0 0 var(--spectrum-border-width-100) var(--spectrum-neutral-visual-color); }
 
 /* A section of the content area: its title, then what it holds, set apart from the next by
    space alone (the widest gap on the page), with no card around it. */
@@ -342,6 +412,21 @@ body main.instant :is(#list, #detail) { transition: none; }
 .spectrum #detail :is(th, td):last-child { padding-inline-end: 0; }
 .spectrum #detail td:last-child:has(> button.link) { text-align: end; white-space: nowrap; }
 .spectrum #detail td:last-child > button.link:last-child { margin-inline-end: calc(-1 * var(--spectrum-component-edge-to-text-75)); }
+/* The box a table scrolls sideways in reaches out as far as that button does, so that the button
+   alone scrolls nothing. */
+.spectrum #detail :is(.card > [id$="Table"], #suggestTable) {
+  margin-inline-end: calc(-1 * var(--spectrum-component-edge-to-text-75));
+  padding-inline-end: var(--spectrum-component-edge-to-text-75);
+}
+@media (max-width: 699px) {
+  .spectrum #detail .card > table {
+    margin-inline-end: calc(-1 * var(--spectrum-component-edge-to-text-75));
+    padding-inline-end: var(--spectrum-component-edge-to-text-75);
+  }
+}
+/* A rule's pattern breaks anywhere rather than widen its table past its card: a regular
+   expression has no spaces to break at. */
+.spectrum td code { overflow-wrap: anywhere; }
 .spectrum td div.sub { display: block; margin-top: var(--spectrum-spacing-50); }
 .spectrum .person .sub { margin: 0; }
 .spectrum tr:last-child td { border-bottom: 0; }
@@ -397,7 +482,7 @@ body main.instant :is(#list, #detail) { transition: none; }
 .spectrum .tag.vendor { color: var(--spectrum-neutral-content-color-default); background: var(--spectrum-yellow-subtle-background-color-default); }
 /* A request's status, and Clef's verdict when it is this team's. */
 .spectrum .tag.open { color: var(--spectrum-neutral-content-color-default); background: var(--spectrum-notice-subtle-background-color-default); }
-.spectrum .tag.confirmed, .spectrum .tag.clef.yes { color: var(--spectrum-neutral-content-color-default); background: var(--spectrum-positive-subtle-background-color-default); }
+.spectrum .tag.confirmed, .spectrum .tag.merged, .spectrum .tag.clef.yes { color: var(--spectrum-neutral-content-color-default); background: var(--spectrum-positive-subtle-background-color-default); }
 .spectrum .tag.declined { color: var(--spectrum-neutral-content-color-default); background: var(--spectrum-negative-subtle-background-color-default); }
 .spectrum .tag.clef { color: var(--spectrum-neutral-content-color-default); }
 
@@ -426,7 +511,15 @@ body main.instant :is(#list, #detail) { transition: none; }
 .spectrum .status.warn::before { background: var(--spectrum-notice-visual-color); }
 .spectrum .status.err { color: var(--spectrum-negative-content-color-default); }
 .spectrum .status.err::before { background: var(--spectrum-negative-visual-color); }
-.spectrum #list .status { margin: var(--spectrum-spacing-100) var(--spectrum-component-edge-to-text-100) 0; }
+/* A section's status sits in the gap under its tabs: every section's content starts where the
+   others' does, whether it has a status line or not. */
+.spectrum .sections + .status {
+  align-items: center;
+  min-height: var(--spectrum-spacing-400);
+  margin: calc(-1 * var(--spectrum-spacing-400)) 0 0;
+}
+.spectrum .sections + .status::before { translate: none; }
+.spectrum .newpop .status { margin: 0 var(--spectrum-component-edge-to-text-100); }
 .spectrum .preview .status { display: inline-flex; margin: 0; }
 .spectrum .preview ul { margin-top: var(--spectrum-spacing-100); padding-left: var(--spectrum-spacing-400); }
 
@@ -454,6 +547,32 @@ body main.instant :is(#list, #detail) { transition: none; }
 .spectrum .picks .pickrow .where { font-size: var(--spectrum-font-size-75); line-height: var(--spectrum-line-height-200); }
 .spectrum .picks .empty { color: var(--spectrum-neutral-subdued-content-color-default); }
 
+/* The teams a channel moves to: the same Popover, with a SearchField over its Menu items. */
+.spectrum .movepop {
+  gap: var(--spectrum-spacing-100);
+  padding: var(--spectrum-spacing-100);
+  color: var(--spectrum-neutral-content-color-default);
+  background: var(--spectrum-background-layer-2-color);
+  border: var(--spectrum-border-width-100) solid var(--spectrum-gray-200);
+  border-radius: var(--spectrum-corner-radius-large-default);
+  box-shadow: var(--s2-elevated);
+}
+.spectrum .movepop .what { margin: 0; padding: 0 var(--spectrum-component-edge-to-text-100); font-size: var(--spectrum-font-size-75); }
+.spectrum .movepop .hint { margin: 0; padding: 0 var(--spectrum-component-edge-to-text-100); }
+.spectrum .movepop .row {
+  padding: var(--spectrum-component-top-to-text-100) var(--spectrum-component-edge-to-text-100);
+  border-radius: var(--spectrum-corner-radius-100);
+}
+.spectrum .movepop .row:hover, .spectrum .movepop .row.on { background: var(--s2-down); }
+.spectrum .movepop .empty { color: var(--spectrum-neutral-subdued-content-color-default); }
+/* A channel's name that opens it: its text, a Link when the pointer is on it. */
+.spectrum td button.link.chan {
+  min-height: 0; margin: 0; padding: 0;
+  color: inherit; font: inherit; background: none;
+  border-radius: var(--spectrum-corner-radius-75);
+}
+.spectrum td button.link.chan:hover:not(:disabled) { color: var(--spectrum-accent-content-color-hover); background: none; text-decoration: underline; }
+
 /* ---- an org: icon suggestions ------------------------------------------------------------ */
 
 /* Selectable Cards: gray at rest, an accent outline and a faint accent fill when picked. */
@@ -467,7 +586,9 @@ body main.instant :is(#list, #detail) { transition: none; }
   border-radius: var(--spectrum-corner-radius-large-default);
 }
 .spectrum .iconpick:hover:not(:disabled) { color: var(--spectrum-neutral-content-color-hover); background: var(--spectrum-gray-200); }
-.spectrum .iconpick img { width: var(--spectrum-component-height-100); height: var(--spectrum-component-height-100); border-radius: var(--spectrum-corner-radius-75); }
+.spectrum .iconpick :is(img, .ph) { width: var(--spectrum-component-height-100); height: var(--spectrum-component-height-100); border-radius: var(--spectrum-corner-radius-75); }
+/* The unseen suggestion (ICON_GHOST in ui/admin.js) holds the row's height and takes no width. */
+.spectrum .iconpick.ghost { visibility: hidden; width: 0px; margin-inline-start: calc(-1 * var(--spectrum-spacing-100)); padding-inline: 0px; border-inline-width: 0px; overflow: hidden; }
 .spectrum .iconpick .host { font-size: var(--spectrum-font-size-75); }
 .spectrum .iconpick[aria-pressed="true"], .spectrum .iconpick[aria-pressed="true"]:hover:not(:disabled) {
   color: var(--spectrum-neutral-content-color-default);
@@ -495,6 +616,15 @@ body main.instant :is(#list, #detail) { transition: none; }
 }
 .spectrum #detail > .empty.pick { padding: var(--spectrum-spacing-400); }
 
+.spectrum .title .back.shown { width: var(--s2-ctl); height: var(--s2-ctl); }
+.spectrum .title .back.shown svg { width: var(--spectrum-workflow-icon-size-100); height: var(--spectrum-workflow-icon-size-100); }
+.spectrum .title h1 .sub { font-weight: var(--spectrum-regular-font-weight); }
+.spectrum .tag.opened { color: var(--spectrum-neutral-content-color-default); background: var(--spectrum-positive-subtle-background-color-default); }
+.spectrum .portalopen textarea { padding: var(--spectrum-component-top-to-text-100) var(--spectrum-component-edge-to-text-100); line-height: var(--spectrum-line-height-200); }
+.spectrum .portalopen fieldset { gap: var(--spectrum-spacing-75) var(--spectrum-spacing-200); }
+.spectrum .portalopen legend { margin-bottom: var(--spectrum-spacing-75); padding: 0; color: var(--spectrum-neutral-subdued-content-color-default); font-size: var(--spectrum-font-size-75); }
+.spectrum .portalopen label.only { margin: 0; }
+
 /* The phone's back button: a quiet icon-only ActionButton. */
 .spectrum .title .back { color: var(--spectrum-neutral-content-color-default); border-radius: var(--s2-radius); }
 .spectrum .title .back:hover { background: var(--spectrum-gray-100); }
@@ -519,7 +649,7 @@ body main.instant :is(#list, #detail) { transition: none; }
 
 /* On a phone the content area is the page, under the header, its top corners rounded. */
 @media (max-width: 699px) {
-  .spectrum #list { padding: var(--spectrum-spacing-100) var(--spectrum-spacing-200) var(--spectrum-spacing-400); }
+  .spectrum #list { padding: var(--spectrum-spacing-100) var(--spectrum-spacing-200) 0px; }
   .spectrum #detail { margin: 0; border-radius: var(--content-radius) var(--content-radius) 0px 0px; box-shadow: none; }
 }
 
@@ -531,3 +661,16 @@ body main.instant :is(#list, #detail) { transition: none; }
 .spectrum dialog.confirm .apply { display: flex; justify-content: flex-end; gap: var(--spectrum-spacing-200); margin-top: var(--spectrum-spacing-500); }
 .spectrum dialog.confirm .apply button:not(.danger) { min-height: var(--s2-ctl); padding: 0 calc(var(--spectrum-component-pill-edge-to-text-100) - var(--spectrum-border-width-200)); border: var(--spectrum-border-width-200) solid var(--spectrum-gray-300); border-radius: var(--s2-pill); background: transparent; font-weight: var(--spectrum-bold-font-weight); }
 .spectrum dialog.confirm .apply button:not(.danger):hover { background: var(--spectrum-gray-100); border-color: var(--spectrum-gray-400); }
+
+/* Two orgs that may be one: each a quiet panel, the one a merge keeps in the accent's tint. */
+.spectrum .pair .side { padding: var(--spectrum-spacing-200); border-radius: var(--spectrum-corner-radius-large-default); }
+.spectrum .pair .side.kept { background: var(--spectrum-accent-subtle-background-color-default); }
+.spectrum .pair .field { margin-top: var(--spectrum-spacing-200); }
+.spectrum .pair .side a { color: inherit; }
+.spectrum .asks li + li, .spectrum .dups li + li { margin-top: var(--spectrum-spacing-100); }
+.spectrum .movepop .newtype { padding: 0 var(--spectrum-component-edge-to-text-100); }
+.spectrum td.picks-cell .link + .link { margin-inline-start: var(--spectrum-spacing-100); }
+/* Following a customer: your Follow and Mute (ui/follow.js), then the teams that follow it. */
+.spectrum #orgFollows .fo-at { margin-bottom: var(--spectrum-spacing-100); }
+.spectrum ul.teams li + li { margin-top: var(--spectrum-spacing-50); }
+.spectrum ul.teams .link { margin-inline-start: var(--spectrum-spacing-100); }

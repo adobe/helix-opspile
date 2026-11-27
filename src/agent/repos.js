@@ -63,22 +63,35 @@ export async function listedRepos(env, { team, org }) {
 
 /**
  * The other ops teams' knowledge bases, the channel's own `shares` first (src/shares.js): the
- * teams `channelId` is shared with, which follow its threads and whose knowledge base its agent
- * writes too, then every other team, whose knowledge base it only reads. Only knowledge bases
- * that exist (`knowledge_bases`); `team` itself is `kb-team`.
+ * teams `channelId` is shared with and the teams that follow a technology the thread shows
+ * (`follows`, src/follows.js), which have its threads in their inboxes and whose knowledge base
+ * its agent writes too, then every other team, whose knowledge base it only reads. Only
+ * knowledge bases that exist (`knowledge_bases`); `team` itself is `kb-team`. `via` says why a
+ * team's is shared: `share` (the channel) or `follow` (the thread).
  */
-async function otherTeamKbs(env, { team, source, channelId }) {
+async function otherTeamKbs(env, {
+  team, source, channelId, follows = [], owners = [],
+}) {
   if (!env.DB) {
     return [];
   }
-  const { results } = await env.DB.prepare(`SELECT t.slug, t.name, c.team IS NOT NULL AS shared
+  const { results } = await env.DB.prepare(`SELECT t.slug, t.name,
+      CASE WHEN c.team IS NOT NULL THEN 'share'
+        WHEN t.slug IN (SELECT value FROM json_each(?)) THEN 'follow' END AS via
     FROM teams t JOIN knowledge_bases k ON k.kind = 'team' AND k.slug = t.slug
     LEFT JOIN channel_teams c ON c.team = t.slug AND c.source = ? AND c.channel_id = ?
     WHERE t.slug != ?
-    ORDER BY shared DESC, t.slug`).bind(source || '', String(channelId || ''), team || '').all();
-  return (results || []).filter((r) => repoName('team', r.slug)).map((r) => ({
-    slug: r.slug, name: r.name || r.slug, shared: Boolean(r.shared),
+    ORDER BY via IS NULL, via DESC, t.slug`)
+    .bind(JSON.stringify(follows || []), source || '', String(channelId || ''), team || '').all();
+  const own = new Set(owners || []);
+  const out = (results || []).filter((r) => repoName('team', r.slug)).map((r) => ({
+    slug: r.slug,
+    name: r.name || r.slug,
+    shared: Boolean(r.via),
+    // A customer's own agent (`kb::<org>`) reads the teams that own it first: read only.
+    via: r.via || (own.has(r.slug) ? 'owner' : null),
   }));
+  return [...out.filter((r) => r.via === 'owner'), ...out.filter((r) => r.via !== 'owner')];
 }
 
 /**
@@ -88,7 +101,7 @@ async function otherTeamKbs(env, { team, source, channelId }) {
  * with (`scope` `own` or `shared`); the other teams' it only reads (`scope` `other`).
  */
 export async function accessibleRepos(env, {
-  team, org, source, channelId,
+  team, org, source, channelId, follows, owners,
 }) {
   const repos = [];
   const teamKb = repoName('team', team);
@@ -103,7 +116,9 @@ export async function accessibleRepos(env, {
       id: 'kb-org', artifact: orgKb, writable: true, kind: 'kb', scope: 'own', what: `knowledge base of the customer ${org}`,
     });
   }
-  for (const t of await otherTeamKbs(env, { team, source, channelId })) {
+  for (const t of await otherTeamKbs(env, {
+    team, source, channelId, follows, owners,
+  })) {
     const artifact = repoName('team', t.slug);
     repos.push({
       id: artifact,
@@ -112,9 +127,12 @@ export async function accessibleRepos(env, {
       writable: t.shared,
       kind: 'kb',
       scope: t.shared ? 'shared' : 'other',
-      what: t.shared
-        ? `knowledge base of the ops team ${t.slug} (${t.name}), which your channel is shared with`
-        : `knowledge base of the ops team ${t.slug} (${t.name})`,
+      what: {
+        share: `knowledge base of the ops team ${t.slug} (${t.name}), which your channel is shared with`,
+        follow: `knowledge base of the ops team ${t.slug} (${t.name}), which follows a technology your thread shows`,
+        owner: `knowledge base of the ops team ${t.slug} (${t.name}), which works with this customer`,
+      }[t.via] || `knowledge base of the ops team ${t.slug} (${t.name})`,
+      via: t.via,
     });
   }
   for (const r of await listedRepos(env, { team, org })) {
@@ -218,6 +236,33 @@ export async function listFiles(env, artifact, path, { recursive = false } = {})
 }
 
 /**
+ * Calls `visit(path, entry)` for every file of the tree `root`, walking every directory,
+ * `COUNT_READS` at a time, so that nothing is cut short as a listing is.
+ */
+async function everyFile(repo, root, visit) {
+  const queue = [{ hash: root, prefix: '' }];
+  while (queue.length) {
+    const batch = queue.splice(0, COUNT_READS);
+    // eslint-disable-next-line no-await-in-loop
+    const trees = await Promise.all(batch.map((d) => repo.readTree(d.hash)));
+    for (let i = 0; i < batch.length; i += 1) {
+      const { hash, prefix } = batch[i];
+      if (!trees[i]) {
+        throw new Error(`missing tree ${hash}`);
+      }
+      for (const c of trees[i]) {
+        const path = prefix ? `${prefix}/${c.name}` : c.name;
+        if (c.type === 'tree') {
+          queue.push({ hash: c.hash, prefix: path });
+        } else {
+          visit(path, c);
+        }
+      }
+    }
+  }
+}
+
+/**
  * How many files of the whole tree `keep(path)` accepts. Unlike `listFiles` this walks every
  * directory, `COUNT_READS` at a time, and keeps no listing, so the count is never cut short.
  */
@@ -228,27 +273,32 @@ export async function countFiles(env, artifact, keep = () => true) {
       return { count: 0, empty: true };
     }
     let count = 0;
-    const queue = [{ hash: head.treeHash, prefix: '' }];
-    while (queue.length) {
-      const batch = queue.splice(0, COUNT_READS);
-      // eslint-disable-next-line no-await-in-loop
-      const trees = await Promise.all(batch.map((d) => repo.readTree(d.hash)));
-      for (let i = 0; i < batch.length; i += 1) {
-        const { hash, prefix } = batch[i];
-        if (!trees[i]) {
-          throw new Error(`missing tree ${hash}`);
-        }
-        for (const c of trees[i]) {
-          const path = prefix ? `${prefix}/${c.name}` : c.name;
-          if (c.type === 'tree') {
-            queue.push({ hash: c.hash, prefix: path });
-          } else if (keep(path)) {
-            count += 1;
-          }
-        }
+    await everyFile(repo, head.treeHash, (path) => {
+      if (keep(path)) {
+        count += 1;
       }
-    }
+    });
     return { commit: head.hash, count };
+  });
+}
+
+/**
+ * The files of the whole tree that `keep(path)` accepts, `{ commit, files: [{ path, hash }] }`,
+ * never cut short (as `countFiles` walks it); `{ files: [], empty: true }` with no commit yet.
+ */
+export async function treeFiles(env, artifact, keep = () => true) {
+  return withRepo(env, artifact, async (repo) => {
+    const head = await headOf(repo);
+    if (!head) {
+      return { files: [], empty: true };
+    }
+    const files = [];
+    await everyFile(repo, head.treeHash, (path, c) => {
+      if (keep(path)) {
+        files.push({ path, hash: c.hash });
+      }
+    });
+    return { commit: head.hash, files };
   });
 }
 

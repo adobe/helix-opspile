@@ -1,7 +1,7 @@
 name: Computer on stage
 
 # Deploys an agent's computer by itself (scripts/dev-computer/worker.mjs, the real ThreadAgent
-# with its shells, without a model, an inbox or D1) to Cloudflare as
+# with its kernel, without a model, an inbox or D1) to Cloudflare as
 # helix-opspile-computer-stage, puts the images of scripts/computer-images.mjs into its bucket,
 # and runs their programs there (scripts/dev-computer/check.mjs): where local workerd does not
 # hold them to Dynamic Workers' limits (128 MB of memory, module sizes, 10 at once). On a push
@@ -11,10 +11,17 @@ name: Computer on stage
 # The Worker is a shell on the internet: it answers only requests with the secret
 # COMPUTER_TOKEN, which each run makes, masks and keeps nowhere, and replaces with one nobody
 # knows when it ends. Its address names the account, so the logs and the summary leave it out.
+#
+# git's checks clone from github.com, which limits anonymous clones from Cloudflare's shared
+# addresses (429). So the run hands the Worker its own GITHUB_TOKEN (contents: read, which
+# GitHub revokes when the job ends) as the secret GITHUB_TOKEN, and the computer's gateway puts
+# it into git's requests to github.com only, as it does a team's secrets: no program sees it
+# (scripts/dev-computer/worker.mjs, `devSecrets`). The run deletes it again when it ends.
 
 on:
   push:
-    branches-ignore: [main]
+    # The merge queue's branches hold what a pull request's branch had already.
+    branches-ignore: [main, 'gh-readonly-queue/**']
     # What the computer is made of: this workflow, the packages (the kernel, the images'
     # programs), the images and the checks, and every file of src/ that the Worker imports.
     # test/computer-stage-paths.test.js keeps the list to the imports, both ways.
@@ -26,17 +33,28 @@ on:
       - 'scripts/dev-computer/**'
       - 'src/agent/**'
       - '!src/agent/stub.js'
+      - 'src/accountlinks.js'
       - 'src/accounts.js'
+      - 'src/agentlabels.js'
+      - 'src/alertbots.js'
+      - 'src/areas.js'
       - 'src/attach.js'
       - 'src/bashrequests.js'
+      - 'src/catalog.js'
+      - 'src/channelrefs.js'
       - 'src/channels.js'
       - 'src/channelurl.js'
       - 'src/clickhouse.js'
       - 'src/cogs/meter.js'
       - 'src/cogs/prices.js'
+      - 'src/d1batch.js'
+      - 'src/d1session.js'
       - 'src/deadjobs.js'
+      - 'src/diagrams.js'
       - 'src/discord.js'
+      - 'src/dot.js'
       - 'src/draftevents.js'
+      - 'src/draftfiles.js'
       - 'src/drafts.js'
       - 'src/emoji.js'
       - 'src/emojinames.js'
@@ -47,47 +65,85 @@ on:
       - 'src/extract.js'
       - 'src/favicons.js'
       - 'src/filecache.js'
+      - 'src/follows.js'
       - 'src/fulltext.js'
       - 'src/github.js'
       - 'src/graph.js'
       - 'src/har.js'
       - 'src/http.js'
       - 'src/ico.js'
+      - 'src/isolatecache.js'
       - 'src/invite.js'
       - 'src/kb.js'
+      - 'src/kbaccess.js'
+      - 'src/kbchat.js'
+      - 'src/kbindex.js'
       - 'src/label.js'
       - 'src/like.js'
+      - 'src/listactivity.js'
       - 'src/lookup.js'
       - 'src/markdown.js'
       - 'src/mdast.js'
+      - 'src/mdpick.js'
+      - 'src/memberrequests.js'
       - 'src/mention-match.js'
+      - 'src/mention-model.js'
+      - 'src/mentionmodels.js'
       - 'src/messagelinks.js'
+      - 'src/normalize.js'
       - 'src/notify.js'
+      - 'src/orgmerge.js'
+      - 'src/orgpartners.js'
+      - 'src/orgstacks.js'
+      - 'src/partnerrequests.js'
+      - 'src/partners.js'
+      - 'src/personsql.js'
       - 'src/platforms.js'
+      - 'src/portal/ids.js'
+      - 'src/portalsource.js'
       - 'src/post.js'
       - 'src/products.js'
       - 'src/profiles.js'
+      - 'src/questions.js'
       - 'src/raw.js'
       - 'src/refile.js'
+      - 'src/requestkeys.js'
+      - 'src/requests.js'
       - 'src/resolve.js'
+      - 'src/response-model.js'
       - 'src/rethread.js'
-      - 'src/review.js'
+      - 'src/roles.js'
       - 'src/rules.js'
+      - 'src/search.js'
+      - 'src/scripttools.js'
       - 'src/shares.js'
       - 'src/shortcodes.js'
       - 'src/sidebar.js'
       - 'src/slackurl.js'
       - 'src/sources.js'
       - 'src/stack.js'
+      - 'src/standing.js'
+      - 'src/stacktech.js'
       - 'src/suggest.js'
+      - 'src/teamprofile.js'
       - 'src/teamsbot.js'
       - 'src/teamsfiles.js'
+      - 'src/techid.js'
       - 'src/threadfiles.js'
+      - 'src/threadlinks.js'
       - 'src/threads.js'
+      - 'src/toolrequests.js'
       - 'src/topicindex.js'
+      - 'src/translate.js'
+      - 'src/trends.js'
       - 'src/ui-markdown.js'
       - 'src/vectors.js'
+      - 'src/vendors.js'
   workflow_dispatch:
+    inputs:
+      measure:
+        description: "The image caches to measure: default, or MiB in all/of one file (48/24), comma-separated"
+        default: default
 
 permissions:
   contents: read
@@ -131,9 +187,12 @@ jobs:
 
       - name: Deploy
         id: deploy
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
         run: |
           umask 077
-          printf '{"COMPUTER_TOKEN":"%s"}' "$COMPUTER_TOKEN" > "$RUNNER_TEMP/secrets.json"
+          printf '{"COMPUTER_TOKEN":"%s","GITHUB_TOKEN":"%s"}' "$COMPUTER_TOKEN" "$GITHUB_TOKEN" \
+            > "$RUNNER_TEMP/secrets.json"
           status=0
           npx wrangler deploy -c "$CONFIG" --env stage --secrets-file "$RUNNER_TEMP/secrets.json" \
             > "$RUNNER_TEMP/deploy.log" 2>&1 || status=$?
@@ -151,9 +210,21 @@ jobs:
           URL: ${{ steps.deploy.outputs.url }}
         run: npm run computer:check -- --images "$URL"
 
+      # What an agent of the GitHub image costs, for the step summary: measured, not checked
+      # (a size too large fails a step on the memory limit, which does not fail the run).
+      - name: Measure an agent's memory
+        if: always() && steps.deploy.outcome == 'success'
+        continue-on-error: true
+        env:
+          URL: ${{ steps.deploy.outputs.url }}
+          MEASURE: ${{ inputs.measure || 'default' }}
+        run: npm run computer:check -- --measure "$MEASURE" "$URL"
+
       - name: Lock it again
         if: always() && steps.deploy.outcome != 'skipped'
         run: |
           node -e 'console.log(require("crypto").randomBytes(32).toString("hex"))' \
             | npx wrangler secret put COMPUTER_TOKEN -c "$CONFIG" --env stage > /dev/null 2>&1 \
             || echo "::warning::could not replace the stage computer's token"
+          npx wrangler secret delete GITHUB_TOKEN -c "$CONFIG" --env stage < /dev/null > /dev/null 2>&1 \
+            || echo "::warning::could not delete the stage computer's GITHUB_TOKEN"

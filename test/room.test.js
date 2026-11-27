@@ -64,7 +64,8 @@ function fakeDb(during = async () => {}, { channels = {}, people = {} } = {}) {
         },
         first: async () => (channels[args[0]] ? { source: 'slack', channel_id: channels[args[0]] } : null),
         all: async () => ({
-          results: sql.includes('json_each')
+          // Who follows what a thread shows (src/follows.js): nobody here.
+          results: sql.includes('json_each') && !sql.includes('person_follows')
             ? JSON.parse(args[0]).filter((p) => (people[args[2]] || []).includes(p))
               .map((person) => ({ person }))
             : [],
@@ -150,5 +151,29 @@ describe('the room\'s read flush', () => {
     const reads = (ws) => ws.heard.filter((e) => e.type === 'reads').map((e) => e.reads.map((r) => r.thread));
     assert.deepEqual(reads(team), [['t', 'u']]);
     assert.deepEqual(reads(guest), [['t']]);
+  });
+});
+
+describe('the room\'s ping', () => {
+  it('answers `ping` with `pong` in the runtime, so the inbox can ask without waking it', () => {
+    const was = globalThis.WebSocketRequestResponsePair;
+    globalThis.WebSocketRequestResponsePair = class {
+      constructor(request, response) {
+        this.request = request;
+        this.response = response;
+      }
+    };
+    try {
+      const ctx = fakeCtx();
+      let pair = null;
+      ctx.setWebSocketAutoResponse = (p) => {
+        pair = p;
+      };
+      // eslint-disable-next-line no-new
+      new TeamRoom(ctx, {});
+      assert.deepEqual({ ...pair }, { request: 'ping', response: 'pong' });
+    } finally {
+      globalThis.WebSocketRequestResponsePair = was;
+    }
   });
 });

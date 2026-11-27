@@ -10,10 +10,15 @@
  * governing permissions and limitations under the License.
  */
 
-import { TITLER, topicList, topicNames } from './label.js';
+import {
+  areaNamesOf, garbled, mangled, TITLER, topicList,
+} from './label.js';
 import { EMBEDDING_MODEL } from './rethread.js';
 import { authHeaders, gatewayBaseUrl, modelProblem } from './agent/model.js';
 import { threadVectorId } from './vectors.js';
+import { packVectors, saveAssignments, SAMPLE_VECTORS } from './trends.js';
+import { topicPlaces } from './topicspace.js';
+import { sameAccounts, sameLinks } from './accountpairs.js';
 import {
   coveredBy, GENERIC, nameKey, productKey, techIndex,
 } from './products.js';
@@ -27,7 +32,7 @@ export {
  * vectors (src/vectors.js, the mean of everything people wrote in them) are clustered with
  * k-means into topics, and a language model names each topic from the titles of its most typical
  * threads. With them come the Adobe people who posted in each thread, the customer it is for and
- * Clef's topics (labels.topics) and the products Clairic found in it (`product` facts), so the
+ * Clef's topics (labels.topics) and the technologies Clef says it is about (thread_tech), so the
  * Topics page (ui/topics.js) can draw people, topics, Clef's topics, products and customers as one
  * graph, and show what Clef's topics and the tech stack do not cover yet: topics that get no tag,
  * and products no tech stack entry names (the gaps).
@@ -206,6 +211,127 @@ export function kmeans(X, k, { seed = 1, restarts = RESTARTS, iterations = ITERA
 /** How many topics `n` threads make. */
 export const topicCount = (n) => Math.max(2, Math.min(MAX_TOPICS, Math.round(n / PER_TOPIC)));
 
+/** The unit mean of `vectors`. */
+function centroid(vectors) {
+  const m = new Float32Array(vectors[0].length);
+  for (const v of vectors) {
+    for (let d = 0; d < m.length; d += 1) {
+      m[d] += v[d];
+    }
+  }
+  return unit(m);
+}
+
+/**
+ * A cluster is one customer's, one team's or one product's concern, not a topic, when one of
+ * them has at least CONCENTRATED of its threads, and at least LIFT times their share of the
+ * area's threads: Edge Delivery, on a quarter of all threads, or the team with most channels,
+ * concentrates no cluster by being everywhere.
+ */
+export const CONCENTRATED = 0.6;
+export const LIFT = 2;
+/** An area's threads make at most this many topics. */
+export const MAX_AREA_TOPICS = 8;
+/**
+ * The threads in no area make up to this many: they are what no area asks about, and split
+ * finer they are the candidates for new areas, not a few catch-alls.
+ */
+export const MAX_NONE_TOPICS = 16;
+
+/** What of `values` (a list per thread) the threads `members` are concentrated on, or null. */
+function concentration(members, values, base, lift = LIFT) {
+  const count = new Map();
+  for (const i of members) {
+    for (const v of new Set(values[i] || [])) {
+      count.set(v, (count.get(v) || 0) + 1);
+    }
+  }
+  for (const [v, n] of count) {
+    const share = n / members.length;
+    if (share >= CONCENTRATED && share >= lift * (base.get(v) || 0)) {
+      return v;
+    }
+  }
+  return null;
+}
+
+/** Each facet's values' share of the threads `idx`: `{ name: Map(value → share) }`. */
+export function shares(facets, idx) {
+  return Object.fromEntries(Object.entries(facets).map(([name, values]) => {
+    const m = new Map();
+    for (const i of idx) {
+      for (const v of new Set(values[i] || [])) {
+        m.set(v, (m.get(v) || 0) + 1 / idx.length);
+      }
+    }
+    return [name, m];
+  }));
+}
+
+/**
+ * The topics of an area's threads (`idx`, indexes into `X`): k-means into about one topic per
+ * PER_TOPIC threads, then each topic that is one customer's, team's or product's concern
+ * (`facets`: `{ name: [values per thread] }`) dissolved into the others, its threads each to the
+ * nearest topic left, until none is or one is left. `[{ members, sims, concentrated }]`, the
+ * most threads first; `concentrated` names what the one left is concentrated on, if it is: what
+ * has CONCENTRATED of its threads and LIFT times its share of all the map's (`overall`: the
+ * facets' shares over every thread, as `shares` makes them).
+ */
+export function areaTopics(X, idx, facets, {
+  seed = 1, max = MAX_AREA_TOPICS, overall = null,
+} = {}) {
+  if (!idx.length) {
+    return [];
+  }
+  const k = Math.max(1, Math.min(max, Math.round(idx.length / PER_TOPIC)));
+  const sub = idx.map((i) => X[i]);
+  const { labels, centroids } = k > 1 ? kmeans(sub, k, { seed })
+    : { labels: idx.map(() => 0), centroids: [centroid(sub)] };
+  // The share of each facet's values over the area, for the lift.
+  const bases = shares(facets, idx);
+  const all = overall || shares(facets, Object.keys(facets).length
+    ? Object.values(facets)[0].map((_, i) => i) : []);
+  let live = centroids.map((c, j) => ({ c, members: idx.filter((_, n) => labels[n] === j) }))
+    .filter((t) => t.members.length);
+  const why = (t) => Object.entries(facets)
+    .map(([name, values]) => {
+      const v = concentration(t.members, values, bases[name]);
+      return v === null ? null : `${name}:${v}`;
+    }).find(Boolean) || null;
+  for (;;) {
+    const bad = live.length > 1 && live.find((t) => why(t));
+    if (!bad) {
+      break;
+    }
+    live = live.filter((t) => t !== bad);
+    for (const i of bad.members) {
+      let best = live[0];
+      for (const t of live) {
+        if (dot(X[i], t.c) > dot(X[i], best.c)) {
+          best = t;
+        }
+      }
+      best.members.push(i);
+    }
+    // Their centres again, from who is in them now.
+    for (const t of live) {
+      t.c = centroid(t.members.map((i) => X[i]));
+    }
+  }
+  // The one topic an area could not split has every thread of it, so no lift over the area can
+  // tell: its lift is over all the map's threads. The team with most channels, on most threads,
+  // concentrates no area so; a team on a tenth of them whose area it is, does.
+  const alone = (t) => Object.entries(facets)
+    .map(([name, values]) => {
+      const v = concentration(t.members, values, all[name]);
+      return v === null ? null : `${name}:${v}`;
+    }).find(Boolean) || null;
+  return live.map((t) => ({
+    members: t.members.map((i) => ({ i, sim: dot(X[i], t.c) })).sort((a, b) => b.sim - a.sim),
+    concentrated: live.length === 1 ? alone(t) : null,
+  })).sort((a, b) => b.members.length - a.members.length);
+}
+
 const NOISE = NOISE_KINDS.map((k) => `'${k}'`).join(', ');
 const WHERE = `t.kind = 'channel' AND t.embedded IS NOT NULL AND t.messages >= ?
   AND COALESCE(l.kind, '') NOT IN (${NOISE})`;
@@ -213,23 +339,58 @@ const WHERE = `t.kind = 'channel' AND t.embedded IS NOT NULL AND t.messages >= ?
 /** The threads a map is of, with their labels, and the Adobe people who posted in them. */
 async function threadsOf(env) {
   const { results: threads } = await env.DB.prepare(`SELECT t.thread, t.team, t.org, t.root_at,
-      t.last_at, t.messages, COALESCE(l.title, t.title) AS title, l.kind, l.topics
+      t.last_at, t.messages, t.embedded, COALESCE(l.title, t.title) AS title, l.kind, l.topics
     FROM threads t LEFT JOIN labels l ON l.thread = t.thread WHERE ${WHERE}`)
     .bind(MIN_MESSAGES).all();
-  const { results: posts } = await env.DB.prepare(`SELECT m.thread, m.person, p.name, COUNT(*) AS n
+  // Everyone who posted: Adobe's people (`staff`) and the customers', partners' and vendors'.
+  // A person of D1 by their id; anyone else (the customers' people are no person of D1: their
+  // messages have no `person`) by their platform account, `a:<author_key>`, named as it is.
+  const { results: posts } = await env.DB.prepare(`SELECT m.thread,
+      COALESCE(CAST(m.person AS TEXT), 'a:' || m.author_key) AS person, p.name,
+      MAX(m.staff) AS staff, COUNT(*) AS n
     FROM messages m JOIN threads t ON t.thread = m.thread LEFT JOIN labels l ON l.thread = t.thread
-    JOIN people p ON p.id = m.person
-    WHERE ${WHERE} AND m.staff = 1 AND m.counted = 1 AND m.deleted = 0
-    GROUP BY m.thread, m.person`).bind(MIN_MESSAGES).all();
+    LEFT JOIN people p ON p.id = m.person
+    WHERE ${WHERE} AND m.counted = 1 AND m.deleted = 0
+      AND (m.person IS NOT NULL OR (m.author_kind = 'person' AND m.author_key IS NOT NULL))
+    GROUP BY m.thread, 2`).bind(MIN_MESSAGES).all();
+  const { results: accounts } = await env.DB.prepare(`SELECT source || ':' || tenant || ':' ||
+      user_id AS author, name, LOWER(COALESCE(email, merge_email)) AS mail FROM identities
+    WHERE kind = 'person' AND person IS NULL`).all();
+  const named = new Map((accounts || []).map((a) => [`a:${a.author}`, a.name]));
+  // The accounts of one mail address (a customer's, as a guest and again from their own
+  // workspace), and those the admin team said are one person (src/accountpairs.js), are one of
+  // them, the first.
+  const links = await sameLinks(env);
+  const same = sameAccounts((accounts || []).map((a) => ({ key: a.author, mail: a.mail })), links);
+  const sameAs = new Map((accounts || []).map((a) => [`a:${a.author}`, `a:${same(a.author)}`]));
+  const merged = new Map();
+  for (const p of posts || []) {
+    const who = sameAs.get(p.person) || p.person;
+    const k = `${p.thread}\u0000${who}`;
+    const was = merged.get(k);
+    if (was) {
+      was.n += p.n;
+      was.staff = Math.max(was.staff, p.staff);
+    } else {
+      merged.set(k, { ...p, person: who, name: p.name || named.get(who) || null });
+    }
+  }
+  // The teams Adobe's people are on, to group them by.
+  const { results: memberships } = await env.DB.prepare(`SELECT person, team FROM team_members
+    ORDER BY person, team`).all();
   const { results: orgs } = await env.DB.prepare('SELECT slug, name, type FROM orgs').all();
-  const { results: products } = await env.DB.prepare(`SELECT f.thread, f.value FROM facts f
-    JOIN threads t ON t.thread = f.thread LEFT JOIN labels l ON l.thread = t.thread
-    WHERE ${WHERE} AND f.source = 'clairic' AND f.field = 'product'`).bind(MIN_MESSAGES).all();
+  // What Clef says each thread is about (thread_tech.about), or, where it was not asked that,
+  // what it shows (src/label.js aboutOf).
+  const { results: products } = await env.DB.prepare(`SELECT g.thread, g.tech, g.about,
+      l.about IS NOT NULL AS asked FROM thread_tech g
+    JOIN threads t ON t.thread = g.thread LEFT JOIN labels l ON l.thread = t.thread
+    WHERE ${WHERE}`).bind(MIN_MESSAGES).all();
   const { results: tech } = await env.DB.prepare(`SELECT tech, name, description, product,
     aliases FROM tech_stack WHERE enabled = 1 ORDER BY team = 'admin' DESC`).all();
   return {
     threads: threads || [],
-    posts: posts || [],
+    posts: [...merged.values()],
+    memberships: memberships || [],
     orgs: orgs || [],
     products: products || [],
     tech: tech || [],
@@ -237,6 +398,33 @@ async function threadsOf(env) {
 }
 
 // ---- products and the tech stack (src/products.js) --------------------------------------
+
+/**
+ * The products of the threads, as Clef answered them (`thread_tech`): what a thread is about
+ * (`about` set), or, for a thread whose label was not asked that (`asked` false), what it shows.
+ * Each as its technology (`tech:<id>`, named as it, with the product it is part of). The same
+ * shape as productsOf: `{ of: thread → ids, products: id → { name, tech, product } }`; Clef's
+ * answers name only technologies of the tech stack, so none is a gap.
+ */
+export function techProductsOf(rows, techRows) {
+  const by = new Map();
+  for (const r of techRows) {
+    if (!by.has(r.tech)) {
+      by.set(r.tech, r);
+    }
+  }
+  const of = new Map();
+  const products = {};
+  for (const r of rows) {
+    const t = by.get(r.tech);
+    if (t && (r.asked ? typeof r.about === 'number' : true)) {
+      const id = `tech:${r.tech}`;
+      products[id] = { name: t.name || r.tech, tech: r.tech, product: t.product || null };
+      of.set(r.thread, [...new Set([...(of.get(r.thread) || []), id])]);
+    }
+  }
+  return { of, products };
+}
 
 /**
  * The products of the threads (Clairic's `product` facts), each as the tech stack entry that
@@ -305,6 +493,9 @@ export const NAMER = 'You name a topic: a group of support threads between Adobe
   + ' no customer, company, brand or person, and not Adobe, AEM or Edge Delivery Services, which'
   + ' every thread is about.';
 
+// A theme the model mangled (src/label.js) is left out: the name stands on its own.
+const themeOf = (s) => (mangled(s) ? '' : String(s || '').trim().slice(0, MAX_THEME));
+
 const tidy = (s) => String(s || '').replace(/^\s*(?:\d+[.)]|[-*#•]|name:|theme:|topic:|line \d:)\s*/i, '')
   .replace(/^["'`*\s]+|["'`*\s]+$/g, '').trim();
 
@@ -323,8 +514,9 @@ export async function nameTopic(env, titles) {
     });
     const text = String((res && (res.response || res.choices?.[0]?.message?.content)) || '');
     const [first, ...rest] = text.split('\n').map(tidy).filter(Boolean);
-    const label = first && first.length <= MAX_LABEL ? first.replace(/[.:]$/, '') : null;
-    return { label, theme: label ? (rest[0] || '').slice(0, MAX_THEME) : '' };
+    const label = first && first.length <= MAX_LABEL && !garbled(first)
+      ? first.replace(/[.:]$/, '') : null;
+    return { label, theme: label ? themeOf(rest[0]) : '' };
   } catch (e) {
     console.log(JSON.stringify({ route: 'topicmap', namer: 'error', error: e.message }));
     return { label: null, theme: '' };
@@ -373,7 +565,7 @@ const sentence = (s) => s.charAt(0).toUpperCase() + s.slice(1);
 
 /**
  * The names NAMER_ALL gave, by topic id: `[{ label, theme }]`, null for a topic it gave no name
- * worth showing (none, too long, vague, or the same as another's).
+ * worth showing (none, too long, vague, garbled, or the same as another's).
  */
 export function parseNames(text, n) {
   const out = Array.from({ length: n }, () => null);
@@ -389,9 +581,9 @@ export function parseNames(text, n) {
     const id = Number(item && item.id);
     const label = sentence(tidy(item && item.name).replace(/[.:]$/, ''));
     if (Number.isInteger(id) && id >= 0 && id < n && !out[id] && label && label.length <= MAX_LABEL
-      && !vague(label) && !seen.has(label.toLowerCase())) {
+      && !vague(label) && !garbled(label) && !seen.has(label.toLowerCase())) {
       seen.add(label.toLowerCase());
-      out[id] = { label, theme: String((item && item.theme) || '').trim().slice(0, MAX_THEME) };
+      out[id] = { label, theme: themeOf(item && item.theme) };
     }
   }
   return out;
@@ -474,22 +666,23 @@ const round = (x, digits = 3) => Math.round(x * 10 ** digits) / 10 ** digits;
  * Builds a topic map of the channel threads and keeps it (`topic_maps`): `{ id, built_at,
  * threads, k, map }`, or `{ error }` when there is nothing to build it from. The map:
  *
- * - `topics`: `{ id, label, theme, size, cohesion }`, the biggest first (`cohesion`: the mean
- *   cosine of its threads to its centre, in the centred space).
+ * - `topics`: `{ id, label, theme, size, cohesion, at }`, the biggest first (`cohesion`: the mean
+ *   cosine of its threads to its centre, in the centred space; `at` its place on the page,
+ *   `[x, y, z]`, src/topicspace.js).
  * - `threads`: `{ key, title, team, org, at, last, messages, kind, tags, topic, sim, staff }`, by
  *   topic, the most typical first; `tags` are Clef's topics (labels.topics), `staff` the Adobe
  *   people who posted, by id, with their messages.
- * - `people` (id → name, Adobe staff only), `orgs` (slug → `{ name, type }`), `tags` (Clef's
- *   topic ids → the names the inbox shows), `products` (id → `{ name, tech, product }`: the
- *   products Clairic found in the threads, `tech` the tech stack entry that covers one (null for
- *   a gap), `product` the product that entry is part of; a thread's `products` are their ids).
+ * - `people` (id → name; `a:<author_key>` for whoever is no person of D1), `orgs` (slug →
+ *   `{ name, type }`), `tags` (Clef's topic ids → the names the inbox shows), `products` (id →
+ *   `{ name, tech, product }`: the technologies Clef says the threads are about, `tech` the entry,
+ *   `product` the product that entry is part of; a thread's `products` are their ids).
  */
 export async function buildTopicMap(env, { now = new Date(), by = 'cron', seed = 1 } = {}) {
   if (!env.CONTENT || !env.AI) {
     return { error: 'a topic map needs the CONTENT index and Workers AI' };
   }
   const {
-    threads, posts, orgs, products: facts, tech,
+    threads, posts, memberships, orgs, products: facts, tech,
   } = await threadsOf(env);
   const vectors = await vectorsOf(env, threads.map((t) => t.thread));
   const rows = threads.filter((t) => vectors.has(t.thread));
@@ -499,19 +692,38 @@ export async function buildTopicMap(env, { now = new Date(), by = 'cron', seed =
         + ` map needs ${MIN_THREADS}`,
     };
   }
-  const X = centered(rows.map((t) => vectors.get(t.thread)));
-  const k = topicCount(rows.length);
-  const { labels, sims } = kmeans(X, k, { seed });
-
-  const members = Array.from({ length: k }, () => []);
-  rows.forEach((t, i) => members[labels[i]].push(i));
-  const clusters = members.filter((m) => m.length)
-    .map((m) => m.sort((a, b) => sims[b] - sims[a]))
-    .sort((a, b) => b.length - a.length);
-  const products = productsOf(facts, tech);
+  const raw = rows.map((t) => vectors.get(t.thread));
+  const X = centered(raw);
+  const products = techProductsOf(facts, tech);
+  const tagNames = await areaNamesOf(env);
+  // Each thread in its likeliest area (labels.topics), or in none; the topics are found within
+  // each area, and none is one customer's, team's or product's concern (areaTopics).
+  const areaOf = rows.map((t) => topicList(t.topics).find((id) => tagNames[id]) || '');
+  const facets = {
+    // A thread with no customer is nobody's concern, not one of `null`'s.
+    customer: rows.map((t) => (t.org ? [t.org] : [])),
+    team: rows.map((t) => (t.team ? [t.team] : [])),
+    product: rows.map((t) => products.of.get(t.thread) || []),
+  };
+  const byArea = new Map();
+  areaOf.forEach((a, i) => byArea.set(a, [...(byArea.get(a) || []), i]));
+  const overall = shares(facets, rows.map((_, i) => i));
+  // The areas with the most threads first; the threads in none last.
+  const order = (x, y) => (x[0] ? 0 : 1) - (y[0] ? 0 : 1) || y[1].length - x[1].length;
+  const found = [...byArea].sort(order)
+    .flatMap(([area, idx]) => areaTopics(X, idx, facets, {
+      seed, max: area ? MAX_AREA_TOPICS : MAX_NONE_TOPICS, overall,
+    })
+      .map((t) => ({ ...t, area: area || null })));
+  const clusters = found.map((t) => t.members.map((m) => m.i));
+  const sims = new Float64Array(rows.length);
+  for (const t of found) {
+    for (const m of t.members) {
+      sims[m.i] = m.sim;
+    }
+  }
   const top = (list) => [...list.reduce((c, v) => c.set(v, (c.get(v) || 0) + 1), new Map())]
     .sort((a, b) => b[1] - a[1]).slice(0, 5);
-  const tagNames = topicNames();
   const productName = (id) => {
     const p = products.products[id];
     return (p && (p.product && p.tech ? `${p.name} (${p.product})` : p.name)) || id;
@@ -533,20 +745,78 @@ export async function buildTopicMap(env, { now = new Date(), by = 'cron', seed =
       id,
       label,
       theme: names[id].theme,
+      // The area it was found in (null: the threads in none), and what the one topic an area
+      // could not split is concentrated on (`customer:acme`), if it is.
+      area: found[id].area,
+      ...(found[id].concentrated ? { concentrated: found[id].concentrated } : {}),
       size: m.length,
       cohesion: round(m.reduce((s, i) => s + sims[i], 0) / m.length),
     };
   });
 
   const staff = new Map();
+  const others = new Map();
   const people = {};
   for (const p of posts) {
-    staff.set(p.thread, { ...staff.get(p.thread), [p.person]: p.n });
-    people[p.person] = p.name || `#${p.person}`;
+    const into = p.staff ? staff : others;
+    into.set(p.thread, { ...into.get(p.thread), [p.person]: p.n });
+    people[p.person] = p.name || (String(p.person).startsWith('a:') ? 'Someone' : `#${p.person}`);
   }
+  // Who each person is, to group them by: Adobe's by the team they are on whose threads they
+  // posted in most (else their first; none when they are on no team: the channels they post in
+  // are not their team), the others by the customer of most of their threads.
+  const teamOf = new Map();
+  for (const m of memberships) {
+    teamOf.set(m.person, [...(teamOf.get(m.person) || []), m.team]);
+  }
+  const counts = new Map();
+  rows.forEach((t) => {
+    for (const p of Object.keys({ ...staff.get(t.thread), ...others.get(t.thread) })) {
+      const c = counts.get(p) || new Map();
+      const isStaff = Boolean(staff.get(t.thread)?.[p]);
+      const k = isStaff ? `team:${t.team}` : `org:${t.org}`;
+      // By threads, not messages: one long thread does not outweigh many.
+      c.set(k, (c.get(k) || 0) + 1);
+      counts.set(p, c);
+    }
+  });
+  const peopleOf = {};
+  for (const [p, c] of counts) {
+    const isStaff = [...c.keys()].some((k) => k.startsWith('team:'));
+    const best = (prefix, allowed) => [...c].filter(([k]) => k.startsWith(prefix)
+      && (!allowed || allowed.includes(k.slice(prefix.length))))
+      .sort((a, b) => b[1] - a[1])[0]?.[0]?.slice(prefix.length) || null;
+    const teams = teamOf.get(Number(p)) || [];
+    peopleOf[p] = isStaff
+      ? { staff: true, team: teams.length ? best('team:', teams) || teams[0] : null }
+      : { staff: false, org: best('org:') };
+  }
+  // Each topic's place on the page (src/topicspace.js): from what its threads say once their
+  // people's, products' and customer's parts are taken out.
+  const topicOf = new Array(rows.length).fill(null);
+  clusters.forEach((m, topic) => m.forEach((i) => topicOf.splice(i, 1, topic)));
+  const places = topicPlaces(X, topicOf, {
+    people: rows.map((t) => Object.keys({ ...staff.get(t.thread), ...others.get(t.thread) })),
+    products: rows.map((t) => products.of.get(t.thread) || []),
+    orgs: rows.map((t) => (t.org ? [t.org] : [])),
+  });
+  topics.forEach((t, i) => Object.assign(t, { at: places[i] }));
+  // The space the topics were found in, for the threads the map does not have (src/trends.js):
+  // the mean (as `centered` took it away), each topic's centre, and a sample of raw vectors.
+  const mean = new Float32Array(raw[0].length);
+  for (const v of raw) {
+    for (let d = 0; d < mean.length; d += 1) {
+      mean[d] += v[d] / raw.length;
+    }
+  }
+  const centres = clusters.map((m) => centroid(m.map((i) => X[i])));
+  const pickSample = random(seed + 1);
+  const sample = raw.map((v) => [pickSample(), v]).sort((a, b) => a[0] - b[0])
+    .slice(0, SAMPLE_VECTORS).map(([, v]) => v);
   const used = new Set(rows.map((t) => t.org));
   const map = {
-    version: 1,
+    // 2: topics found within areas (`topics[].area`), and everyone who posted (`customers`).
+    version: 2,
     built_at: now.toISOString(),
     built_by: by,
     model: EMBEDDING_MODEL,
@@ -569,19 +839,36 @@ export async function buildTopicMap(env, { now = new Date(), by = 'cron', seed =
         topic,
         sim: round(sims[i]),
         staff: staff.get(t.thread) || {},
+        customers: others.get(t.thread) || {},
       };
     })),
     people,
+    // Who each person is (`{ staff, team }` or `{ staff: false, org }`), to group them by.
+    peopleOf,
     orgs: Object.fromEntries(orgs.filter((o) => used.has(o.slug))
       .map((o) => [o.slug, { name: o.name || o.slug, type: o.type }])),
-    tags: topicNames(),
+    tags: tagNames,
     products: products.products,
   };
-  const built = await env.DB.prepare(`INSERT INTO topic_maps (built_at, built_by, threads, k, map)
-    VALUES (?, ?, ?, ?, ?) RETURNING id`)
-    .bind(map.built_at, by, rows.length, topics.length, JSON.stringify(map)).first();
+  const built = await env.DB.prepare(`INSERT INTO topic_maps (built_at, built_by, threads, k, map,
+      vectors) VALUES (?, ?, ?, ?, ?, ?) RETURNING id`)
+    .bind(
+      map.built_at,
+      by,
+      rows.length,
+      topics.length,
+      JSON.stringify(map),
+      packVectors([mean, ...centres, ...sample]),
+    ).first();
+  // Its threads' topics are its own; the others' the cron finds (src/trends.js assignPending).
+  await saveAssignments(env, built.id, rows.map((t, i) => ({
+    thread: t.thread, embedded: t.embedded, topic: topicOf[i], sim: sims[i],
+  })));
   await env.DB.prepare(`DELETE FROM topic_maps WHERE id NOT IN
     (SELECT id FROM topic_maps ORDER BY built_at DESC, id DESC LIMIT ?)`).bind(KEEP).run();
+  // Only the newest's space is used (src/trends.js): the older keep their maps, not it.
+  await env.DB.prepare('UPDATE topic_maps SET vectors = NULL WHERE id != ? AND vectors IS NOT NULL')
+    .bind(built.id).run();
   return {
     id: built.id, built_at: map.built_at, threads: rows.length, k: topics.length, map,
   };
@@ -599,8 +886,10 @@ export async function sweepTopicMap(env, now = new Date()) {
   if (!env.CONTENT || !env.AI) {
     return { skipped: 'no CONTENT index' };
   }
-  const row = await env.DB.prepare('SELECT MAX(built_at) AS at FROM topic_maps').first();
-  if (row && row.at && now.getTime() - Date.parse(row.at) < STALE_DAYS * 86400000) {
+  const row = await env.DB.prepare(`SELECT built_at AS at, vectors IS NOT NULL AS space
+    FROM topic_maps ORDER BY built_at DESC, id DESC LIMIT 1`).first();
+  // One from before maps kept their space is built again: the trends need it (src/trends.js).
+  if (row && row.at && row.space && now.getTime() - Date.parse(row.at) < STALE_DAYS * 86400000) {
     return { fresh: row.at };
   }
   const built = await buildTopicMap(env, { now });

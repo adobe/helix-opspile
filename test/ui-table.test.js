@@ -60,14 +60,14 @@ describe('the file preview', () => {
         ['1.50', '504', 'GET', '8215', '2.0', 'fetch', 'a.example/slow'],
         ['0.00', '200', 'GET', '12', '2.0', 'json', 'a.example/x'],
       ]);
-      assert.equal(har.summary, '1 failed · slowest 8.2 s');
+      assert.equal(har.summary, '1 failed, slowest 8.2 s');
       // Sort and filter take the columns as numbers.
       assert.ok([0, 1, 3, 4].every((c) => Table.numeric(har.rows, c)));
     });
 
     it('counts a request that got no answer as failed', () => {
       const har = Table.har(text([{ ...entry(0, 0, 'https://a.example/', 3), response: { status: 0 } }]));
-      assert.equal(har.summary, '1 failed · slowest 0.0 s');
+      assert.equal(har.summary, '1 failed, slowest 0.0 s');
     });
 
     it('is no HAR when it is something else, or broken', () => {

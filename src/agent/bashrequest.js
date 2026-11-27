@@ -11,16 +11,17 @@
  */
 
 import {
-  claimRequest, cleanRequest, cleanValues, denyRequest, expireRequest, insertRequest, markTold,
-  MAX_OPEN, openCount, requestOf, settleRequest,
+  announceRequests as announce, claimRequest, cleanRequest, cleanValues, denyRequest,
+  expireRequest, insertRequest, markTold, MAX_OPEN, openCount, requestOf, settleRequest,
+  sidebarNote,
 } from '../bashrequests.js';
-import { entryOf } from '../drafts.js';
-import { notifyRoom } from '../notify.js';
 import { toolsFor } from './agenttools.js';
 import { COMPUTER_CWD } from './computer.js';
 import { agentEnabled } from './enabled.js';
 import { timedOut } from './kernel.js';
 import { modelProblem } from './model.js';
+import { tellChat } from './kbchat.js';
+import { executeScript, scriptOutcomeText } from './scriptrequest.js';
 import {
   agentScope, escapes, secretsFor, shellEnv,
 } from './secrets.js';
@@ -42,9 +43,13 @@ import {
  * way. What that does not stop: the command itself can store a value in a file or send it
  * anywhere, and can print it encoded. The person reads the command before running it.
  *
+ * A script a person runs as themselves (`request_codemode`, src/agent/scriptrequest.js) is a
+ * request of the same record, with the same lifecycle: `runScript` runs it, and the deadline,
+ * the denial and the watchdog here are a script's as much as a command's.
+ *
  * `agent` is the ThreadAgent (its `env`, `name`, `target`, `schedule`, `syncTools`, `syncMcp`,
- * `currentTools`, `readyWorkspace`, `keepAliveWhile`, `bashRuns` and `harness`); these functions
- * are its methods, kept here so they run in Node tests.
+ * `currentTools`, `readyWorkspace`, `scriptSandbox`, `keepAliveWhile`, `bashRuns` and
+ * `harness`); these functions are its methods, kept here so they run in Node tests.
  */
 
 /** A value shorter than this is not taken out of the output: it would garble it. */
@@ -59,14 +64,6 @@ const WATCHDOG_TRIES = 10;
 
 const log = (fields) => console.log(JSON.stringify({ route: 'agent', bash: 'request', ...fields }));
 
-/** Tells the inboxes of the thread's teams that its requests changed. */
-async function announce(env, thread) {
-  const entry = await entryOf(env, thread).catch(() => null);
-  if (entry) {
-    await notifyRoom(env, entry.teams, { type: 'bash', thread: entry.key });
-  }
-}
-
 /**
  * `text` without the `values` a person filled in (`{ NAME: value }`): each of MIN_HIDDEN
  * characters or more is replaced by `[NAME]`, as it is or escaped, the longest first.
@@ -80,13 +77,19 @@ export function hider(values) {
 
 /**
  * The agent's `request_bash`: stores the request and tells the team's inboxes. `ctx` is the
- * tools' context (`env`, `target`, `schedule`). Resolves to `{ request }` or `{ error }`.
+ * tools' context (`env`, `target`, `schedule`, and a knowledge-base agent's `name`). `chat`: the
+ * conversation of a knowledge base's sidebar it is asked in (`chatOf`, src/agent/kbchat.js), a
+ * knowledge-base agent's only way to ask; its person decides it there. Resolves to
+ * `{ request }` or `{ error }`.
  */
-export async function requestBash(ctx, args, now = new Date()) {
+export async function requestBash(ctx, args, now = new Date(), chat = null) {
   const { env } = ctx;
   const t = await ctx.target();
+  if (!t.key && !(chat && ctx.name)) {
+    return { error: 'request_bash is only for a thread, or a conversation on a knowledge base\'s page.' };
+  }
   // Asked again each time: the tools an agent has are only as new as its latest message.
-  if (!t.key || !(await toolsFor(env, t)).includes('computer')) {
+  if (!(await toolsFor(env, t)).includes('computer')) {
     return { error: 'request_bash is not available in this channel (any more).' };
   }
   const request = cleanRequest(args, now);
@@ -99,16 +102,25 @@ export async function requestBash(ctx, args, now = new Date()) {
   if (kept) {
     return { error: `${kept.name} is a secret the team keeps for you: the command has it as $${kept.name} anyway, so leave it out of env. Nothing was requested.` };
   }
-  if (await openCount(env, t.key, now) >= MAX_OPEN) {
+  const owner = t.key || ctx.name;
+  if (await openCount(env, owner, now) >= MAX_OPEN) {
     return { error: `${MAX_OPEN} of your requests are waiting for a person already. Nothing was requested: say in your note that they wait.` };
   }
   const id = crypto.randomUUID().replace(/-/g, '').slice(0, 12);
   // Armed before the request exists: a deadline with no request does nothing, a request with
   // no deadline would wait for ever.
   await ctx.schedule(new Date(request.deadline), 'bashDeadline', { id });
-  const stored = await insertRequest(env, id, t.key, request, now);
-  log({ action: 'requested', id, team: t.team });
-  await announce(env, t.key);
+  // Asked while it answers a sidebar message: the inbox shows it in that conversation. A
+  // knowledge-base agent's is shown in the conversation of its page it was asked in (`chat`).
+  const sidebar = !chat && ctx.sidebarMessage ? await ctx.sidebarMessage() : null;
+  const where = chat ? chat.chat : null;
+  const stored = await insertRequest(env, id, owner, { ...request, sidebar }, now, where);
+  log({
+    action: 'requested', id, team: t.team, ...(chat ? { chat: true } : {}),
+  });
+  if (t.key) {
+    await announce(env, t.key);
+  }
   return { request: stored };
 }
 
@@ -118,12 +130,7 @@ const fenced = (tag, text) => (text ? `\n<${tag}>\n${text.replace(/\n$/, '')}\n<
 const tail = (text) => (text.length > MAX_OUTPUT
   ? { text: text.slice(-MAX_OUTPUT), cut: text.length - MAX_OUTPUT } : { text, cut: 0 });
 
-/**
- * What the agent is told about how `request` ended. `outcome`: `{ status, exitCode?, error?,
- * stdout?, stderr?, seconds?, notes?, lost? }`; `lost` says the output is gone (the agent could
- * not be told when the command ended).
- */
-export function outcomeText(request, outcome) {
+function commandOutcome(request, outcome) {
   const who = (request.by && request.by.name) || 'A colleague';
   const what = `the command you asked for with request_bash (request ${request.id})`;
   const command = `\n${fenced('command', request.command)}`;
@@ -152,11 +159,34 @@ export function outcomeText(request, outcome) {
 }
 
 /**
+ * What the agent is told about how `request` ended. `outcome`: `{ status, exitCode?, error?,
+ * stdout?, stderr?, seconds?, notes?, lost? }`; `lost` says the output is gone (the agent could
+ * not be told when the command ended).
+ */
+export function outcomeText(request, outcome) {
+  if (request.kind === 'codemode') {
+    return scriptOutcomeText(request, outcome);
+  }
+  return `${commandOutcome(request, outcome)}${sidebarNote(request)}`;
+}
+
+/**
  * Tells the agent how `request` ended, once, unless it was turned off since. A request the
  * agent could not be told about stays untold, for its deadline to try again (`bashDeadline`).
  */
 async function tell(agent, request, outcome) {
   const { env } = agent;
+  // Asked in a conversation of a knowledge base's sidebar: told there, where its person sees it.
+  if (request.chat) {
+    if (modelProblem(env)) {
+      return { result: 'skip', reason: 'no agent' };
+    }
+    const r = await tellChat(agent, request, outcome, outcomeText(request, outcome));
+    if (r.result === 'told') {
+      await markTold(env, request.id);
+    }
+    return r;
+  }
   const t = await agent.target();
   if (!t.key || modelProblem(env) || !await agentEnabled(env, t.channelId, t.team)) {
     return { result: 'skip', reason: 'no agent' };
@@ -164,7 +194,7 @@ async function tell(agent, request, outcome) {
   await agent.syncTools();
   await agent.syncMcp();
   await agent.harness.submit(outcomeText(request, outcome), {
-    operationId: `bash:${request.id}`,
+    operationId: `${request.kind === 'codemode' ? 'codemode' : 'bash'}:${request.id}`,
     whenBusy: 'followUp',
   });
   await markTold(env, request.id);
@@ -249,13 +279,11 @@ async function execute(agent, request, values) {
     }
     const seconds = (Date.now() - started) / 1000;
     return {
-      // 124 is just-bash's answer to a run it stopped at `timeoutMs` (the kernel's is the
-      // signal that ended bash: `timedOut`), and it says so no other way. A command can exit
-      // with 124 by itself (`timeout` in it does), having run to its end: the shell stopped it
-      // only if its time was up. `started` is from before the shell's own clock ran, so a run
-      // the shell stopped never looks shorter than it was.
-      status: timedOut(agent.runtime, result.exitCode, seconds, request.timeout)
-        && seconds >= request.timeout ? 'timeout' : 'done',
+      // The shell stopped a run at `timeoutMs` with the signal that ended bash (`timedOut`),
+      // and says so no other way; a command can end with that code by itself, having run to
+      // its end, so its time must have been up too. `started` is from before the shell's own
+      // clock ran, so a run the shell stopped never looks shorter than it was.
+      status: timedOut(result.exitCode, seconds, request.timeout) ? 'timeout' : 'done',
       exitCode: result.exitCode,
       ...streams,
       notes,
@@ -309,15 +337,16 @@ function decided(request) {
 export async function runBash(agent, { id, values, by }) {
   const { env } = agent;
   const request = await requestOf(env, id);
-  if (!request || request.thread !== agent.name) {
+  if (!request || request.thread !== agent.name || request.kind === 'codemode') {
     return { error: 'not found', status: 404 };
   }
   if (request.status !== 'pending') {
     return decided(request);
   }
-  // The agent that asked has to be there still, to be told what came of it, and its computer.
+  // The agent that asked has to be there still, to be told what came of it, and its computer. A
+  // knowledge-base agent is there as long as its conversation is.
   const t = await agent.target();
-  if (!t.key || !await agentEnabled(env, t.channelId, t.team)) {
+  if (t.key ? !await agentEnabled(env, t.channelId, t.team) : !request.chat) {
     return { error: 'The agent is turned off for this channel: nothing ran', status: 409 };
   }
   await agent.syncTools();
@@ -338,6 +367,60 @@ export async function runBash(agent, { id, values, by }) {
   await announce(env, request.thread);
   const run = () => work(agent, { ...request, by }, given.values);
   agent.bashRuns.set(id, agent.keepAliveWhile ? agent.keepAliveWhile(run) : run());
+  return { ok: true, request: await requestOf(env, id) };
+}
+
+/** A script's run from its start to the agent being told; never rejects. */
+async function scriptWork(agent, request, call) {
+  const { env } = agent;
+  try {
+    const outcome = await executeScript((tools) => agent.scriptSandbox(tools), request, call);
+    // Settled by the watchdog meanwhile: the agent was told that, and is not told twice.
+    if (!await settleRequest(env, request.id, outcome)) {
+      return;
+    }
+    log({
+      action: 'ran', id: request.id, kind: 'codemode', status: outcome.status, threw: Boolean(outcome.error),
+    });
+    await announce(env, request.thread);
+    await telling(agent, request, outcome);
+  } catch (e) {
+    log({ action: 'run failed', id: request.id, error: e.message });
+  } finally {
+    agent.bashRuns.delete(request.id);
+  }
+}
+
+/**
+ * ThreadAgent.runScript: a person (`by`: `{ id, name }`) runs script request `id` as
+ * themselves; `call(name, args)` runs a tool of the inbox as them, in the Worker that serves
+ * their click (src/agent/stub.js), and is only good while this call lasts. So it answers once the
+ * script has ended and the agent was told, `{ ok, request }`, or `{ error, status }`.
+ */
+export async function runScript(agent, { id, by, call }) {
+  const { env } = agent;
+  const request = await requestOf(env, id);
+  if (!request || request.thread !== agent.name || request.kind !== 'codemode') {
+    return { error: 'not found', status: 404 };
+  }
+  if (request.status !== 'pending') {
+    return decided(request);
+  }
+  // The agent that asked has to be there still, to be told what came of it.
+  const t = await agent.target();
+  if (!t.key || !await agentEnabled(env, t.channelId, t.team)) {
+    return { error: 'The agent is turned off for this channel: nothing ran', status: 409 };
+  }
+  // Armed before the request is claimed: a run whose object restarts is one nobody runs.
+  await agent.schedule(request.timeout + WATCHDOG_SECONDS, 'bashWatchdog', { id });
+  if (!await claimRequest(env, id, by.id)) {
+    return decided(await requestOf(env, id));
+  }
+  log({ action: 'approved', id, kind: 'codemode' });
+  await announce(env, request.thread);
+  const run = scriptWork(agent, { ...request, by }, call);
+  agent.bashRuns.set(id, run);
+  await run;
   return { ok: true, request: await requestOf(env, id) };
 }
 
@@ -399,7 +482,11 @@ export async function bashWatchdog(agent, payload) {
     await agent.schedule(WATCHDOG_SECONDS, 'bashWatchdog', { id: request.id, tries: tries + 1 });
     return { result: 'waiting' };
   }
-  const outcome = { status: 'failed', error: 'the computer restarted while it ran' };
+  const outcome = {
+    status: 'failed',
+    error: request.kind === 'codemode' ? 'the agent restarted while it ran'
+      : 'the computer restarted while it ran',
+  };
   if (!await settleRequest(env, request.id, outcome)) {
     return { result: 'skip', reason: 'not running' };
   }

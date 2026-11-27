@@ -14,7 +14,7 @@
 /**
  * `npm run computer:check`: what Node's tests cannot run, checked on an agent's computer
  * (scripts/dev-computer/worker.mjs): the programs of the images of scripts/computer-images.mjs,
- * and that both shells refuse every change to the uploads with an exit code and an error. Without
+ * and that the shell refuses every change to the uploads with an exit code and an error. Without
  * an origin it starts `npm run computer:dev` on a free port and stops it after; with one it
  * checks that computer, the local one or the one deployed to Cloudflare, where the limits of
  * Dynamic Workers are real (.github/workflows/computer-stage.yml). Run it after updating
@@ -23,7 +23,11 @@
  *   npm run computer:check
  *   npm run computer:check -- http://localhost:8788
  *   COMPUTER_TOKEN=… npm run computer:check -- --images https://<stage worker>
+ *   npm run computer:check -- --measure default,48/48 http://localhost:8788
  *
+ * `--measure` checks nothing: it measures what an agent of the GitHub image costs, with each
+ * cache it names (`measure`: the Worker's own, and what the isolate keeps in all and of one
+ * file, in MiB): its steps, the GETs of the images bucket, and what the isolate keeps.
  * `--images` first puts into the Worker's bucket the objects of the images it lacks
  * (`syncImages`, as `npm run computer:images` does for a deployment). `COMPUTER_TOKEN` is sent
  * in `x-opspile-computer-token`, which the deployed Worker requires. Each run's agents are new
@@ -44,10 +48,10 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import { build, missingFrom, objectsOf } from '../computer-images.mjs';
 
 /**
- * The checks: `command` runs in `runtime` (the kernel by default) with `image` (base by
- * default), on a computer of its own per runtime and image (so a check does not reboot
- * another's kernel) or of its own `thread`, with `uploads` (`{ name: text }`) put there first,
- * and passes when its output matches `match` (stdout, then stderr) and its exit code is 0.
+ * The checks: `command` runs on the kernel with `image` (base by default), on a computer of
+ * its own per image (so a check does not reboot another's kernel) or of its own `thread`, with
+ * `uploads` (`{ name: text }`) put there first, and passes when its output matches `match`
+ * (stdout, then stderr) and its exit code is 0.
  */
 const ORIGINAL = 'line 1\nERROR boom\n';
 
@@ -62,30 +66,27 @@ export const CHANGES = [
 ];
 
 /**
- * The uploads, in `runtime`: every change refused, with an exit code and an error, and the file
+ * The uploads: every change refused, with an exit code and an error, and the file
  * as it was; read, with the files next to them written; and read-only still once they change,
  * which takes a new Workspace. Each change runs in a subshell, whose exit code is printed.
  */
-export function uploadChecks(runtime) {
+export function uploadChecks() {
   const uploads = { 'sample.log': ORIGINAL };
   return [
     ...CHANGES.map((change) => ({
-      name: `${runtime}: the uploads refuse \`${change}\``,
-      runtime,
+      name: `kernel: the uploads refuse \`${change}\``,
       uploads,
       command: `( ${change} ); s=$?; cat uploads/sample.log; echo "exit $s"`,
       match: /^line 1\nERROR boom\nexit [1-9]\d*\n[\s\S]*read-only/i,
     })),
     {
-      name: `${runtime}: the uploads are read, and the files next to them written`,
-      runtime,
+      name: 'kernel: the uploads are read, and the files next to them written',
       uploads,
       command: 'cat uploads/sample.log && echo ok > notes.txt && cat notes.txt',
       match: /^line 1\nERROR boom\nok\n$/,
     },
     {
-      name: `${runtime}: the uploads are read-only still once they change`,
-      runtime,
+      name: 'kernel: the uploads are read-only still once they change',
       uploads: { ...uploads, 'other.log': 'other\n' },
       command: '( echo overwrite > uploads/other.log ); s=$?'
         + '; cat uploads/other.log uploads/sample.log notes.txt; echo "exit $s"',
@@ -93,6 +94,29 @@ export function uploadChecks(runtime) {
     },
   ];
 }
+
+/**
+ * Two commands of an agent of the GitHub image, in order, on a computer of their own: once the
+ * second made its object exceed its memory (kernel 1.189.0 kept a copy of every program it
+ * ran, gh's 50 MB too, beside the image cache's).
+ */
+export const GITHUB_SESSION = [
+  'GH_TOKEN=x gh version | head -1 | cut -d" " -f1-2 && echo \'{"a":1}\' | jq -c .'
+    + ' && printf "a\\n" | grep a | sed s/a/b/ | awk \'{print}\''
+    + ' && curl -sS -o /dev/null -w "%{http_code}\\n" https://www.aem.live/'
+    + ' && dig +short www.aem.live | grep -c . && qjs -e "console.log(6 * 7)"'
+    + ' && openssl version | cut -d" " -f1',
+  'cd /tmp && rm -rf c && git clone -q --depth 1 https://github.com/adobe/helix-shared c'
+    + ' && git -C c log --oneline | wc -l && printf "a: 1\\n" | yq .a'
+    + ' && GH_TOKEN=x gh version | head -1 | cut -d" " -f1-2'
+    + ' && tar --version | head -1 | cut -d" " -f1-2 && gzip --version | head -1 | cut -d" " -f1'
+    + ' && diff --version | head -1 | cut -d" " -f1 && tree --version | cut -d" " -f1'
+    + ' && printf "<p>hi</p>" | html2markdown && echo hi | xxd -p && file -b c/package.json',
+];
+const GITHUB_SESSION_OUTPUT = [
+  /^gh version\n\{"a":1\}\nb\n200\n[1-9]\d*\n42\nOpenSSL\n$/,
+  /^1\n1\ngh version\ntar \(GNU\ngzip\ndiff\ntree\nhi\n68690a\nJSON text data\n$/,
+];
 
 export const CHECKS = [
   { name: 'boots', command: 'uname -s; id -un', match: /^Linux\nroot\n$/ },
@@ -174,6 +198,25 @@ export const CHECKS = [
     match: /^1\n$/,
   },
   {
+    // The proxy's answer to curl's CONNECT is not among the site's headers (src/agent/kernel.js,
+    // CURLRC): they start with the site's own status line.
+    name: 'curl -I and -D show the site\'s headers only',
+    command: 'curl -sI https://www.aem.live/ | head -1 | cut -d" " -f2'
+      + ' && curl -s -D - -o /dev/null https://www.aem.live/ | grep -c "^HTTP/"',
+    match: /^200\n1\n$/,
+  },
+  {
+    name: 'rg, in Base',
+    command: "printf 'x\\nneedle\\n' | rg -c needle",
+    match: /^1\n$/,
+  },
+  {
+    name: 'tar unpacks without changing owners',
+    command: 'cd /tmp && mkdir -p t && echo hi > t/a && tar czf t.tgz t && rm -r t'
+      + ' && tar xzf t.tgz 2>&1 && cat t/a',
+    match: /^hi\n$/,
+  },
+  {
     name: 'yq',
     command: "printf 'a:\\n  b: [1, 2]\\n' | yq -o json -I0 .a",
     match: /^\{"b":\[1,2\]\}\n$/,
@@ -200,15 +243,35 @@ export const CHECKS = [
     match: /^gh version 2\.\d+\.\d+\n[1-9]\n$/,
     timeout: 120,
   },
+  ...GITHUB_SESSION.map((command, i) => ({
+    name: `github: a session, command ${i + 1} of ${GITHUB_SESSION.length}`,
+    image: 'github',
+    thread: 'github-session',
+    command,
+    match: GITHUB_SESSION_OUTPUT[i],
+    timeout: 120,
+  })),
   {
-    name: 'data: rg, sqlite3, strings',
+    name: 'data: sqlite3, strings',
     image: 'data',
-    command: "printf 'x\\nneedle\\n' | rg -c needle && sqlite3 :memory: 'select 6 * 7'"
-      + ' && printf "\\0\\0hello\\0" | strings',
-    match: /^1\n42\nhello\n$/,
+    command: "sqlite3 :memory: 'select 6 * 7' && printf \"\\0\\0hello\\0\" | strings",
+    match: /^42\nhello\n$/,
   },
-  ...uploadChecks('just-bash'),
-  ...uploadChecks('slicc-kernel'),
+  // The browser layer's playwright-cli starts, and the kernel's CDP is at SLICC_CDP_URL: 200
+  // with Browser Run behind it (src/agent/browser.js, BROWSER_RUN_TOKEN), 503 without.
+  {
+    name: 'browser: playwright-cli starts, and the kernel serves CDP',
+    image: 'browser',
+    command: 'playwright-cli --help | head -1; dirname "$SLICC_CDP_URL"; curl -s -o /dev/null -w "%{http_code}\\n" http://127.0.0.1:9222/json/version',
+    match: /^playwright-cli - run playwright mcp commands from terminal\nws:\/\/127\.0\.0\.1:9222\/devtools\/browser\n(200|503)\n$/,
+  },
+  ...uploadChecks(),
+  // Graphviz's dot (the diagrams layer), in Base.
+  {
+    name: 'kernel: dot lays out a graph, as SVG and JSON',
+    command: "printf 'digraph { a -> b }' | dot -Tsvg | grep -c 'class=\"node\"'; printf 'digraph { a -> b }' | dot -Tjson | grep -c '\"name\": \"a\"'",
+    match: /^2\n1\n$/,
+  },
 ];
 
 /**
@@ -393,8 +456,7 @@ export async function syncImages(origin, built, { token, log = console.log, retr
  */
 export async function runCheck(origin, check, { token, run, retry = {} }) {
   const image = check.image || 'base';
-  const runtime = check.runtime || 'slicc-kernel';
-  const thread = `check-${run}-${check.thread || (runtime === 'slicc-kernel' ? image : runtime)}`;
+  const thread = `check-${run}-${check.thread || image}`;
   const headers = { 'content-type': 'application/json', ...headersOf(token) };
   const started = Date.now();
   try {
@@ -412,8 +474,7 @@ export async function runCheck(origin, check, { token, run, retry = {} }) {
       headers,
       body: JSON.stringify({
         command: check.command,
-        runtime,
-        ...(runtime === 'slicc-kernel' ? { image } : {}),
+        image,
         timeout: check.timeout || 60,
       }),
     }, {
@@ -495,6 +556,98 @@ async function startDev() {
   return { origin: `http://localhost:${port}`, stop: () => dev.kill('SIGTERM') };
 }
 
+/**
+ * The caches `--measure` tries: `{ label, mib, fileMib }` (null sizes: the Worker's own), from
+ * `spec` (`default,48/48,64/64`: what the isolate keeps in all, and of one file, in MiB).
+ */
+export function cachesOf(spec = 'default') {
+  return String(spec).split(',').filter(Boolean).map((c) => {
+    const m = /^(\d+)\/(\d+)$/.exec(c);
+    return m ? { label: c, mib: Number(m[1]), fileMib: Number(m[2]) }
+      : { label: 'default', mib: null, fileMib: null };
+  });
+}
+
+const MB = (n) => Math.round((n || 0) / 1e5) / 10;
+
+/**
+ * What an agent of the GitHub image costs, on the computer at `origin`, with each of `caches`
+ * (cachesOf), each on an agent of its own: GITHUB_SESSION, then its kernel ended and the first
+ * command again (as when the object lets its kernel go and boots it again), each with its time
+ * and what the isolate asked of the images bucket then and keeps: `[{ label, steps: [{ name,
+ * ms, ok, gets, fetchedMB, keptMB, error }] }]`. What an object uses of its 128 MB is not to be
+ * had from inside it (an allocation of its own is not held to the limit as the kernel's is: it
+ * "had" 208 MiB free), so a step that fails on the limit is the measure of too much.
+ */
+export async function measure(origin, caches, { token, run, log = console.log } = {}) {
+  const headers = { 'content-type': 'application/json', ...headersOf(token) };
+  const post = async (thread, path, body) => {
+    const res = await fetch(`${origin}${path}?thread=${thread}`, {
+      method: 'POST', headers, body: JSON.stringify(body),
+    });
+    const text = await res.text();
+    try {
+      return { status: res.status, ...JSON.parse(text) };
+    } catch {
+      return { status: res.status, error: text.trim().slice(0, 200) };
+    }
+  };
+  const out = [];
+  for (const cache of caches) {
+    const thread = `measure-${run}-${cache.label.replace(/\//g, '-')}`;
+    const steps = [];
+    // What the isolate asked of the bucket at the step before: none at the first command, whose
+    // `cache` empties what the isolate keeps and resets its counters (forgetImages in
+    // src/agent/image.js), so what it answers is its own already.
+    let before = null;
+    const exec = async (name, command, first) => {
+      const started = Date.now();
+      const body = await post(thread, '/', {
+        command,
+        image: 'github',
+        timeout: 120,
+        ...(first ? { cache: cache.mib ? { mib: cache.mib, fileMib: cache.fileMib } : {} } : {}),
+      }).catch((e) => ({ error: reasonOf(e) }));
+      const now = body.images;
+      const since = first ? null : before;
+      const result = {
+        name,
+        ms: Date.now() - started,
+        ok: !body.error && body.exitCode === 0,
+        gets: now && since ? now.gets - since.gets : now?.gets,
+        fetchedMB: MB(now && since ? now.fetched - since.fetched : now?.fetched),
+        keptMB: MB(now?.bytes),
+        ...(body.error ? { error: `${body.error}${body.message ? `: ${body.message}` : ''}`.slice(0, 160) } : {}),
+      };
+      before = now || null;
+      steps.push(result);
+      log(`  ${cache.label}: ${name}: ${result.ok ? 'ok' : 'FAIL'} ${result.ms} ms, ${result.gets ?? '–'} GETs`
+        + ` (${result.fetchedMB} MB), ${result.keptMB} MB kept${result.error ? `, ${result.error}` : ''}`);
+    };
+    // eslint-disable-next-line no-await-in-loop
+    await exec('command 1', GITHUB_SESSION[0], true);
+    // eslint-disable-next-line no-await-in-loop
+    await exec('command 2', GITHUB_SESSION[1]);
+    // eslint-disable-next-line no-await-in-loop
+    await post(thread, '/drop', {}).catch(() => {});
+    // eslint-disable-next-line no-await-in-loop
+    await exec('command 1, its kernel booted again', GITHUB_SESSION[0]);
+    out.push({ label: cache.label, steps });
+  }
+  return out;
+}
+
+/** What `measure` found, as a Markdown table. */
+export function measuredOf(results) {
+  const rows = results.flatMap((r) => [
+    ...r.steps.map((s) => `| ${r.label} | ${s.ok ? '✅' : '❌'} ${s.name} | ${s.ms} ms | ${s.gets ?? '–'}`
+      + ` (${s.fetchedMB} MB) | ${s.keptMB} MB |${s.error ? ` ${s.error.replace(/\|/g, '/')}` : ''}`),
+  ]);
+  return ['### What an agent of the GitHub image costs', '',
+    '| Cache (MiB, of one file) | Step | Time | GETs (fetched) | Kept |', '| --- | --- | --- | --- | --- |',
+    ...rows, ''].join('\n');
+}
+
 async function checkAll(origin, argv) {
   const token = process.env.COMPUTER_TOKEN;
   const built = await build();
@@ -503,7 +656,20 @@ async function checkAll(origin, argv) {
     await syncImages(origin, built, { token });
   }
   const run = process.env.GITHUB_RUN_ID || Date.now().toString(36);
-  const checks = [...CHECKS, ...rangeChecks(built), ...built.images.map(commandsCheck)];
+  if (argv.includes('--measure')) {
+    const spec = argv[argv.indexOf('--measure') + 1];
+    const results = await measure(origin, cachesOf(/^https?:/.test(spec || '') ? undefined : spec), {
+      token, run: `${run}-${process.env.GITHUB_RUN_ATTEMPT || 1}`,
+    });
+    if (process.env.GITHUB_STEP_SUMMARY) {
+      await appendFile(process.env.GITHUB_STEP_SUMMARY, measuredOf(results));
+    }
+    return;
+  }
+  // The images agents' computers boot: not the renderer Worker's (dot alone, no shell), which
+  // `npm run graphviz:check` checks.
+  const checks = [...CHECKS, ...rangeChecks(built),
+    ...built.images.filter((i) => !i.internal).map(commandsCheck)];
   const results = [];
   for (const check of checks) {
     // eslint-disable-next-line no-await-in-loop

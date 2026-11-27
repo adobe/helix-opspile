@@ -12,15 +12,28 @@
 
 import { generateKeyPairSync } from 'node:crypto';
 import { admin } from '../src/admin.js';
-import { BROWSER_MCP_URL, GITHUB_MCP_URL } from '../src/agent/globals.js';
+import { GITHUB_MCP_URL } from '../src/agent/globals.js';
+import { FLUFFYJAWS_MCP_URL } from '../src/agent/fluffyjaws.js';
+import { SLACK_MCP_URL } from '../src/agent/slackmcp.js';
 import { kbAdmin } from '../src/kbadmin.js';
 import { pkcs8Pem } from '../src/github.js';
 import { consume } from '../src/normalizer.js';
+import { syncFollowRules } from '../src/followrules.js';
+import { advanceWatermark, previewOf } from '../src/threads.js';
 import { seal } from '../src/post.js';
-import { d1 } from '../test/d1.js';
+import {
+  addNote, requestEntries, requestThread, resolveRequest,
+} from '../src/requestthreads.js';
+import { isRequestKey } from '../src/requestkeys.js';
+import { d1, PORTAL as PORTAL_MIGRATIONS } from '../test/d1.js';
+import * as portalPlatform from '../src/portal/platform.js';
 import { IMAGES, layerNames } from './computer-images.mjs';
 import { seedCogs } from './dev-ui-cogs.mjs';
 import { seedTopicMap } from './dev-ui-topics.mjs';
+import { seedTeamProfile } from './dev-ui-team.mjs';
+import { seedCustomerProfile } from './dev-ui-customer.mjs';
+import { seedVendorProfile } from './dev-ui-vendor.mjs';
+import { seedPartnerProfile } from './dev-ui-partner.mjs';
 import { fakeBucket } from '../test/fakes.js';
 import { fakeMcpServers } from '../test/mcp-server.js';
 
@@ -39,21 +52,110 @@ import { fakeMcpServers } from '../test/mcp-server.js';
  * The global servers: Cloudflare's Browser Run MCP server answers in memory (made up), and so
  * do GitHub's API and its MCP server for a made-up GitHub App, installed on one made-up
  * account, so the editor shows both set up. Start with `--no-github` to see the app missing.
+ * FluffyJaws' MCP server answers in memory too, connected as a made-up person; its Okta is the
+ * preview's `/__dev/okta` (its sign-in sends the browser straight back), so Connect again and
+ * Disconnect work. Start with `--no-fluffyjaws` to see it before anyone connected it.
  */
 
 const PREVIEW_TOKEN = 'preview-token';
+
+/** Clef on a customer and a partner, made up: Pied Piper works for ACME (src/orgpartners.js). */
+const DEV_PARTNER_CLEF = {
+  run: async (model, { state }) => ({
+    answers: { works: { type: 'noul', noul: /C: slug acme,/.test(state) ? 0.92 : 0.34 } },
+  }),
+};
+
+/**
+ * Two partners' customers (src/orgpartners.js): Pied Piper's people post in ACME's threads, in
+ * one of Hooli's and are in Wonka's channel, and its threads and ACME's name the site owner
+ * `acme-web`; Raviga was confirmed for Soylent by hand. A's partners are `seedPartners`.
+ */
+function seedPartnerPairs(DB) {
+  const db = DB.sqlite;
+  const at = (days) => new Date(Date.now() - days * 86400000).toISOString();
+  db.exec(`INSERT INTO orgs (slug, name, type, icon, updated_at) VALUES
+    ('piedpiper', 'Pied Piper Digital', 'partner', NULL, '2026-10-20T09:00:00Z'),
+    ('raviga', 'Raviga Partners', 'partner', NULL, '2026-10-20T09:00:00Z')`);
+  db.prepare(`INSERT INTO channels (source, tenant, channel_id, name, fetched_at)
+    VALUES ('slack', 'T-FAKE', 'C0PIEDPIPER', 'aem-piedpiper', ?)`).run(at(1));
+  const own = ['Preview of the new header', 'Cutover checklist'].map((title, i) => {
+    const thread = `slack:T-FAKE:C0PIEDPIPER:pp-${i}`;
+    db.prepare(`INSERT INTO threads (thread, source, tenant, channel_id, root_id, org, team, kind,
+        channel_name, title, path, root_at, last_at, any_at, messages, updated_at)
+      VALUES (?, 'slack', 'T-FAKE', 'C0PIEDPIPER', ?, 'piedpiper', 'admin', 'channel', 'aem-piedpiper',
+        ?, ?, ?, ?, ?, 1, ?)`)
+      .run(thread, `pp-${i}`, title, `channels/piedpiper/admin/slack-C0PIEDPIPER/pp-${i}/`, at(i + 2), at(i + 1), at(i + 1), at(i + 1));
+    return {
+      thread, source: 'slack', tenant: 'T-FAKE', channel_id: 'C0PIEDPIPER',
+    };
+  });
+  const of = (org, n) => db.prepare('SELECT thread, source, tenant, channel_id FROM threads WHERE org = ? ORDER BY thread LIMIT ?').all(org, n);
+  const people = [['U-PP1', 'Erlich B.', 'erlich@piedpiper.example'], ['U-PP2', 'Dinesh C.', 'dinesh@piedpiper.example'],
+    ['U-PP3', 'Monica H.', 'monica@piedpiper.example']];
+  let n = 0;
+  const post = (t, user) => {
+    n += 1;
+    db.prepare(`INSERT OR IGNORE INTO identities (source, tenant, user_id, kind, name, email, fetched_at)
+      VALUES (?, ?, ?, 'person', ?, ?, ?)`).run(t.source, t.tenant, user[0], user[1], user[2], at(1));
+    db.prepare(`INSERT INTO messages (source, tenant, channel_id, id, thread, at, staff, counted, deleted, author_key)
+      VALUES (?, ?, ?, ?, ?, ?, 0, 1, 0, ?)`).run(t.source, t.tenant, t.channel_id, `pp-${n}`, t.thread, at(1), `${t.source}:${t.tenant}:${user[0]}`);
+  };
+  own.forEach((t) => people.forEach((u) => post(t, u)));
+  of('acme', 4).forEach((t, i) => post(t, people[i % 2]));
+  of('hooli', 1).forEach((t) => post(t, people[2]));
+  const wonka = of('wonka', 1)[0];
+  if (wonka) {
+    db.prepare(`INSERT OR IGNORE INTO channel_members (source, tenant, channel_id, user_id, email, name)
+      VALUES (?, ?, ?, 'U-PP3', 'monica@piedpiper.example', 'Monica H.')`).run(wonka.source, wonka.tenant, wonka.channel_id);
+  }
+  const acme = of('acme', 1)[0];
+  for (const t of [own[0], acme].filter(Boolean)) {
+    db.prepare('INSERT OR IGNORE INTO facts (thread, source, field, value) VALUES (?, \'rule\', \'site\', \'acme-web/www\')').run(t.thread);
+  }
+  db.prepare(`INSERT INTO org_partners (customer, partner, confirmed_by, confirmed_at, since, first_at,
+      last_at) VALUES ('soylent', 'raviga', 'priya@example.com', ?, '2025-02', ?, ?)`).run(at(3), at(240), at(110));
+  // Raviga worked for Hooli until the summer: a former partner, on both pages.
+  db.prepare(`INSERT INTO org_partners (customer, partner, confirmed_by, confirmed_at, since, until,
+      ended_by, ended_at, first_at, last_at)
+    VALUES ('hooli', 'raviga', 'priya@example.com', ?, '2025-06', '2026-08', 'priya@example.com', ?, ?, ?)`)
+    .run(at(60), at(20), at(300), at(95));
+  // What waits for the admin team of the partners, in its inbox (src/partnerrequests.js): Clef
+  // finds Raviga's people gone from Soylent's threads; Lena asks for Pied Piper at ACME; and the
+  // agent of an ACME thread read that Agency Co takes over its site.
+  const day = (d) => at(d).slice(0, 10);
+  db.prepare(`INSERT INTO org_partner_requests (customer, partner, action, until, note, fingerprint,
+      requested_by, requested_at) VALUES ('soylent', 'raviga', 'end', ?, ?, ?, 'clef', ?)`)
+    .run(day(110), `Nobody of Raviga Partners posted in Soylent's threads since ${day(110)}, and its threads went on until ${day(1)}.`, `end:${day(110)}`, at(0.4));
+  db.prepare(`INSERT INTO org_partner_requests (customer, partner, action, since, note, requested_by,
+      requested_name, requested_at) VALUES ('acme', 'piedpiper', 'link', '2026-09', ?, 'lena@example.com', 'Lena Berg', ?)`)
+    .run('They run the cutover with ACME; their people are in every launch thread.', at(0.2));
+  const acmeThread = of('acme', 1)[0];
+  if (acmeThread) {
+    db.prepare(`INSERT INTO org_partner_requests (customer, partner, action, since, note, thread,
+        requested_by, requested_name, requested_at) VALUES ('acme', 'agency', 'link', ?, ?, ?, 'agent', ?, ?)`)
+      .run(day(5), 'Elena (ACME) wrote that Agency Co takes over the site\'s day-to-day support this month.', acmeThread.thread, 'The agent of a thread in #aem-acme', at(0.1));
+  }
+}
+
+/** Clef on two orgs, made up: one when their names are (src/orgmerge.js). */
+const DEV_CLEF = {
+  run: async (model, { state }) => ({
+    answers: { one: { type: 'noul', noul: /same name|called|starts with|spelled alike/.test(state) ? 0.93 : 0.18 } },
+  }),
+};
 
 // The preview's favicons: a letter on a colour, per domain; none for the ones Google would not
 // know (the Worker answers 404 then, and the page shows the org without an icon).
 const NO_FAVICON = /(^|\.)(globex|initech|parked)\.example$/;
 const HUES = ['#c2410c', '#0f766e', '#7c3aed', '#be185d', '#1d4ed8', '#4d7c0f'];
-function devFavicon(domain) {
+export function devFavicon(domain) {
   const d = String(domain || '').replace(/^www\./, '');
   if (!/\.example$/.test(d) || NO_FAVICON.test(d)) {
     return new Response('no favicon', { status: 404, headers: { 'content-type': 'text/plain' } });
   }
   const hue = HUES[[...d].reduce((h, c) => h + c.charCodeAt(0), 0) % HUES.length];
-  const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64"><rect width="64" height="64" rx="12" fill="${hue}"/>`
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 64 64"><rect width="64" height="64" rx="12" fill="${hue}"/>`
     + `<text x="32" y="44" font-family="sans-serif" font-size="36" font-weight="700" fill="#fff" text-anchor="middle">${d[0].toUpperCase()}</text></svg>`;
   return new Response(svg, { headers: { 'content-type': 'image/svg+xml' } });
 }
@@ -158,24 +260,6 @@ async function wikiOauth(request) {
 const PREVIEW_INSTALL_TOKEN = 'ghs_preview';
 const GLOBAL_MCP = fakeMcpServers([
   {
-    url: BROWSER_MCP_URL,
-    name: 'cloudflare-browser-mcp-server',
-    token: PREVIEW_TOKEN,
-    tools: tools([
-      ['get_url_markdown', 'Fetches the webpage content and converts it into Markdown format', true],
-      ['get_url_html_content', 'Retrieves the HTML content of the specified URL', true],
-      ['get_url_screenshot', 'Captures a screenshot of the webpage', true],
-      ['get_url_pdf', 'Renders the webpage to a PDF document', true],
-      ['get_url_links', 'Returns the list of links on the page', true],
-      ['scrape_url_elements', 'Scrapes elements from the page by CSS selector', true],
-      ['get_url_json', 'Extracts structured JSON from the page using AI', true],
-      ['start_crawl', 'Starts an asynchronous crawl of a website', false],
-      ['get_crawl_result', 'Returns the status and records of a crawl job', true],
-      ['list_browser_sessions', 'Lists active Browser Run sessions for the account', true],
-      ['kill_browser_session', 'Closes a Browser Run session by its session ID', false],
-    ], 'url'),
-  },
-  {
     url: GITHUB_MCP_URL,
     name: 'github',
     token: PREVIEW_INSTALL_TOKEN,
@@ -189,6 +273,54 @@ const GLOBAL_MCP = fakeMcpServers([
   },
 ]);
 const NO_GITHUB = process.argv.includes('--no-github');
+const NO_FLUFFYJAWS = process.argv.includes('--no-fluffyjaws');
+const PREVIEW_FLUFFY_TOKEN = 'preview-fluffyjaws-token';
+const FLUFFY_OKTA = `${PREVIEW_ORIGIN}/__dev/okta`;
+const FLUFFY_MCP = fakeMcpServers([{
+  url: FLUFFYJAWS_MCP_URL,
+  name: 'FluffyJaws 3.0',
+  token: PREVIEW_FLUFFY_TOKEN,
+  tools: tools([
+    ['fluffyjaws_chat', 'Ask FluffyJaws a question', true],
+    ['search_fluffypack', 'Search the FluffyPack knowledge', true],
+    ['full_documentation_search', 'Search the product documentation', true],
+    ['slack_search', 'Search Slack', true],
+    ['wiki_documentation_search', 'Search the wiki', true],
+    ['jira_search', 'Search Jira', true],
+    ['github_code_search', 'Search code on GitHub', true],
+    ['dynamics_ticket_search', 'Search support tickets', true],
+    ['content_compass_recommend', 'Recommend content, and save the conversation', false],
+  ], 'query'),
+}]);
+// The slack-automation relay's SlackMcp entrypoint, made up: a service binding in the preview
+// too (SLACK_MCP). Only the admin team switches it; a team manager sees its switches disabled.
+const SLACK_MCP = fakeMcpServers([{
+  url: SLACK_MCP_URL,
+  name: 'slack-automation-relay',
+  tools: tools([
+    ['channel_profile', 'Who is in a channel and how: members, guests, Slack Connect organisations', true],
+    ['person_status', 'One person by email or Slack user id: their account here', true],
+    ['invite_guest', 'Sends a guest invitation by email to one channel', false],
+    ['add_to_channel', 'Adds a member or guest of this workspace to a channel', false],
+    ['remove_from_channel', 'Removes a person from a public channel', false],
+    ['invite_slack_connect', 'Sends a Slack Connect invitation by email to a public channel', false],
+    ['disconnect_org', 'Disconnects a Slack Connect organisation from a channel', false],
+    ['archive_channel', 'Archives a channel. Never #general', false],
+  ], 'channel'),
+}]);
+/** FluffyJaws' Okta, made up: any code, one token; revoking does nothing. */
+async function fluffyOkta(request) {
+  if (new URL(request.url).pathname.endsWith('/v1/token')) {
+    return Response.json({
+      access_token: PREVIEW_FLUFFY_TOKEN,
+      token_type: 'Bearer',
+      expires_in: 3600,
+      refresh_token: 'preview-fluffyjaws-refresh',
+      id_token: `e30.${Buffer.from(JSON.stringify({ email: 'dana.ops@example.com', name: 'Dana Ops' })).toString('base64url')}.x`,
+    });
+  }
+  return new Response(null, { status: 200 });
+}
 const { privateKey: PREVIEW_KEY } = generateKeyPairSync('rsa', {
   modulusLength: 2048,
   privateKeyEncoding: { type: 'pkcs1', format: 'pem' },
@@ -222,6 +354,12 @@ globalThis.fetch = (input, init) => {
   }
   if (GLOBAL_MCP.handles(url)) {
     return GLOBAL_MCP.fetch(input, init);
+  }
+  if (FLUFFY_MCP.handles(url)) {
+    return FLUFFY_MCP.fetch(input, init);
+  }
+  if (url.startsWith(`${FLUFFY_OKTA}/`)) {
+    return fluffyOkta(new Request(input, init));
   }
   if (url.startsWith('https://api.github.com/')) {
     return githubApi(new Request(input, init));
@@ -340,6 +478,30 @@ const ADMIN_CHANNELS = [
     clef: { edge: 0.83, platform: 0.12, none: 0.05 },
     kind: ['channel', 0.66],
   },
+  // Duplicate customers (src/orgmerge.js): ACME again, under acme-co, by its Workfront channel;
+  // Wonka again, under wonkaindustries, by a Teams team of its own (a merge of it is asked for).
+  {
+    id: 'C0ACMECO',
+    source: 'slack',
+    name: 'workfront-acme-co',
+    org: 'acme-co',
+    topic: 'Workfront proofing for the ACME marketing team',
+    titles: ['Proofing links expire after a day'],
+    members: [1],
+    clef: { platform: 0.7, edge: 0.2, none: 0.1 },
+    kind: ['channel', 0.9],
+  },
+  {
+    id: 'CH-WONKAIND',
+    source: 'teams',
+    group: 'xyz-wonkaindustries',
+    name: 'Main',
+    org: 'wonkaindustries',
+    titles: ['SSO for the new authors'],
+    members: [1, 6],
+    clef: { edge: 0.6, platform: 0.3, none: 0.1 },
+    kind: ['channel', 0.85],
+  },
   {
     id: 'C0SOYLENT1',
     source: 'slack',
@@ -354,6 +516,48 @@ const ADMIN_CHANNELS = [
     clef: { platform: 0.81, edge: 0.15, none: 0.04 },
     kind: ['channel', 0.97],
   },
+  // Channels no rule files under an org (Customers' Unassigned, src/orgassign.js): one in Wonka's
+  // Teams team, one with Hooli in its name, one whose people write from a domain no org has (a
+  // new org), and one that says nothing.
+  {
+    id: 'CH-WONKAPLAN',
+    source: 'teams',
+    group: 'xyz-wonka',
+    name: 'Planning',
+    org: '_unassigned',
+    titles: ['Q3 roadmap review'],
+    clef: { edge: 0.5, platform: 0.4, none: 0.1 },
+    kind: ['channel', 0.8],
+  },
+  {
+    id: 'C0HOOLISYNC',
+    source: 'slack',
+    name: 'hooli-adobe-sync',
+    org: '_unassigned',
+    titles: ['Weekly sync notes'],
+    clef: { edge: 0.5, platform: 0.4, none: 0.1 },
+    kind: ['channel', 0.8],
+  },
+  {
+    id: 'C0ZORGCO',
+    source: 'slack',
+    name: 'zorg-and-adobe',
+    org: '_unassigned',
+    shared: 1,
+    titles: ['Kick-off', 'SSO setup'],
+    accounts: [['U-ZORG1', 'Jean-Baptiste Zorg', 'jbz@zorg.example'], ['U-ZORG2', 'Right Arm', 'arm@zorg.example']],
+    clef: { platform: 0.6, edge: 0.3, none: 0.1 },
+    kind: ['channel', 0.9],
+  },
+  {
+    id: 'C0DDAUTOM',
+    source: 'slack',
+    name: 'dd-autom-t1',
+    org: '_unassigned',
+    titles: ['ping'],
+    clef: { none: 0.5, platform: 0.3, edge: 0.2 },
+    kind: ['channel', 0.6],
+  },
   {
     id: 'C0SANDBOX3',
     source: 'slack',
@@ -363,6 +567,18 @@ const ADMIN_CHANNELS = [
     clef: { none: 0.84, platform: 0.1, edge: 0.06 },
     kind: ['ignore', 0.9],
   },
+  // The team wizard's case (src/teamwizard.js): channels named for a product no team has a
+  // rule for, with the same two people in most of them, known only as members, and on no team.
+  ...['acme', 'globex', 'hooli', 'wonka'].map((org, n) => ({
+    id: `C0LOOM${org.toUpperCase()}`,
+    source: 'slack',
+    name: `loom-${org}`,
+    org,
+    titles: ['Recording does not start'],
+    accounts: [['U-KIRA', 'Kira Selby', 'kselby@example.com'], ...(n < 3 ? [['U-NOOR', 'Noor Haddad', 'nhaddad@example.com']] : [])],
+    clef: { none: 0.6, platform: 0.3, edge: 0.1 },
+    kind: ['channel', 0.9],
+  })),
   // A customer with many channels: its tools' per-channel lists are long.
   ...Array.from({ length: 40 }, (_, n) => ({
     id: `C0INISITE${n}`,
@@ -374,6 +590,45 @@ const ADMIN_CHANNELS = [
     kind: ['channel', 0.9],
   })),
 ];
+
+/**
+ * Conflicts between team rules, threads of the admin team's inbox (src/ruleconflicts.js): Edge ops'
+ * narrower `^aem-edge-` inside Platform ops' `^aem-` (either may win), and Edge ops' rule for a
+ * Teams team name against Platform ops' `^aem-` (one of the other conflicts: only a keep settles
+ * it). Edge ops' manual assignment of an `aem-` channel is none: it decides that channel. And a
+ * follow rule of Edge ops', which its page lists. The channels have no threads, so settling moves
+ * nothing.
+ */
+function seedRuleConflicts(DB) {
+  const db = DB.sqlite;
+  const at = new Date(Date.now() - 86400000).toISOString();
+  for (const [id, name] of [['C0EDGEACME', 'aem-edge-acme'], ['C0EDGEHOOL', 'aem-edge-hooli'], ['C0WONKAAEM', 'aem-wonka']]) {
+    db.prepare(`INSERT INTO channels (source, tenant, channel_id, name, fetched_at)
+      VALUES ('slack', 'T-FAKE', ?, ?, ?)`).run(id, name, at);
+  }
+  db.prepare(`INSERT INTO channels (source, tenant, channel_id, name, group_id, group_name, fetched_at)
+    VALUES ('teams', 'T-FAKE', 'CH-STARKAEM', 'aem-stark', 'TEAM-xyz-stark', 'xyz-stark', ?)`).run(at);
+  db.prepare(`INSERT INTO rules (target, priority, source, field, pattern, value, note, updated_by, updated_at)
+    VALUES ('team', 60, 'teams', 'group_name', '^xyz-stark$', 'edge', 'Stark runs it with us', 'priya@example.com', ?)`).run(at);
+  db.prepare(`INSERT INTO rules (target, priority, source, field, pattern, value, note, updated_by, updated_at)
+    VALUES ('team', 50, NULL, 'name', '^aem-edge-', 'edge', 'Edge Delivery customers', 'priya@example.com', ?)`).run(at);
+  db.prepare(`INSERT INTO rules (target, priority, source, field, pattern, value, note, updated_by, updated_at)
+    VALUES ('team', 10, 'slack', 'channel_id', '^C0WONKAAEM$', 'edge', 'manual assignment', 'priya@example.com', ?)`).run(at);
+  // A rule naming orgs by a long alternation, as production has: a regular expression with no
+  // spaces, which has to break inside its table on a customer's Manage rather than widen it.
+  const products = ['sites', 'forms', 'assets', 'screens', 'commerce', 'headless', 'analytics', 'journeys',
+    'campaigns', 'workflows', 'dynamic\\-media', 'content\\-hub', 'edge\\-delivery', 'cloud\\-service',
+    'universal\\-editor', 'live\\-search', 'optimizer', 'genstudio', 'firefly', 'target', 'audience'];
+  db.prepare(`INSERT INTO rules (target, priority, source, field, pattern, value, note, updated_by, updated_at)
+    VALUES ('org', 90, NULL, 'name', ?, '$1', 'a product, then the customer', 'priya@example.com', ?)`)
+    .run(`^(?:${products.join('|')})\\-(.+?)\\-(?:alerts|support|ops)$`, at);
+  const follow = db.prepare(`INSERT INTO rules (target, priority, source, field, pattern, value, note, updated_by, updated_at)
+    VALUES ('follow', 100, NULL, 'name', '^initech-', 'edge', 'their CDN questions', 'priya@example.com', ?)`).run(at);
+  // Its shares, as src/followrules.js writes them.
+  db.prepare(`INSERT INTO channel_teams (source, channel_id, team, added_by, added_at)
+    SELECT source, channel_id, 'edge', ?, ? FROM channels WHERE name LIKE 'initech-%'`)
+    .run(`rule:${follow.lastInsertRowid}`, at);
+}
 
 function seedAdminChannels(DB) {
   const at = (days) => new Date(Date.now() - days * 86400000).toISOString();
@@ -420,6 +675,10 @@ function seedAdminChannels(DB) {
       db.prepare(`INSERT INTO channel_members (source, tenant, channel_id, user_id, email, name)
         VALUES (?, 'T-FAKE', ?, ?, ?, ?)`).run(c.source, c.id, `U-${id}`, p.email, p.name);
     });
+    (c.accounts || []).forEach(([user, name, email]) => {
+      db.prepare(`INSERT INTO channel_members (source, tenant, channel_id, user_id, email, name)
+        VALUES (?, 'T-FAKE', ?, ?, ?, ?)`).run(c.source, c.id, user, email, name);
+    });
     const [team, p] = Object.entries(c.clef).sort((a, b) => b[1] - a[1])[0];
     db.prepare(`INSERT INTO channel_labels (source, tenant, channel_id, team, team_p, teams, kind, kind_p,
         labeled_through, options, model, labeled_at) VALUES (?, 'T-FAKE', ?, ?, ?, ?, ?, ?, '', 'edge,platform', 'clef', ?)`)
@@ -427,10 +686,283 @@ function seedAdminChannels(DB) {
   });
 }
 
-export function createAdmin(store, { manager = false, member = false, bases = [] } = {}) {
+/**
+ * Edge ops' suggested members (src/membersuggest.js): Priya works its threads, Tom reacts in one,
+ * Kira and Noor are only members of its channels (Kira of more), and the topic map's people of a
+ * topic that is mostly Edge ops' threads work it elsewhere, two of them known by mail address.
+ * Made up.
+ */
+function seedMemberSuggestions(DB) {
+  const db = DB.sqlite;
+  const at = (days) => new Date(Date.now() - days * 86400000).toISOString();
+  const threads = db.prepare(`SELECT thread, source, tenant, channel_id FROM threads
+    WHERE team = 'edge' AND source IN ('slack', 'teams') ORDER BY last_at DESC LIMIT 6`).all();
+  threads.slice(0, 4).forEach((t, i) => {
+    db.prepare(`INSERT OR IGNORE INTO messages (source, tenant, channel_id, id, thread, at, person, staff, counted, author_key)
+      VALUES (?, ?, ?, ?, ?, ?, 2, 1, 1, ?)`).run(t.source, t.tenant, t.channel_id, `msug-${i}`, t.thread, at(i + 1), `${t.source}:${t.tenant}:U-2`);
+  });
+  if (threads[0]) {
+    const t = threads[0];
+    db.prepare(`INSERT OR IGNORE INTO identities (source, tenant, user_id, kind, name, email, person, fetched_at)
+      VALUES (?, ?, 'U-4', 'person', 'Tom Okafor', 'tom@example.com', 4, ?)`).run(t.source, t.tenant, at(0));
+    db.prepare('INSERT OR IGNORE INTO reactions (message, thread, emoji, user_key, at) VALUES (?, ?, \'eyes\', ?, ?)')
+      .run(`${t.thread}:msug`, t.thread, `${t.source}:${t.tenant}:U-4`, at(3));
+  }
+  const channels = [...new Map(threads.map((t) => [`${t.source}:${t.channel_id}`, t])).values()];
+  channels.forEach((c, i) => {
+    const member = db.prepare(`INSERT OR IGNORE INTO channel_members (source, tenant, channel_id, user_id, email, name)
+      VALUES (?, ?, ?, ?, ?, ?)`);
+    member.run(c.source, c.tenant, c.channel_id, 'U-KIRA', 'kselby@example.com', 'Kira Selby');
+    if (i === 0) {
+      member.run(c.source, c.tenant, c.channel_id, 'U-NOOR', 'nhaddad@example.com', 'Noor Haddad');
+    }
+    db.prepare(`UPDATE channels SET members_at = ?, members_error = NULL
+      WHERE source = ? AND tenant = ? AND channel_id = ?`).run(at(1), c.source, c.tenant, c.channel_id);
+  });
+  // The topic map's smallest topic gets Edge ops' threads, and its people are known here.
+  const row = db.prepare('SELECT id, map FROM topic_maps ORDER BY built_at DESC, id DESC LIMIT 1').get();
+  if (!row || !threads.length) {
+    return;
+  }
+  const map = JSON.parse(row.map);
+  const [topic] = [...map.topics].sort((a, b) => a.size - b.size);
+  const crew = new Set(map.threads.filter((t) => t.topic === topic.id)
+    .flatMap((t) => Object.keys(t.staff).map(Number)));
+  const known = new Set(db.prepare('SELECT name FROM people').all().map((p) => p.name));
+  const newcomers = [...crew].filter((id) => map.people[id] && !known.has(map.people[id]));
+  newcomers.slice(0, 2).forEach((id) => {
+    const name = map.people[id];
+    db.prepare('INSERT OR IGNORE INTO people (id, email, name, staff) VALUES (?, ?, ?, 1)')
+      .run(id, `${name.toLowerCase().replace(/[^a-z]+/g, '.')}@example.com`, name);
+  });
+  for (const t of threads) {
+    map.threads.push({
+      key: t.thread,
+      title: '',
+      team: 'edge',
+      org: 'opspile',
+      at: at(5),
+      last: at(4),
+      messages: 3,
+      kind: 'question',
+      tags: [],
+      products: [],
+      topic: topic.id,
+      sim: 0.5,
+      staff: {},
+      customers: {},
+    });
+  }
+  topic.size += threads.length;
+  db.prepare('UPDATE topic_maps SET map = ? WHERE id = ?').run(JSON.stringify(map), row.id);
+}
+
+/**
+ * The bots under the admin page's Requests (src/ourbots.js): the fake inbox's bots with their
+ * messages, Alertmanager and opspile waiting for an admin to say whose they are, one an admin said
+ * is Adobe's (Provisioning Agent, on Adobe's side in its thread, which an admin also
+ * named and gave a picture: on Teams it posts as its registration, `provisioning-agent`, with
+ * none), and one external that only posts alerts, only mentioned. Made up.
+ */
+function seedBots(DB, store) {
+  const db = DB.sqlite;
+  const saidBy = [...store.people.values()].find((p) => p.staff) || {};
+  const BOTS = [
+    {
+      name: 'Provisioning Agent',
+      source: 'teams',
+      id: 'BOT-PROVISIONING',
+      ours: 1,
+      at: 3,
+      posts: 'provisioning-agent',
+      picture: '/icon-192.png',
+    },
+    { name: 'Alertmanager', source: 'slack', id: 'B0ALERTMANAGER' },
+    { name: 'opspile', source: 'slack', id: 'B0OPSPILE' },
+    {
+      name: 'Deploy Notifier', handle: 'deploy', source: 'teams', id: 'BOT-DEPLOY', ours: 0, at: 9, alerts: 1,
+    },
+  ];
+  for (const b of BOTS) {
+    const tenants = new Set();
+    for (const entry of store.threads.values()) {
+      for (const m of entry.messages.filter((x) => x.author.kind === 'bot' && x.author.name === b.name
+        && entry.row.source === b.source)) {
+        tenants.add(entry.row.tenant);
+        db.prepare(`INSERT OR IGNORE INTO messages (source, tenant, channel_id, id, thread, at, staff,
+            counted, deleted, author_key, author_kind, preview)
+          VALUES (?, ?, ?, ?, ?, ?, ?, 0, 0, ?, 'bot', ?)`)
+          .run(
+            entry.row.source,
+            entry.row.tenant,
+            entry.row.channel_id,
+            m.id,
+            entry.key,
+            m.at,
+            b.ours ? 1 : 0,
+            `${entry.row.source}:${entry.row.tenant}:${b.id}`,
+            previewOf(m.body || ''),
+          );
+      }
+    }
+    const said = b.ours === undefined ? null : new Date(Date.now() - b.at * 86400000).toISOString();
+    for (const tenant of tenants.size ? tenants : ['T-FAKE']) {
+      db.prepare(`INSERT OR IGNORE INTO identities (source, tenant, user_id, kind, name, handle,
+          fetched_at, ours, ours_by, ours_at, display_name, display_avatar, alerts)
+          VALUES (?, ?, ?, 'bot', ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+        .run(
+          b.source,
+          tenant,
+          b.id,
+          b.posts || b.name,
+          b.handle || null,
+          new Date().toISOString(),
+          b.ours ?? null,
+          said && saidBy.email,
+          said,
+          b.posts ? b.name : null,
+          b.picture || null,
+          b.alerts || null,
+        );
+    }
+  }
+}
+
+/**
+ * The accounts that are staff by themselves under the admin team's Staff accounts
+ * (src/accountlinks.js): the Teams tenant's own admin accounts, two that nobody said whose they
+ * are yet, one with messages in a Teams thread, and one an admin linked to a colleague; and two
+ * Discord accounts with a staff role that nobody connected, which wrote in a Discord thread: LB,
+ * whose initials and a colleague's Contact alias suggest Lena, and TO, which a thread agent
+ * proposed is Tom's. Made up, as their tenant's domain and their guild.
+ */
+/**
+ * Partners: Agency Co, a partner org whose threads Ravi and a colleague post in, so the inbox
+ * finds agency.example to be its domain (src/partners.js), and one of ACME's people in one of
+ * them, whose domain is left out as ACME's own; and the admin team's rows over what is found:
+ * agency.co.uk added by hand, and a freelancer's domain said not to be a partner's.
+ */
+function seedPartners(DB) {
+  const db = DB.sqlite;
+  const at = new Date(Date.now() - 3 * 86400000).toISOString();
+  db.exec(`INSERT OR IGNORE INTO orgs (slug, name, type, icon, updated_at) VALUES
+    ('agency', 'Agency Co', 'partner', NULL, '2026-10-20T09:00:00Z');
+    INSERT OR IGNORE INTO people (id, email, name, staff) VALUES (61, 'lee@agency.example', 'Lee Ward', 0);
+    INSERT OR IGNORE INTO identities (source, tenant, user_id, kind, name, email, person, fetched_at) VALUES
+      ('slack', 'T-FAKE', 'TP-61', 'person', 'Lee Ward', 'lee@agency.example', 61, '${at}'),
+      ('slack', 'T-FAKE', 'TP-AG-8', 'person', 'Ravi Kumar', 'ravi@agency.example', 8, '${at}'),
+      ('slack', 'T-FAKE', 'TP-AG-52', 'person', 'Elena Marsh', 'elena@acme.example', 52, '${at}');
+    INSERT INTO partner_domains (domain, name, org, excluded, updated_by, updated_at) VALUES
+      ('agency.co.uk', NULL, 'agency', 0, 'priya@example.com', '${at}'),
+      ('freelance.example', NULL, NULL, 1, 'priya@example.com', '${at}')`);
+  const thread = db.prepare(`INSERT OR IGNORE INTO threads (thread, source, tenant, channel_id, root_id,
+      org, team, kind, channel_name, path, root_at, last_at, any_at, messages, updated_at)
+    VALUES (?, 'slack', 'T-FAKE', 'C0AGENCY1', ?, 'agency', 'platform', 'channel', 'ext-agency', 'p/',
+      ?, ?, ?, 2, ?)`);
+  const message = db.prepare(`INSERT OR IGNORE INTO messages (source, tenant, channel_id, id, thread, at,
+      person, staff, counted, deleted, author_key) VALUES ('slack', 'T-FAKE', 'C0AGENCY1', ?, ?, ?, ?, 0, 1, 0, ?)`);
+  const posts = [['1', [8, 61]], ['2', [61, 8]], ['3', [8, 52]]];
+  for (const [root, who] of posts) {
+    const key = `slack:T-FAKE:C0AGENCY1:ag-${root}`;
+    thread.run(key, `ag-${root}`, at, at, at, at);
+    for (const id of who) {
+      message.run(`ag-${root}-${id}`, key, at, id, `slack:T-FAKE:${id === 61 ? 'TP-61' : `TP-AG-${id}`}`);
+    }
+  }
+}
+
+function seedAccounts(DB, store) {
+  const db = DB.sqlite;
+  const staff = [...store.people.values()].filter((p) => p.staff);
+  const teams = [...store.threads.values()].find(({ row }) => row.source === 'teams');
+  const tenant = teams ? teams.row.tenant : 'T-FAKE';
+  const ACCOUNTS = [
+    { id: 'U-OWNER-AB', name: 'AB', posts: 2 },
+    { id: 'U-OWNER-CD', name: 'CD' },
+    {
+      id: 'U-OWNER-EF', name: 'EF', person: staff[1] || staff[0], posts: 1,
+    },
+  ];
+  for (const a of ACCOUNTS) {
+    const linked = a.person ? new Date(Date.now() - 2 * 86400000).toISOString() : null;
+    db.prepare(`INSERT OR IGNORE INTO identities (source, tenant, user_id, kind, name, email,
+        fetched_at, company, staff, guest, person, linked_by, linked_at)
+        VALUES ('teams', ?, ?, 'person', ?, ?, ?, 'Adobe', 1, 0, ?, ?, ?)`)
+      .run(
+        tenant,
+        a.id,
+        a.name,
+        `owner_${a.name.toLowerCase()}@support-tenant.example`,
+        new Date().toISOString(),
+        a.person ? a.person.id : null,
+        linked && staff[0].email,
+        linked,
+      );
+    for (let i = 0; teams && i < (a.posts || 0); i += 1) {
+      db.prepare(`INSERT OR IGNORE INTO messages (source, tenant, channel_id, id, thread, at, staff,
+          counted, deleted, author_key, author_kind, author, person)
+        VALUES ('teams', ?, ?, ?, ?, ?, 1, 1, 0, ?, 'person', ?, ?)`)
+        .run(
+          tenant,
+          teams.row.channel_id,
+          `${a.id}-${i}`,
+          teams.key,
+          new Date(Date.now() - (i + 1) * 3600000).toISOString(),
+          `teams:${tenant}:${a.id}`,
+          a.person ? a.person.name : a.name,
+          a.person ? a.person.id : null,
+        );
+    }
+  }
+}
+
+function seedDiscordAccounts(DB, store) {
+  const db = DB.sqlite;
+  const staff = [...store.people.values()].filter((p) => p.staff);
+  const discord = [...store.threads.values()].find(({ row }) => row.source === 'discord');
+  const lena = staff.find((p) => p.name === 'Lena Berg');
+  const tom = staff.find((p) => p.name === 'Tom Okafor');
+  if (!discord || !lena || !tom) {
+    return;
+  }
+  const { row } = discord;
+  const at = (h) => new Date(Date.now() - h * 3600000).toISOString();
+  for (const [id, name, aliases, posts] of [['D-LB', 'LB', ['lb_ops'], 3], ['D-TO', 'TO', ['tokafor'], 1]]) {
+    db.prepare(`INSERT OR IGNORE INTO identities (source, tenant, user_id, kind, name, fetched_at,
+        avatar, staff, aliases) VALUES ('discord', ?, ?, 'person', ?, ?, '', 1, ?)`)
+      .run(row.tenant, id, name, new Date().toISOString(), JSON.stringify(aliases));
+    for (let i = 0; i < posts; i += 1) {
+      db.prepare(`INSERT OR IGNORE INTO messages (source, tenant, channel_id, id, thread, at, staff,
+          counted, deleted, author_key, author_kind, author)
+        VALUES ('discord', ?, ?, ?, ?, ?, 1, 1, 0, ?, 'person', ?)`)
+        .run(row.tenant, row.channel_id, `${id}-${i}`, discord.key, at(i + 2), `discord:${row.tenant}:${id}`, name);
+    }
+  }
+  // Lena's Contact in Platform ops' knowledge base goes by LB's Discord name (dev-ui-kb.mjs).
+  // A thread agent's proposal that TO is Tom's, with its note in the account's thread.
+  const key = `discord:${row.tenant}:D-TO`;
+  const note = 'Tom signed the message "TO, platform on-call" and replied to a mention of Tom.';
+  db.prepare(`INSERT OR IGNORE INTO account_proposals (account, person, note, thread, by_name, at)
+    VALUES (?, ?, ?, ?, 'The agent of a thread in #community-forum', ?)`).run(key, tom.id, note, discord.key, at(1));
+  db.prepare(`INSERT INTO request_log (request, type, body, author_name, at)
+    VALUES (?, 'note', ?, 'The agent of a thread in #community-forum', ?)`)
+    .run(`request:account:${key}`, `Proposes that it is **Tom Okafor**'s (${tom.email}): ${note}`, at(1));
+}
+
+/** The thread agents the answers to their questions go to: they take them, and do nothing. */
+const DEV_AGENTS = {
+  idFromName: (name) => name,
+  get: () => ({ __unsafe_ensureInitialized: async () => {}, answered: async () => ({ ok: true }) }),
+};
+
+export function createAdmin(store, {
+  manager = false, member = false, noTeam = false, bases = [],
+} = {}) {
   const teamRows = store.teams.some((t) => t.slug === 'admin')
     ? store.teams.map(({ slug, name }) => ({ slug, name }))
     : [{ slug: 'admin', name: 'Admin' }, ...store.teams.map(({ slug, name }) => ({ slug, name }))];
+  // A long name, self-managed: its row in the list is as high as the others, the name first.
+  teamRows.push({ slug: 'experience-workspace', name: 'Experience Modernization Workspace', self_managed: 1 });
   const DB = d1({
     teams: teamRows,
     people: [...store.people.values()].map((p) => ({
@@ -492,10 +1024,23 @@ export function createAdmin(store, { manager = false, member = false, bases = []
     }
   }
   seedAdminChannels(DB);
+  seedRuleConflicts(DB);
+  seedBots(DB, store);
+  seedAccounts(DB, store);
+  seedDiscordAccounts(DB, store);
   // What the preview costs: the COGS dashboard's made-up usage (dev-ui-cogs.mjs).
   seedCogs(DB);
   // The Topics page's map (dev-ui-topics.mjs).
   seedTopicMap(DB);
+  seedMemberSuggestions(DB);
+  // Platform ops' half year, for its overview (dev-ui-team.mjs).
+  seedTeamProfile(DB);
+  // And ACME's, for its overview (dev-ui-customer.mjs).
+  seedCustomerProfile(DB);
+  // And Initech's, a vendor's: its cases, status posts and the customers on its products
+  // (dev-ui-vendor.mjs).
+  seedVendorProfile(DB);
+  seedPartners(DB);
   // The people outside Adobe post in their org's threads, so each org has a usual mail
   // domain: the org list shows its favicon when the org has no icon (src/admin.js).
   for (const p of store.people.values()) {
@@ -514,9 +1059,16 @@ export function createAdmin(store, { manager = false, member = false, bases = []
     ('hooli', 'Hooli Inc.', 'customer', NULL, '2026-10-20T09:00:00Z'),
     ('wonka', 'Wonka Industries', 'customer', NULL, '2026-10-20T09:00:00Z'),
     ('soylent', 'Soylent Corporation', 'customer', NULL, '2026-10-20T09:00:00Z'),
-    ('opspile', 'opspile', 'internal', NULL, '2026-10-20T09:00:00Z')`);
+    ('massive', 'Massive Dynamic', 'customer', NULL, '2026-10-20T09:00:00Z'),
+    ('opspile', 'opspile', 'internal', NULL, '2026-10-20T09:00:00Z'),
+    ('acme-co', 'ACME Corporation', 'customer', 'acme.example', '2026-10-20T09:00:00Z'),
+    ('wonkaindustries', 'Wonka Industries Ltd', 'customer', NULL, '2026-10-20T09:00:00Z')`);
+  seedPartnerPairs(DB);
+  // And Pied Piper's half year, a partner's page (dev-ui-partner.mjs).
+  seedPartnerProfile(DB);
   // Channels Lena (a member of Edge ops) asked the admin team for: one the admin team holds
-  // (confirming moves it), one Platform ops holds (confirming shares it), and one declined.
+  // (confirming moves it), one Platform ops holds (confirming shares it), and one declined; and
+  // one her thread's agent asked to move for her.
   const ago = (days) => new Date(Date.now() - days * 86400000).toISOString();
   DB.sqlite.prepare(`INSERT INTO channel_requests (source, channel_id, team, note, status, requested_by,
       requested_name, requested_at, decided_by, decided_name, decided_at, reason) VALUES
@@ -527,6 +1079,231 @@ export function createAdmin(store, { manager = false, member = false, bases = []
     ('slack', 'C0SANDBOX3', 'edge', NULL, 'declined', 'lena@example.com', 'Lena Berg', ?,
       'priya@example.com', 'Priya Nair', ?, 'A test channel: nothing to follow there.')`)
     .run(ago(2), ago(0.2), ago(6), ago(5));
+  // One the agent of an Umbrella thread filed for Lena from its sidebar: a move, out of
+  // Platform ops.
+  const umbrella = [...store.threads.values()].find(({ row }) => row.channel_id === 'C0UMBRELLA');
+  DB.sqlite.prepare(`INSERT INTO channel_requests (source, channel_id, team, note, status, requested_by,
+      requested_name, requested_at, move, thread) VALUES ('slack', 'C0UMBRELLA', 'edge', ?, 'open',
+      'lena@example.com', 'Lena Berg', ?, 1, ?)`)
+    .run('Lena says Umbrella is an Edge ops customer: the channel is filed by the aem- rule, which every EDS channel matches.', ago(0.05), umbrella ? umbrella.row.thread : null);
+  // The admin team's decision log of the Hooli request, a thread of its inbox
+  // (src/requestthreads.js): what Priya found out, and what Dana asked.
+  DB.sqlite.prepare(`INSERT INTO request_log (request, type, body, person, author_name, author_email, at)
+    VALUES ('request:channel:1', 'note', ?, 2, 'Priya Nair', 'priya@example.com', ?),
+      ('request:channel:1', 'note', ?, 1, 'Dana Ops', 'dana@example.com', ?)`)
+    .run(
+      'Checked with Platform ops: they keep the channel and are fine with Edge ops following it. Sharing is enough, no move.',
+      ago(1.2),
+      'Agreed. Lena, ping us here if you need it filed under Edge ops after the launch.',
+      ago(1.1),
+    );
+
+  // People thread agents asked to be added to Edge ops, for whoever asked them in a sidebar
+  // (src/memberrequests.js): Tom for himself, Lena for a colleague the inbox has not met, and
+  // one declined.
+  DB.sqlite.prepare(`INSERT INTO member_requests (team, email, name, note, status, requested_by,
+      requested_name, requested_at, thread, decided_by, decided_name, decided_at, reason) VALUES
+    ('edge', 'tom@example.com', 'Tom Okafor', ?, 'open', 'tom@example.com', 'Tom Okafor', ?, ?,
+      NULL, NULL, NULL, NULL),
+    ('edge', 'sam.ortiz@example.com', 'Sam Ortiz', ?, 'open', 'lena@example.com', 'Lena Berg', ?, ?,
+      NULL, NULL, NULL, NULL),
+    ('edge', 'kselby@example.com', 'Kira Selby', 'Covers for Lena in August.', 'declined',
+      'lena@example.com', 'Lena Berg', ?, NULL, 'priya@example.com', 'Priya Nair', ?,
+      'Kira is on Platform ops: share the channels instead.')`)
+    .run(
+      'Tom works the Umbrella launch with Edge ops and wants its inbox.',
+      ago(0.1),
+      umbrella ? umbrella.row.thread : null,
+      'Lena says Sam joins Edge ops next week, for the CDN questions.',
+      ago(0.6),
+      umbrella ? umbrella.row.thread : null,
+      ago(8),
+      ago(7),
+    );
+
+  // A thread agent's question to Dana (src/questions.js): how she raised Globex's image limit, for
+  // the runbook Priya asked about in the sidebar. A thread of Dana's inbox, Edge ops' and her
+  // personal view; and one she answered last week.
+  const images = [...store.threads.values()].find(({ row }) => row.title === 'Preview fails over 200 images');
+  if (images) {
+    DB.sqlite.prepare(`INSERT OR IGNORE INTO sidebar_messages (id, thread, role, person, body, at)
+      VALUES ('sb_dev_images', ?, 'person', 2, 'Do we have a runbook for raising the image limit?', ?)`)
+      .run(images.row.thread, ago(0.11));
+    const asked = { id: 'sb_dev_images' };
+    DB.sqlite.prepare(`INSERT INTO questions (id, thread, team, title, email, name, purpose, why,
+        items, sidebar, status, asked_at, deadline, answers, decided_at) VALUES
+      ('a1b2c3d4e5f6', ?1, 'edge', ?2, 'dana@example.com', 'Dana Ops', 'runbook', ?3, ?4, ?5, 'open', ?6, ?7, NULL, NULL),
+      ('0f1e2d3c4b5a', ?1, 'edge', ?2, 'dana@example.com', 'Dana Ops', 'fact', ?8, ?9, NULL, 'answered', ?10, ?11, ?12, ?13)`)
+      .run(
+        images.row.thread,
+        images.row.title,
+        'You raised the image limit for globex/www in this thread. kb-team knows the key (limits.maxImages) but not how it is set, its scope or how to undo it: I am writing the runbook Priya asked for.',
+        JSON.stringify([
+          { text: 'How did you set it?', guess: 'POST the whole site config with limits.maxImages', choices: ['POST the whole site config with limits.maxImages', 'The org config, for every site', 'The staff config tool'] },
+          { text: 'Does it apply to globex/www only, or to every site of the org?', guess: 'globex/www only', choices: ['globex/www only', 'Every site of globex'] },
+          { text: 'How is it set back to the default?' },
+        ]),
+        asked ? asked.id : null,
+        ago(0.1),
+        new Date(Date.now() + 2.9 * 86400000).toISOString(),
+        'Mei said the 200 image limit came with a release last month; I could not confirm it.',
+        JSON.stringify([{ text: 'Is the image limit 200 by default for every site?', guess: 'yes' }]),
+        ago(8),
+        ago(5),
+        JSON.stringify([{ pick: 'yes', text: 'Since early 2025; it was only enforced later.' }]),
+        ago(7.8),
+      );
+  }
+
+  // Lena asks for Wonka's two orgs to be one (src/orgmerge.js): it waits in the admin team's inbox.
+  DB.sqlite.prepare(`INSERT INTO org_merge_requests (slug, into_slug, note, requested_by, requested_name,
+      requested_at) VALUES ('wonkaindustries', 'wonka', ?, 'lena@example.com', 'Lena Berg', ?)`)
+    .run('Their second Teams team: the same company, the same people.', ago(0.3));
+
+  // Edge ops follows Universal Editor and Experience Workspace (src/follows.js): its page lists
+  // them, and the inbox's tech stack dropdown says so.
+  DB.sqlite.prepare(`INSERT INTO team_follows (team, tech, added_by, added_at) VALUES
+    ('edge', 'ue', 'lena@example.com', ?), ('edge', 'xw', 'lena@example.com', ?)`).run(ago(3), ago(1));
+
+  // A Platform ops channel shared with Edge ops: Edge ops' page says "shared by Platform ops",
+  // and the admin team (or whoever manages both teams) can make Edge ops its team instead.
+  DB.sqlite.prepare(`INSERT INTO channel_teams (source, channel_id, team, added_by, added_at)
+    SELECT source, channel_id, 'edge', 'priya@example.com', ? FROM threads
+    WHERE team = 'platform' AND channel_id NOT IN ('C0UMBRELLA', 'C0INITECH1')
+    ORDER BY channel_id LIMIT 1`).run(ago(4));
+
+  // Edge ops follows ACME (a follow rule of field `org`, src/rules.js): ACME's channels are shared
+  // with it, which `syncFollowRules` writes (below). One of Platform ops' ACME threads is still
+  // filed under Forms ops, a re-filing not done: ACME's page shows the channel once, and says so.
+  DB.sqlite.prepare(`INSERT INTO rules (target, priority, source, field, pattern, value, note, updated_by,
+      updated_at) VALUES ('follow', 100, NULL, 'org', '^acme$', 'edge', 'follows the customer',
+      'lena@example.com', ?)`).run(ago(2));
+  DB.sqlite.exec(`UPDATE threads SET team = 'forms', path = replace(path, '/platform/', '/forms/')
+    WHERE thread = (SELECT thread FROM threads WHERE channel_id = 'C0ACMEAEM' ORDER BY any_at LIMIT 1)`);
+
+  // Customers waiting in the customer portal (src/portalrequests.js): one who picked what Edge
+  // ops follows (its managers may open a channel too), one nobody follows, and one declined.
+  const lobby = (domain, company, tech, note, members, at, status = 'open', decided = []) => DB.sqlite
+    .prepare(`INSERT INTO portal_requests (portal, domain, company, tech, note, members, requested_by,
+      requested_name, requested_at, seq, status, decided_by, decided_name, decided_at, reason)
+      VALUES ('dev', ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?)`)
+    .run(
+      domain,
+      company,
+      JSON.stringify(tech),
+      note,
+      JSON.stringify(members),
+      members[0].email,
+      members[0].name,
+      at,
+      status,
+      ...[0, 1, 2, 3].map((i) => decided[i] ?? null),
+    );
+  lobby('wayne.example', 'Wayne Enterprises', ['eds', 'ue', 'da'], 'We cannot use Slack or Teams with vendors. We go live with Edge Delivery in March and need a line to the people who run it.', [
+    {
+      id: 'u1', name: 'Lucius Fox', email: 'lucius.fox@wayne.example', joined: true,
+    },
+    {
+      id: 'u2', name: 'Selina Kyle', email: 'selina.kyle@wayne.example', joined: true,
+    },
+    {
+      id: 'u3', name: 'Harvey Dent', email: 'harvey.dent@wayne.example', joined: false,
+    },
+  ], ago(0.4));
+  lobby('stark.example', 'Stark Industries', ['commerce', 'aco'], null, [{
+    id: 'u4', name: 'Pepper Potts', email: 'pepper.potts@stark.example', joined: true,
+  }], ago(1.5));
+  lobby('duff.example', 'Duff Brewing', ['analytics'], 'Dashboards.', [{
+    id: 'u5', name: 'Duffman', email: 'duffman@duff.example', joined: true,
+  }], ago(9), 'declined', ['priya@example.com', 'Priya Nair', ago(8), 'You have a Slack channel with us: ask there.']);
+
+  // People a host of the portal's integration signed in with its identity provider, waiting
+  // for access (src/integrationrequests.js): one of an organization new to the host, one of an
+  // organization that has its channel there already, and one declined. The portal's own database,
+  // in memory, with its real code behind the made-up PORTAL binding below.
+  const portalDb = d1({ migrations: PORTAL_MIGRATIONS });
+  const sec = (days) => Math.floor((Date.now() - days * 86400000) / 1000);
+  portalDb.sqlite.prepare(`INSERT INTO integration_hosts (id, service_id, issuer, jwks, scopes,
+      identity, product) VALUES ('panel-prod', 'made-up.access', 'https://ims-na1.adobelogin.com',
+      '{"keys":[]}', '["threads:create","threads:read","threads:reply","changes:read"]', ?, 'agents')`)
+    .run(JSON.stringify({
+      provider: 'adobe-ims',
+      environment: 'prod',
+      issuer: 'https://ims-na1.adobelogin.com',
+      keys: 'https://ims-na1.adobelogin.com/ims/keys',
+      clientIds: ['made-up-panel'],
+      tenant: 'profile.ownerOrg',
+      subject: 'token.user_id',
+      email: 'profile.email',
+    }));
+  const { channel: wonkaChannel } = portalDb.sqlite.prepare(`INSERT INTO integration_customers
+      (host, tenant, customer, name, enabled) VALUES ('panel-prod', '0000000000000000000000B0@AdobeOrg',
+      'agents-wonka', 'agents-wonka', 1) RETURNING channel`).get();
+  // Wonka's channel auto-approves its people, and whoever has a verified wonka.example address;
+  // two were auto-approved (src/portal/integration-auto.js), one by its domain.
+  portalDb.sqlite.prepare(`UPDATE integration_customers SET auto_approve = 1, auto_by = 'priya@example.com',
+      auto_at = ? WHERE channel = ?`).run(sec(3), wonkaChannel);
+  portalDb.sqlite.prepare(`INSERT INTO integration_catches (host, channel, kind, value, added_by, added_at)
+      VALUES ('panel-prod', ?, 'domain', 'wonka.example', 'priya@example.com', ?)`).run(wonkaChannel, sec(3));
+  for (const [i, name, email, via, days] of [[1, 'Augustus Gloop', null, null, 2], [2, 'Violet Beauregarde', 'violet@wonka.example', 'domain:wonka.example', 0.1]]) {
+    const { actor } = portalDb.sqlite.prepare(`INSERT INTO integration_actors (channel, name, verified_email)
+      VALUES (?, ?, ?) RETURNING actor`).get(wonkaChannel, name, email);
+    portalDb.sqlite.prepare(`INSERT INTO integration_members (channel, subject, actor, approved_by,
+        approved_at, via, auto) VALUES (?, ?, ?, 'priya@example.com', ?, ?, 1)`)
+      .run(wonkaChannel, `00000000000000000000B00${i + 1}@AdobeID`, actor, sec(days), via);
+  }
+  for (const [target, value] of [['team', 'edge'], ['org', 'wonka']]) {
+    DB.sqlite.prepare(`INSERT INTO rules (target, priority, source, field, pattern, value, note)
+      VALUES (?, 10, 'portal', 'channel_id', ?, ?, 'manual assignment')`).run(target, `^${wonkaChannel}$`, value);
+  }
+  const access = portalDb.sqlite.prepare(`INSERT INTO integration_requests (host, tenant, subject,
+      name, email, org_name, status, requested_at, seen_at, attempts, decided_at, decided_by,
+      decided_name, reason) VALUES ('panel-prod', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`);
+  access.run(
+    '0000000000000000000000A0@AdobeOrg',
+    '00000000000000000000A001@AdobeID',
+    'Lucius Fox',
+    'lucius.fox@wayne.example',
+    'Wayne Enterprises International Holdings Inc. - Applied Sciences (Prod)',
+    'pending',
+    sec(0.2),
+    sec(0.05),
+    7,
+    null,
+    null,
+    null,
+    null,
+  );
+  access.run(
+    '0000000000000000000000B0@AdobeOrg',
+    '00000000000000000000B001@AdobeID',
+    'Charlie Bucket',
+    'charlie@wonka.example',
+    'Wonka Industries',
+    'pending',
+    sec(1.2),
+    sec(1),
+    2,
+    null,
+    null,
+    null,
+    null,
+  );
+  access.run(
+    '0000000000000000000000C0@AdobeOrg',
+    '00000000000000000000C001@AdobeID',
+    'Homer Simpson',
+    null,
+    null,
+    'declined',
+    sec(12),
+    sec(12),
+    1,
+    sec(11),
+    'priya@example.com',
+    'Priya Nair',
+    'Ask your account team for a Slack channel.',
+  );
 
   // The knowledge bases of the fake editor (dev-ui-kb.mjs), so its channel and agent routes
   // (src/kbadmin.js) find them; agents are "configured", and on in one channel by default.
@@ -540,23 +1317,44 @@ export function createAdmin(store, { manager = false, member = false, bases = []
     CHANNELS,
     NORMALIZE: { send: async (body) => queued.push(body) },
     AGENTS: {},
+    // The customer portal's Worker, made up: it opens a channel, takes the welcome message and
+    // a decline, and tells nothing back.
+    PORTAL: {
+      open: async ({ name }) => ({
+        ok: true, channel: { id: `c${Date.now().toString(36).padStart(12, '0')}`, name },
+      }),
+      post: async () => ({ ok: true, id: `m${Date.now().toString(36).padStart(15, '0')}` }),
+      decline: async () => ({ ok: true }),
+      accessRequests: (a) => portalPlatform.accessRequests({ DB: portalDb }, a),
+      reserveAccess: (a) => portalPlatform.reserve({ DB: portalDb }, a),
+      enrollAccess: (a) => portalPlatform.enroll({ DB: portalDb }, a),
+      declineAccess: (a) => portalPlatform.declineRequest({ DB: portalDb }, a),
+      accessChannels: (a) => portalPlatform.accessChannels({ DB: portalDb }, a),
+      setAutoApprove: (a) => portalPlatform.autoApprove({ DB: portalDb }, a),
+    },
     AGENT_MODEL: 'dev',
     AGENT_CHANNELS: 'C0ACMEAEM',
+    // The fake inbox's staff (the team wizard counts only them).
+    STAFF_DOMAINS: 'example.com',
     // Seals the MCP servers' headers; made up for the preview.
     TOKEN_KEY: Buffer.alloc(32, 9).toString('base64url'),
     PUBLIC_ORIGIN: PREVIEW_ORIGIN,
-    // The global browser server's API token, made up.
-    BROWSER_RUN_TOKEN: PREVIEW_TOKEN,
+    // The relay's channel-management MCP server, as a service binding.
+    SLACK_MCP: { fetch: (request) => SLACK_MCP.fetch(request) },
+    // FluffyJaws' Okta and opspile's client there, made up.
+    FLUFFYJAWS_ISSUER: FLUFFY_OKTA,
+    FLUFFYJAWS_CLIENT_ID: 'made-up-okta-client',
     // The agent tools (src/agent/agenttools.js) can run: a bot to post as, a Worker Loader,
     // which runs extraction scripts (src/extract.js) in this process, with network access: the
     // preview's scripts are your own.
     SLACK_BOT_TOKEN: 'xoxb-made-up-preview-token',
     // The images of the computers on the SLICC kernel, as the bucket lists them
-    // (scripts/computer-images.mjs): the real ones' names and layers, with made-up sizes.
+    // (scripts/computer-images.mjs): the real ones' names and layers, with made-up sizes, and
+    // not the renderer Worker's, which the index leaves out.
     IMAGES: fakeBucket({
       'images/index.json': JSON.stringify({
         v: 2,
-        images: IMAGES.map((image, i) => ({
+        images: IMAGES.filter((image) => !image.internal).map((image, i) => ({
           name: image.name,
           title: image.title,
           description: image.description,
@@ -598,27 +1396,46 @@ export function createAdmin(store, { manager = false, member = false, bases = []
     DB.sqlite.exec(`INSERT INTO mcp_global_switches (server, scope, target, enabled, changed_by, changed_at)
       VALUES ('github', 'team', 'platform', 1, 'Dana', '2026-10-24T09:00:00Z')`);
   });
+  // FluffyJaws, connected by Dana as her Okta self, and on in one of platform's channels.
+  const fluffyGrant = NO_FLUFFYJAWS ? Promise.resolve() : seal(env, JSON.stringify({
+    access_token: PREVIEW_FLUFFY_TOKEN, refresh_token: 'preview-fluffyjaws-refresh', token_type: 'Bearer',
+  })).then((tokens) => {
+    DB.sqlite.prepare(`INSERT INTO mcp_global_grants (server, tokens, acts_as, acts_as_name,
+        connected_by, connected_at, expires_at, refreshed_at) VALUES ('fluffyjaws', ?,
+        'dana.ops@example.com', 'Dana Ops', 'dana@example.com', '2026-10-26T09:00:00Z', ?,
+        '2026-10-26T09:00:00Z')`).run(tokens, new Date(Date.now() + 365 * 86400_000).toISOString());
+    DB.sqlite.exec(`INSERT INTO mcp_global_switches (server, scope, target, enabled, changed_by, changed_at)
+      VALUES ('fluffyjaws', 'channel', 'C0INITECH1', 1, 'Dana', '2026-10-26T09:05:00Z')`);
+  });
   // The computer is on for the platform team already, and posting in one of its channels: the
-  // per-channel lists put the channels switched on their own first.
+  // per-channel lists put the channels switched on their own first. Web search is on for the
+  // team as migration 0077 turned it on (without Workers AI here, the page says it cannot run),
+  // and reading the customer's channels as migration 0102 did, with one channel opted out.
   DB.sqlite.exec(`INSERT INTO agent_tool_switches (tool, scope, target, enabled, changed_by, changed_at) VALUES
     ('computer', 'team', 'platform', 1, 'Dana', '2026-10-24T09:00:00Z'),
     ('post_message', 'channel', 'C0INITECH1', 1, 'Dana', '2026-10-25T09:00:00Z'),
-    ('any_thread', 'channel', 'C0EDGEQ01', 1, 'Dana', '2026-10-25T09:00:00Z');
+    ('any_thread', 'channel', 'C0EDGEQ01', 1, 'Dana', '2026-10-25T09:00:00Z'),
+    ('web_search', 'team', 'platform', 1, 'migration 0077', '2026-11-18T00:00:00Z'),
+    ('org_threads', 'team', 'platform', 1, 'migration 0102', '2026-11-25T00:00:00Z'),
+    ('org_threads', 'channel', 'C0INITECH1', 0, 'Dana', '2026-11-25T09:00:00Z');
     INSERT INTO mcp_global_switches (server, scope, target, enabled, changed_by, changed_at)
-      VALUES ('browser', 'channel', 'C0GLOBEX01', 1, 'Dana', '2026-10-25T09:00:00Z')`);
-  // The admin team gave platform ops' computers the SLICC kernel as their shell, with the
-  // image for working on data.
+      VALUES ('github', 'channel', 'C0GLOBEX01', 1, 'Dana', '2026-10-25T09:00:00Z')`);
+  // The admin team gave platform ops' computers the image for working on data.
   DB.sqlite.exec(`INSERT INTO agent_tool_options (tool, team, name, value, changed_by, changed_at)
-    VALUES ('computer', 'platform', 'runtime', 'slicc-kernel', 'Dana', '2026-10-26T09:00:00Z'),
-      ('computer', 'platform', 'image', 'data', 'Dana', '2026-10-27T09:00:00Z')`);
-  // Platform ops' own extraction rules, one saved by its agent, and its own tech stack: one
-  // technology of its own, and one of the admin team's turned off for its channels.
-  DB.sqlite.exec(`INSERT INTO extraction_rules (team, name, kind, target, field, pattern, flags, value,
-      position, changed_by, changed_at) VALUES
-    ('platform', 'Order ids in checkout errors', 'regex', 'fact', 'order', '\\bORD-\\d{6}\\b', '', '', 10,
-      'Dana Ops', '2026-10-26T09:00:00Z'),
-    ('platform', 'Release numbers', 'regex', 'fact', 'release', '\\bRelease (\\d+)\\b', 'i', '$1', 20,
-      'opspile-agent/dev', '2026-10-27T15:00:00Z');
+    VALUES ('computer', 'platform', 'image', 'data', 'Dana', '2026-10-27T09:00:00Z')`);
+  // Platform ops' own extraction rules, one saved by its agent (without a label: the inbox shows
+  // its field as it is), and its own tech stack: one technology of its own, and one of the admin
+  // team's turned off for its channels. The admin team's rule for Figma files, added after
+  // migration 0043, with the label the inbox shows for its facts.
+  DB.sqlite.exec(`INSERT INTO extraction_rules (team, name, kind, target, field, label, pattern, flags,
+      value, position, changed_by, changed_at) VALUES
+    ('platform', 'Order ids in checkout errors', 'regex', 'fact', 'order', 'Order id', '\\bORD-\\d{6}\\b', '',
+      '', 10, 'Dana Ops', '2026-10-26T09:00:00Z'),
+    ('platform', 'Release numbers', 'regex', 'fact', 'release', NULL, '\\bRelease (\\d+)\\b', 'i', '$1', 20,
+      'opspile-agent/dev', '2026-10-27T15:00:00Z'),
+    ('admin', 'Figma file', 'regex', 'fact', 'figma_file', 'Figma file',
+      '\\bfigma\\.com/(?:file|design|proto|board)/([A-Za-z0-9]{10,})', '', '$1', 300, 'Dana',
+      '2026-11-20T09:00:00Z');
     INSERT INTO tech_stack (team, tech, name, description, enabled, changed_by, changed_at) VALUES
       ('platform', 'sitecore', 'Sitecore', 'Sitecore as the CMS before the migration', 1, 'Dana Ops', '2026-10-26T09:00:00Z'),
       ('platform', 'gdrive', 'Google Drive', 'Google Drive or Google Docs as the content source', 0, 'Dana Ops',
@@ -654,6 +1471,12 @@ export function createAdmin(store, { manager = false, member = false, bases = []
       manages: manager ? ['edge'] : [],
     };
   }
+  if (noTeam) {
+    // Adobe's, on no team (`--no-team`): reads every knowledge base, and changes none.
+    me = {
+      ...store.me, admin: false, staff: true, teams: [], manages: [],
+    };
+  }
 
   const toRequest = (req, url, body) => new Request(url, {
     method: req.method,
@@ -669,7 +1492,7 @@ export function createAdmin(store, { manager = false, member = false, bases = []
     env,
     mcpUrl,
     admins,
-  )), githubApp).then(() => {
+  )), Promise.all([githubApp, fluffyGrant])).then(() => {
     // The ticket tracker is off in one of platform's channels, on its own.
     DB.sqlite.exec(`INSERT INTO mcp_server_switches (server_id, channel, enabled, changed_by, changed_at)
       SELECT id, 'C0INITECH1', 0, 'Dana', '2026-10-26T09:00:00Z' FROM mcp_servers
@@ -680,16 +1503,58 @@ export function createAdmin(store, { manager = false, member = false, bases = []
     secretsUrl,
     admins,
   )), Promise.resolve()))
-    .then(() => Promise.all(['browser', 'github'].map((server) => kbAdmin(
+    .then(() => Promise.all(['github', 'fluffyjaws', 'slack_channels'].map((server) => kbAdmin(
       toRequest({ method: 'POST' }, checkUrl, { server }),
       env,
       checkUrl,
       admins,
     ))));
+  // The follow rules' shares, as the Worker writes them after a rule change and on the cron.
+  const followed = syncFollowRules(env);
   /** `/api/kb`, its channels, agents and MCP servers, by the real src/kbadmin.js. */
   const kb = async (req, url, body) => {
     await seeded;
     return kbAdmin(toRequest(req, url, body), env, url, me);
+  };
+
+  /**
+   * The admin team's requests as threads of its inbox (src/requestthreads.js), by the real
+   * module over this D1: `/api/requests`, `/api/requests/note`, `/api/requests/resolve`, a
+   * request's `/api/thread` and its reads. Null for anything else.
+   */
+  const requests = async (req, url, body) => {
+    const key = url.pathname === '/api/thread' ? url.searchParams.get('thread') : body?.thread;
+    const ours = url.pathname === '/api/requests' || url.pathname.startsWith('/api/requests/')
+      || (['/api/thread', '/api/read'].includes(url.pathname) && isRequestKey(key));
+    if (!ours) {
+      return null;
+    }
+    await seeded;
+    await followed;
+    // The inbox's viewer: an admin in the admin team's inbox only (the questions asked of them
+    // everywhere, `mine`), as src/api.js.
+    if (url.pathname === '/api/requests') {
+      return Response.json(await requestEntries(env, me, { mine: url.searchParams.get('mine') === '1' }));
+    }
+    if (url.pathname === '/api/thread') {
+      const t = await requestThread(env, me, key);
+      return t ? Response.json(t) : Response.json({ error: 'not found' }, { status: 404 });
+    }
+    if (url.pathname === '/api/read') {
+      await advanceWatermark(env.DB, me.id, key, body.at, 'open');
+      return new Response(null, { status: 204 });
+    }
+    const run = { '/api/requests/note': addNote, '/api/requests/resolve': resolveRequest }[url.pathname];
+    // A question's answer goes to its thread's agent (src/agent/question.js): here, nowhere.
+    const told = { ...env, AGENTS: DEV_AGENTS };
+    const res = run ? await run(told, me, body || {}) : Response.json({ error: 'not found' }, { status: 404 });
+    // Re-filing runs right away here.
+    while (queued.length) {
+      const messages = queued.splice(0).map((b) => ({ body: b, ack() {}, retry() {} }));
+      // eslint-disable-next-line no-await-in-loop
+      await consume({ messages }, env);
+    }
+    return res;
   };
 
   return Object.assign(async (req, url, body) => {
@@ -701,7 +1566,14 @@ export function createAdmin(store, { manager = false, member = false, bases = []
     if (url.pathname === '/api/admin/org-icons') {
       return Response.json({ icons: devIcons(url.searchParams.get('slug')) });
     }
-    const res = await admin(toRequest(req, url, body), env, url, me);
+    // Clef, made up, for the duplicate customers (src/orgmerge.js): two orgs of one name are one.
+    let asked = url.pathname === '/api/admin/org-duplicates' ? { ...env, AI: DEV_CLEF } : env;
+    // And for the partners (src/orgpartners.js): Pied Piper works for ACME.
+    if (url.pathname === '/api/admin/org-partners') {
+      asked = { ...env, AI: DEV_PARTNER_CLEF };
+    }
+    await followed;
+    const res = await admin(toRequest(req, url, body), asked, url, me);
     // Re-filing runs right away here.
     while (queued.length) {
       const messages = queued.splice(0).map((b) => ({ body: b, ack() {}, retry() {} }));
@@ -709,5 +1581,5 @@ export function createAdmin(store, { manager = false, member = false, bases = []
       await consume({ messages }, env);
     }
     return res;
-  }, { kb, env });
+  }, { kb, env, requests });
 }

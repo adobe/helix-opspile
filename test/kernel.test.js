@@ -17,11 +17,11 @@ import { beforeEach, describe, it } from 'node:test';
 import { computerEnv } from '../src/agent/computer.js';
 import {
   commandsOf, DEFAULT_IMAGE, forgetImages, IMAGE_COMMANDS, IMAGE_ROOT, imageDriver, imageTree,
-  isImageName, keptOfImages, listImages, readImage,
+  imageReads, isImageName, keptOfImages, listImages, readImage, sizeImageCache,
 } from '../src/agent/image.js';
 import {
-  DEFAULT_RUNTIME, gatewayFetch, imageSpec, isRuntime, runtimeFor, RUNTIMES, setTeamImage,
-  setTeamRuntime, shellFor, teamImage, teamRuntime, timedOut,
+  CURL_HOME, CURLRC, gatewayFetch, imageFor, imageSpec, KERNEL_ENV, setTeamImage, teamImage,
+  timedOut,
 } from '../src/agent/kernel.js';
 import {
   bucketOf, build, buildLayer, IMAGES, imagePackage, indexOf, layerNames, LAYERS, missingFrom,
@@ -86,54 +86,26 @@ function image(bucket, name, layers, commands = []) {
 const PROGRAM = 'a program of forty characters or more, a blob';
 const utf8 = (bytes) => new TextDecoder().decode(bytes);
 
-describe('the computer\'s shells', () => {
-  it('are just-bash unless the team has another, and one this deployment knows', async () => {
-    const DB = d1({ teams: [{ slug: 'helix', name: 'Helix' }, { slug: 'edge', name: 'Edge' }] });
-    const env = { DB };
-    assert.equal(DEFAULT_RUNTIME, 'just-bash');
-    assert.deepEqual(RUNTIMES.map((r) => r.runtime), ['just-bash', 'slicc-kernel']);
-    assert.equal(isRuntime('slicc-kernel'), true);
-    assert.equal(isRuntime('docker'), false);
-    assert.deepEqual(await teamRuntime(env, 'helix'), { runtime: 'just-bash' });
-    assert.equal(await runtimeFor(env, { team: 'helix' }), 'just-bash');
-    assert.equal(await runtimeFor(env, { team: null }), 'just-bash');
-    assert.equal(await runtimeFor({}, { team: 'helix' }), 'just-bash');
-
-    const chosen = await setTeamRuntime(env, { team: 'helix', runtime: 'slicc-kernel', by: 'Ada' });
-    assert.equal(chosen.runtime, 'slicc-kernel');
-    assert.equal(chosen.by, 'Ada');
-    assert.deepEqual(await teamRuntime(env, 'helix'), chosen);
-    assert.equal(await runtimeFor(env, { team: 'helix' }), 'slicc-kernel');
-    // Another team's is its own.
-    assert.equal(await runtimeFor(env, { team: 'edge' }), 'just-bash');
-
-    await setTeamRuntime(env, { team: 'helix', runtime: 'just-bash', by: 'Bo' });
-    assert.equal((await teamRuntime(env, 'helix')).by, 'Bo');
-    assert.equal(DB.rows('SELECT COUNT(*) AS n FROM agent_tool_options')[0].n, 1);
-
-    // What a later deployment wrote, read after a rollback.
-    DB.sqlite.exec("UPDATE agent_tool_options SET value = 'firecracker'");
-    assert.deepEqual(await teamRuntime(env, 'helix'), { runtime: 'just-bash' });
-  });
-
-  it('have an image with the kernel, the base one unless the team has another', async () => {
+describe('the computer\'s shell', () => {
+  it('has an image, the base one unless the team has another', async () => {
     const DB = d1({ teams: [{ slug: 'helix', name: 'Helix' }, { slug: 'edge', name: 'Edge' }] });
     const env = { DB };
     assert.equal(DEFAULT_IMAGE, 'base');
     assert.deepEqual(await teamImage(env, 'helix'), { image: 'base' });
-    // just-bash has no image, whatever was chosen.
-    await setTeamImage(env, { team: 'helix', image: 'data', by: 'Ada' });
-    assert.deepEqual(await shellFor(env, { team: 'helix' }), { runtime: 'just-bash' });
-    assert.equal((await teamImage(env, 'helix')).by, 'Ada');
-    await setTeamRuntime(env, { team: 'helix', runtime: 'slicc-kernel', by: 'Ada' });
-    assert.deepEqual(await shellFor(env, { team: 'helix' }), { runtime: 'slicc-kernel', image: 'data' });
-    assert.equal(await runtimeFor(env, { team: 'helix' }), 'slicc-kernel');
-    // The two are rows of their own.
-    assert.deepEqual(DB.rows('SELECT name, value FROM agent_tool_options ORDER BY name'), [
-      { name: 'image', value: 'data' }, { name: 'runtime', value: 'slicc-kernel' },
+    assert.equal(await imageFor(env, { team: 'helix' }), 'base');
+    assert.equal(await imageFor(env, { team: null }), 'base');
+    assert.equal(await imageFor({}, { team: 'helix' }), 'base');
+    const chosen = await setTeamImage(env, { team: 'helix', image: 'data', by: 'Ada' });
+    assert.deepEqual([chosen.image, chosen.by], ['data', 'Ada']);
+    assert.deepEqual(await teamImage(env, 'helix'), chosen);
+    assert.equal(await imageFor(env, { team: 'helix' }), 'data');
+    // Another team's is its own.
+    assert.equal(await imageFor(env, { team: 'edge' }), 'base');
+    await setTeamImage(env, { team: 'helix', image: 'github', by: 'Bo' });
+    assert.equal((await teamImage(env, 'helix')).by, 'Bo');
+    assert.deepEqual(DB.rows('SELECT name, value FROM agent_tool_options'), [
+      { name: 'image', value: 'github' },
     ]);
-    await setTeamRuntime(env, { team: 'edge', runtime: 'slicc-kernel', by: 'Bo' });
-    assert.deepEqual(await shellFor(env, { team: 'edge' }), { runtime: 'slicc-kernel', image: 'base' });
     // A name no image can have is the default.
     DB.sqlite.exec("UPDATE agent_tool_options SET value = '../etc' WHERE name = 'image'");
     assert.deepEqual(await teamImage(env, 'helix'), { image: 'base' });
@@ -142,17 +114,19 @@ describe('the computer\'s shells', () => {
     assert.equal(isImageName(''), false);
   });
 
-  it('say when they stopped a run whose time was up', () => {
-    // just-bash says 124 and nothing else.
-    assert.equal(timedOut('just-bash', 124, 0, 5), true);
-    assert.equal(timedOut(undefined, 124, 0, 5), true);
-    assert.equal(timedOut('just-bash', 143, 9, 5), false);
+  it('gives curl a configuration without the proxy\'s headers, and tar its options', () => {
+    assert.equal(KERNEL_ENV.CURL_HOME, CURL_HOME);
+    assert.match(CURLRC, /^suppress-connect-headers$/m);
+    assert.equal(KERNEL_ENV.TAR_OPTIONS, '--no-same-owner');
+  });
+
+  it('says when it stopped a run whose time was up', () => {
     // The kernel ends bash with SIGTERM, then SIGKILL; a command can end that way by itself.
-    assert.equal(timedOut('slicc-kernel', 143, 5.1, 5), true);
-    assert.equal(timedOut('slicc-kernel', 137, 10.2, 5), true);
-    assert.equal(timedOut('slicc-kernel', 143, 0.4, 5), false);
-    assert.equal(timedOut('slicc-kernel', 124, 9, 5), false);
-    assert.equal(timedOut('slicc-kernel', 0, 9, 5), false);
+    assert.equal(timedOut(143, 5.1, 5), true);
+    assert.equal(timedOut(137, 10.2, 5), true);
+    assert.equal(timedOut(143, 0.4, 5), false);
+    assert.equal(timedOut(124, 9, 5), false);
+    assert.equal(timedOut(0, 9, 5), false);
   });
 
   it('report a run the kernel stopped as a timeout, by its time', async () => {
@@ -168,14 +142,13 @@ describe('the computer\'s shells', () => {
         }),
       },
     });
-    const runtime = () => 'slicc-kernel';
-    const stopped = await computerEnv(ws(143, 30), { runtime }).exec('sleep 9', { timeout: 0.02 });
+    const stopped = await computerEnv(ws(143, 30)).exec('sleep 9', { timeout: 0.02 });
     assert.equal(stopped.ok, false);
     assert.equal(stopped.error.code, 'timeout');
     // `kill $$` in a command that had time left is the command's own end.
-    const own = await computerEnv(ws(143, 0), { runtime }).exec('kill $$', { timeout: 30 });
+    const own = await computerEnv(ws(143, 0)).exec('kill $$', { timeout: 30 });
     assert.deepEqual(own, { ok: true, value: { exitCode: 143 } });
-    const none = await computerEnv(ws(143, 0), { runtime }).exec('kill $$', {});
+    const none = await computerEnv(ws(143, 0)).exec('kill $$', {});
     assert.deepEqual(none, { ok: true, value: { exitCode: 143 } });
   });
 });
@@ -332,6 +305,8 @@ describe('a kernel\'s image, from the bucket', () => {
   });
 
   it('keeps the blobs it read up to a limit, the least recently used going first', async () => {
+    // Smaller than the Worker's, so that the files can be.
+    sizeImageCache({ bytes: 32 * 1024 * 1024, fileMax: 16 * 1024 * 1024 });
     const bucket = fakeBucket();
     const big = (c) => c.repeat(12 * 1024 * 1024);
     const files = Object.fromEntries(['a', 'b', 'c'].map((c) => [`bin/${c}`, big(c)]));
@@ -362,7 +337,9 @@ describe('a kernel\'s image, from the bucket', () => {
     assert.equal(gets.length, 4);
   });
 
-  it('keeps a file over half that limit by its open file only, read once however it is read', async () => {
+  it('keeps a file over what one may be kept by its open file only, read once however it is read', async () => {
+    // Smaller than the Worker's, so that the files can be.
+    sizeImageCache({ bytes: 32 * 1024 * 1024, fileMax: 16 * 1024 * 1024 });
     const bucket = fakeBucket();
     const files = { 'bin/gh': 'g'.repeat(17 * 1024 * 1024) };
     const manifest = image(bucket, 'huge', [layer(bucket, 'huge', files)]);
@@ -484,7 +461,9 @@ describe('a kernel\'s image, from the bucket', () => {
     await whole(0);
   });
 
-  it('keeps none of a file with pieces over half that limit, but the last pieces its mount read', async () => {
+  it('keeps none of a file with pieces over what one may be, but the last pieces its mount read', async () => {
+    // Smaller than the Worker's, so that the files can be.
+    sizeImageCache({ bytes: 32 * 1024 * 1024, fileMax: 16 * 1024 * 1024 });
     const bucket = fakeBucket();
     const MiB = 1024 * 1024;
     const data = Array.from({ length: 17 }, (_, i) => String.fromCharCode(97 + i).repeat(MiB)).join('');
@@ -522,6 +501,40 @@ describe('a kernel\'s image, from the bucket', () => {
     await other.read(await other.open('/bin/gh', {}), 3 * MiB, 4);
     assert.equal(counting.gets.length, 4);
     assert.deepEqual(keptOfImages(), { entries: 0, bytes: 0 });
+  });
+
+  it('counts what it asked of the bucket, and keeps what its budget lets it', async () => {
+    const bucket = fakeBucket();
+    const MiB = 1024 * 1024;
+    const data = ['x', 'y', 'z'].map((c) => c.repeat(MiB)).join('');
+    const manifest = image(bucket, 'sized', [layer(bucket, 'sized', { 'bin/x': data }, { piece: MiB })]);
+    const { handlers } = imageDriver(bucket, await imageTree(bucket, manifest));
+    const read = async () => handlers.read(await handlers.open('/bin/x', {}), 0, 3 * MiB);
+    await read();
+    await read();
+    assert.deepEqual(imageReads(), {
+      gets: 1,
+      fetched: 3 * MiB,
+      hits: 3,
+      entries: 3,
+      bytes: 3 * MiB,
+      budget: 48 * MiB,
+      fileMax: 24 * MiB,
+    });
+    // A smaller budget lets the oldest go; a file over what one may keep is not kept.
+    assert.deepEqual(sizeImageCache({ bytes: 2 * MiB, fileMax: 4 * MiB }), {
+      bytes: 2 * MiB, fileMax: 2 * MiB,
+    });
+    assert.equal(imageReads().bytes, 2 * MiB);
+    await read();
+    assert.equal(imageReads().gets, 2);
+    assert.equal(imageReads().bytes, 2 * MiB);
+    sizeImageCache({ bytes: 8 * MiB, fileMax: 8 * MiB });
+    await read();
+    assert.equal(imageReads().bytes, 3 * MiB);
+    // forgetImages puts the budget back.
+    forgetImages();
+    assert.equal(imageReads().budget, 48 * MiB);
   });
 
   it('is mounted read-only, at the place the kernel looks for its commands', () => {
@@ -644,16 +657,16 @@ describe('the images this repository builds', () => {
       assert.match(devDependencies[name] || '', /^\d/, `${name} is pinned to one version`);
     }
     const built = await build();
-    assert.deepEqual(built.images.map((i) => i.name), ['base', 'data', 'github']);
+    assert.deepEqual(built.images.map((i) => i.name), ['base', 'data', 'github', 'browser', 'data-browser', 'github-browser', 'graphviz']);
     assert.ok(IMAGES.every((i) => isImageName(i.name) && i.title && i.description));
     const [base, data] = built.images;
     assert.equal(base.v, 2);
-    assert.deepEqual(base.layers.map((l) => l.name), ['shell', 'text', 'archive', 'net', 'tls', 'js', 'git', 'formats']);
+    assert.deepEqual(base.layers.map((l) => l.name), ['shell', 'text', 'archive', 'net', 'tls', 'js', 'git', 'formats', 'diagrams']);
     // The second image is the first one's layers, the same ones, and one more.
-    assert.deepEqual(data.layers.slice(0, 8), base.layers);
-    assert.deepEqual(data.layers.map((l) => l.name).slice(8), ['data']);
+    assert.deepEqual(data.layers.slice(0, 9), base.layers);
+    assert.deepEqual(data.layers.map((l) => l.name).slice(9), ['data']);
     assert.notEqual(base.digest, data.digest);
-    assert.equal(data.bytes, base.bytes + data.layers[8].bytes);
+    assert.equal(data.bytes, base.bytes + data.layers[9].bytes);
     // A layer and a blob are named by what they are.
     for (const l of built.layers.values()) {
       assert.equal(sha(l.body), l.digest);
@@ -713,24 +726,44 @@ describe('the images this repository builds', () => {
       built.layers.get('github').layer.files.map((f) => f.path.split('/').slice(-2).join('/')),
       ['bin/gh.wasm', 'host/gh-host.mjs', 'wasi-gh/package.json'],
     );
-    assert.ok(['dig', 'git', 'yq', 'html2markdown', 'file', 'xxd', 'xz', 'patch', 'openssl']
+    assert.ok(['dig', 'git', 'yq', 'html2markdown', 'file', 'xxd', 'xz', 'patch', 'openssl', 'rg']
       .every((c) => commandsOf(base).includes(c)));
-    assert.ok(['rg', 'sqlite3', 'strings'].every((c) => commandsOf(data).includes(c)
+    assert.ok(['sqlite3', 'strings'].every((c) => commandsOf(data).includes(c)
       && !commandsOf(base).includes(c)));
-    await assert.rejects(build({ images: [{ ...IMAGES[0], tools: 'cat, rg' }] }), /tells the agent of rg/);
+    // playwright-cli, a WASI program, in the Browser image only, without its package's curlwright.
+    const browser = built.images.find((i) => i.name === 'browser');
+    assert.deepEqual(browser.layers.slice(0, base.layers.length), base.layers);
+    assert.ok(commandsOf(browser).includes('playwright-cli') && !commandsOf(base).includes('playwright-cli'));
+    assert.ok(!commandsOf(browser).includes('curlwright'));
+    // Data and GitHub with it too: their own layers, then the browser's.
+    for (const [name, from] of [['data-browser', data], ['github-browser', github]]) {
+      const plus = built.images.find((i) => i.name === name);
+      assert.deepEqual(plus.layers.slice(0, -1), from.layers);
+      assert.equal(plus.layers.at(-1).name, 'browser');
+      assert.deepEqual(commandsOf(plus), [...commandsOf(from), 'playwright-cli'].sort());
+    }
+    assert.deepEqual(
+      built.layers.get('browser').layer.files.map((f) => f.path.split('/').slice(-2).join('/')),
+      ['bin/playwright-cli.wasm', 'slicc-cdp/package.json'],
+    );
+    await assert.rejects(build({ images: [{ ...IMAGES[0], tools: 'cat, sqlite3' }] }), /tells the agent of sqlite3/);
     await assert.rejects(build({ images: [{ ...IMAGES[0], layers: ['gpu'] }] }), /has a layer gpu, which there is none of/);
 
     // A kernel's file system serves what was built, from a bucket with its objects.
     const objects = objectsOf(built);
     const bucket = fakeBucket(Object.fromEntries(objects.map((o) => [o.key, o.body])));
     const digests = (list) => list.map((i) => [i.name, i.digest]);
-    assert.deepEqual(digests(await listImages(bucket)), digests(built.images));
-    assert.deepEqual((await listImages(bucket))[1].layers, ['shell', 'text', 'archive', 'net', 'tls', 'js', 'git', 'formats', 'data']);
+    // The index lists the images teams choose from: not the renderer Worker's.
+    const listed = built.images.filter((i) => !i.internal);
+    assert.deepEqual(digests(await listImages(bucket)), digests(listed));
+    assert.equal((await readImage(bucket, 'graphviz')).commands.join(), 'dot');
+    assert.deepEqual((await listImages(bucket))[1].layers, ['shell', 'text', 'archive', 'net', 'tls', 'js', 'git', 'formats', 'diagrams', 'data']);
     const tree = await imageTree(bucket, await readImage(bucket, 'data'));
     const { handlers } = imageDriver(bucket, tree);
     const packages = await handlers.readdir('/node_modules/@ai-ecoverse');
-    // Every package but gh's, which is in the GitHub image only.
-    assert.equal(packages.length, Object.values(LAYERS).flat().length - LAYERS.github.length);
+    // Every package but gh's and the browser's, which are in the GitHub and Browser images only.
+    assert.equal(packages.length, Object.values(LAYERS).flat().length - LAYERS.github.length
+      - LAYERS.browser.length);
     const fh = await handlers.open('/node_modules/@ai-ecoverse/wasm-bash/bin/bash.wasm', {});
     assert.deepEqual([...await handlers.read(fh, 0, 4)], [0, 0x61, 0x73, 0x6d]);
     const { size } = await handlers.getattr('/node_modules/@ai-ecoverse/wasm-bash/bin/bash.wasm');
@@ -760,8 +793,8 @@ describe('the images this repository builds', () => {
     const kinds = keys.map((k) => k.split('/')[0]);
     assert.deepEqual([...new Set(kinds)], ['blobs', 'layers', 'images']);
     assert.equal(keys.at(-1), 'images/index.json');
-    assert.deepEqual(keys.slice(-4, -1), ['images/base.json', 'images/data.json', 'images/github.json']);
-    assert.equal(kinds.filter((k) => k === 'layers').length, 10);
+    assert.deepEqual(keys.slice(-8, -1), ['images/base.json', 'images/data.json', 'images/github.json', 'images/browser.json', 'images/data-browser.json', 'images/github-browser.json', 'images/graphviz.json']);
+    assert.equal(kinds.filter((k) => k === 'layers').length, 12);
     assert.deepEqual(JSON.parse(objects.at(-1).body), indexOf(built.images));
     // An empty bucket lacks them all, and one that fails to answer too.
     assert.equal((await missingFrom(objects, async () => null)).length, objects.length);
@@ -784,7 +817,7 @@ describe('the images this repository builds', () => {
     have.set('images/data.json', 'an older manifest');
     const missing = (await missingFrom(objects, read)).map((o) => o.key);
     assert.deepEqual(missing, [...[...data.blobs].sort(), data.key, 'images/data.json']);
-    assert.equal(data.blobs.length, 3);
+    assert.equal(data.blobs.length, 2);
     assert.equal(bucketOf('prod'), 'helix-opspile-images');
     assert.equal(bucketOf('stage'), 'helix-opspile-images-stage');
   });

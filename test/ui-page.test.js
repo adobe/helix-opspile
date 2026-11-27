@@ -190,7 +190,7 @@ describe('inbox page', () => {
       await askClosest();
       assert.deepEqual(asked, ['/api/emoji/custom', '/api/emoji/closest?names=completed']);
       const near = emojiHtml('completed');
-      assert.match(near, /^<span class="emoji-near" title=":completed: has no image here/);
+      assert.match(near, /^<span class="emoji-near" title=":completed: \(closest match\)"/);
       assert.match(near, />✅<\/span>$/);
     });
 
@@ -254,6 +254,23 @@ describe('inbox page', () => {
     assert.equal(headAway(120, 40, 140), 140);
     assert.equal(headAway(140, -30, 140), 110);
     assert.equal(headAway(20, -30, 140), 0);
+  });
+
+  it('leaves the address alone on Back and Forward: the entry gone back to keeps its list', () => {
+    // The popstate handler asks for the entry's search without writing the address, which still
+    // has the thread gone back from (a second Back would reopen it instead of the list).
+    const pop = html.slice(html.indexOf("window.addEventListener('popstate'"));
+    assert.match(pop.slice(0, pop.indexOf('\n  });')), /runSearch\(query, \{ asked: true \}\)/);
+    const run = html.slice(html.indexOf('async function runSearch'));
+    assert.match(run.slice(0, run.indexOf('\n}')), /if \(!asked\) toUrl\(false\);/);
+  });
+
+  it('never scrolls the list sideways on a phone, which would take the drawer\'s swipe', () => {
+    const css = SCRIPTS['spectrum-inbox.css'];
+    assert.match(css, /\n#threads \{ overflow-x: hidden; \}/);
+    // The controls' row is no wider than the list; the view switch scrolls in it instead.
+    assert.match(css, /#threads \.count \.ctl \{[^}]*min-width: 0;/);
+    assert.match(css, /@container \(max-width: 559px\) \{[^@]*#threads \.count \.order \{ overflow-x: auto;/);
   });
 
   it('opens the personal view unless the address names a team', () => {
@@ -328,6 +345,38 @@ describe('inbox page', () => {
     ]).map((t) => t.slug), ['amy', 'zed', 'admin']);
   });
 
+  it('shows a search\'s knowledge-base entries, each a link to it in the editor, a few until asked', () => {
+    const state = { search: { kbAll: false } };
+    const { kbSection } = piece('const KB_SHOWN', '/** Asks for `q`', 'kbSection', {
+      state,
+      esc: (s) => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/"/g, '&quot;'),
+      marked: (s) => s,
+      reEscape: (w) => w.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'),
+      emojiHtml: () => '',
+      Markdown: { render: (src) => `<p>${src.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>').replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2">$1</a>')}</p>` },
+      kbFileHref: (repo, path) => `/inbox/admin?${new URLSearchParams({ repo, view: 'kb', path })}`,
+    });
+    const hit = (i) => ({
+      repo: 'kb-team-helix', path: `playbooks/p${i}.md`, name: 'Helix', type: 'Playbook', title: `P${i}`, description: 'What to do', snippet: null,
+    });
+    assert.equal(kbSection([], []), '');
+    // Four: all of them, rather than "1 more".
+    let out = kbSection([1, 2, 3, 4].map(hit), ['p']);
+    assert.equal(out.match(/class="kbhit"/g).length, 4);
+    assert.match(out, /href="\/inbox\/admin\?repo=kb-team-helix&amp;view=kb&amp;path=playbooks%2Fp1\.md"/);
+    assert.match(out, /<span class="tag">Playbook<\/span>/);
+    assert.match(out, /<div class="l3 md"><p>What to do<\/p><\/div>/);
+    // The excerpt is markdown, rendered; a link in it is text (the entry is the link), and the
+    // words are marked in its text, not in its tags or entities.
+    out = kbSection([{ ...hit(1), snippet: 'Check **the purge**, see [the site](../sites/www.md) &amp; more' }], ['purge', 'amp']);
+    assert.match(out, /<p>Check <strong>the <mark>purge<\/mark><\/strong>, see <span class="ln">the site<\/span> &amp; more<\/p>/);
+    out = kbSection([1, 2, 3, 4, 5].map(hit), ['p']);
+    assert.equal(out.match(/class="kbhit"/g).length, 3);
+    assert.match(out, /data-kbmore>2 more in the knowledge bases</);
+    state.search.kbAll = true;
+    assert.equal(kbSection([1, 2, 3, 4, 5].map(hit), ['p']).match(/class="kbhit"/g).length, 5);
+  });
+
   it('forgets the empty list when a search paints it, and a team name there drops the type filter', () => {
     const state = {
       search: {
@@ -359,6 +408,7 @@ describe('inbox page', () => {
       viewSwitch: () => '',
       toNode: () => ({}),
       row: () => '',
+      kbSection: () => '',
       preload: { observe() {}, unobserve() {} },
       cardGone: () => {},
     });
@@ -392,7 +442,7 @@ describe('inbox page', () => {
       QUICK: [],
       emoji: (x) => x,
       SIGNAL_HINT: {},
-      favicon: (x) => x,
+      favImg: (x) => x,
       sendState: () => '',
     });
     const classes = (m) => /class="([^"]*)"/.exec(message({
@@ -421,7 +471,7 @@ describe('inbox page', () => {
       QUICK: ['eyes'],
       emoji: (x) => x,
       SIGNAL_HINT: {},
-      favicon: (x) => x,
+      favImg: (x) => x,
     });
     const staff = { name: 'Ada', kind: 'person', staff: true };
     const m = {
@@ -534,6 +584,7 @@ describe('inbox page', () => {
       noteEvent: () => {},
       screenTeams: () => ['helix'],
       heardRead,
+      heardRequest: () => {},
     });
     listen('helix', 1);
     const send = (ev) => sockets[0].onmessage({ data: JSON.stringify(ev) });
@@ -556,6 +607,283 @@ describe('inbox page', () => {
     assert.deepEqual(reloads, ['a', 'g', 'b'], 'a member of a folded entry, read to its end, and a teammate\'s read');
   });
 
+  describe('\u2191 to edit your last message', () => {
+    /** The page's editLast and editArrived, with a thread `messages` and an outbox `sending`. */
+    function keys({ messages = [], sending = [], pane = [] } = {}) {
+      const state = {
+        open: 't', cache: new Map([['t', { data: { messages } }]]), sending, editing: null, editArriving: null,
+      };
+      const reply = { value: '', blur: () => {} };
+      const doc = { activeElement: reply, body: {} };
+      const did = {
+        edited: [], focused: [], toasts: [], later: [],
+      };
+      const fns = piece('function editLast', 'function globalKey', 'editLast, editArrived', {
+        state,
+        document: doc,
+        canEdit: (m) => Boolean(m.editable) && !m.pending,
+        sendLate: (p) => Boolean(p.late),
+        paneMessages: () => pane.map((id) => ({ dataset: { id } })),
+        focusMessage: (el) => did.focused.push(el.dataset.id),
+        toast: (text) => did.toasts.push(text),
+        startEdit: (id) => did.edited.push(id),
+        $: (id) => (id === 'reply' ? reply : null),
+        setTimeout: (fn) => did.later.push(fn),
+        SEND_ARRIVE_MS: 60000,
+        SEND_APP_ARRIVE_MS: 180000,
+      });
+      const settle = () => did.later.splice(0).forEach((fn) => fn());
+      return {
+        state, did, reply, doc, settle, ...fns,
+      };
+    }
+    const mine = (id, at) => ({
+      thread: 't', id, at, body: `reply ${id}`, editable: 'user',
+    });
+    const out = (id, at, status = 'sending', more = {}) => ({
+      thread: 't', id, at, body: 'just sent', status, ...more,
+    });
+
+    it('edits your last message of the thread', () => {
+      const p = keys({ messages: [mine('1', '2026-10-21T10:00:00Z'), mine('2', '2026-10-21T10:01:00Z')] });
+      assert.equal(p.editLast('t'), true);
+      assert.deepEqual(p.did.edited, ['t|2']);
+      assert.equal(p.state.editArriving, null);
+    });
+
+    it('waits for the reply just sent instead of editing the message before it, and opens it once it is back', () => {
+      for (const status of ['sending', 'sent', 'delivered']) {
+        const p = keys({
+          messages: [mine('1', '2026-10-21T10:00:00Z')],
+          sending: [out('pending-1', '2026-10-21T10:05:00Z', status)],
+        });
+        assert.equal(p.editLast('t'), true);
+        assert.deepEqual(p.did.edited, [], `${status}: not the message before it`);
+        assert.equal(p.state.editArriving.id, 'pending-1');
+        assert.match(p.did.toasts[0], /being sent/);
+        p.editArrived('t', mine('2', '2026-10-21T10:05:01Z'));
+        p.settle();
+        assert.deepEqual(p.did.edited, ['t|2'], status);
+        assert.equal(p.state.editArriving, null);
+      }
+    });
+
+    it('waits as long for a reply as the bot as it takes to come back', () => {
+      const p = keys({ sending: [out('pending-1', '2026-10-21T10:05:00Z', 'sent', { app: true })] });
+      const before = Date.now();
+      p.editLast('t');
+      assert.ok(p.state.editArriving.until >= before + 180000);
+    });
+
+    it('does not open the reply once you went on: typed, left the box, an edit, too late', () => {
+      const cases = [
+        [({ reply }) => Object.assign(reply, { value: 'next' }), 'typed the next reply'],
+        [({ doc }) => Object.assign(doc, { activeElement: {} }), 'left the box'],
+        [({ state }) => Object.assign(state, { editing: { id: 't|1' } }), 'editing another message'],
+        [({ state }) => Object.assign(state.editArriving, { until: Date.now() - 1 }), 'too late'],
+        [({ state }) => Object.assign(state, { open: 'u' }), 'another thread'],
+      ];
+      for (const [how, why] of cases) {
+        const p = keys({ sending: [out('pending-1', '2026-10-21T10:05:00Z')] });
+        p.editLast('t');
+        how(p);
+        p.editArrived('t', mine('2', '2026-10-21T10:05:01Z'));
+        p.settle();
+        assert.deepEqual(p.did.edited, [], why);
+        assert.equal(p.state.editArriving, null, why);
+      }
+    });
+
+    it('puts a reply that did not go out in focus, not the message before it', () => {
+      for (const status of ['failed', 'unknown']) {
+        const p = keys({
+          messages: [mine('1', '2026-10-21T10:00:00Z')],
+          sending: [out('pending-1', '2026-10-21T10:05:00Z', status)],
+          pane: ['t|1', 't|pending-1'],
+        });
+        assert.equal(p.editLast('t'), true);
+        assert.deepEqual(p.did.edited, [], status);
+        assert.deepEqual(p.did.focused, ['t|pending-1'], status);
+        assert.equal(p.state.editArriving, null, status);
+      }
+    });
+
+    it('edits a message newer than a reply in the outbox, and ignores other threads\' replies', () => {
+      const late = keys({
+        messages: [mine('1', '2026-10-21T10:00:00Z'), mine('2', '2026-10-21T10:10:00Z')],
+        sending: [out('pending-1', '2026-10-21T10:05:00Z', 'failed')],
+        pane: ['t|1', 't|pending-1', 't|2'],
+      });
+      late.editLast('t');
+      assert.deepEqual(late.did.edited, ['t|2']);
+      const other = keys({
+        messages: [mine('1', '2026-10-21T10:00:00Z')],
+        sending: [{ ...out('pending-1', '2026-10-21T10:05:00Z'), thread: 'u' }],
+      });
+      other.editLast('t');
+      assert.deepEqual(other.did.edited, ['t|1']);
+    });
+  });
+
+  describe('live reloads', () => {
+    /** The inbox's reloadSoon with fake timers: `due()` is how long until the reload set. */
+    function live({ types = ['conversation'], view = 'team', open = null } = {}) {
+      const state = {
+        sel: { type: new Set(types) }, not: {}, open, settings: { bells: [] },
+      };
+      let timer = null;
+      const FACETS = [{ id: 'type', value: (t) => (t.kind === 'alert' ? 'alert' : 'conversation') }];
+      const facetPasses = (f, t) => !state.sel[f.id]?.size || state.sel[f.id].has(f.value(t));
+      const fns = piece('let reload;', '\nasync function reloadChanged() {', 'reloadSoon, changed', {
+        state,
+        document: { visibilityState: 'visible' },
+        notifying: () => false,
+        scopeKey: () => 'helix',
+        personal: () => view === 'personal',
+        FACETS,
+        facetPasses,
+        reloadChanged: () => {},
+        setTimeout: (fn, ms) => {
+          timer = { ms };
+          return timer;
+        },
+        clearTimeout: (t) => {
+          if (t === timer) {
+            timer = null;
+          }
+        },
+      });
+      return { ...fns, due: () => timer && timer.ms };
+    }
+
+    it('reloads soon for a conversation, and waits for more for an alert the list does not show', () => {
+      const a = live();
+      a.reloadSoon('c1');
+      assert.equal(a.due(), 500);
+      const b = live();
+      b.reloadSoon('alert1', { alert: true });
+      assert.equal(b.due(), 30000);
+      // More alerts wait with it; a conversation's message does not.
+      b.reloadSoon('alert2', { alert: true });
+      assert.equal(b.due(), 30000);
+      b.reloadSoon('c1');
+      assert.equal(b.due(), 500);
+      assert.deepEqual([...b.changed], ['alert1', 'alert2', 'c1']);
+      // And an alert does not put off a reload already on its way.
+      b.reloadSoon('alert3', { alert: true });
+      assert.equal(b.due(), 500);
+    });
+
+    it('reloads soon for an alert the list shows, or the one open', () => {
+      const all = live({ types: [] });
+      all.reloadSoon('alert1', { alert: true });
+      assert.equal(all.due(), 500);
+      const alerts = live({ types: ['alert'] });
+      alerts.reloadSoon('alert1', { alert: true });
+      assert.equal(alerts.due(), 500);
+      const opened = live({ open: 'alert1' });
+      opened.reloadSoon('alert1', { alert: true });
+      assert.equal(opened.due(), 500);
+      // The personal view has no alerts, whatever the filter.
+      const mine = live({ types: [], view: 'personal' });
+      mine.reloadSoon('alert1', { alert: true });
+      assert.equal(mine.due(), 30000);
+    });
+  });
+
+  it('asks for the older pages of the inbox 300 entries at a time', () => {
+    const { pageUrl } = piece('const BACKFILL = 1000;', '\n/**', 'pageUrl', {
+      state: { team: 'helix' }, personal: () => false,
+    });
+    assert.equal(pageUrl(), '/api/inbox?team=helix');
+    assert.equal(pageUrl('2026-01-01|k'), '/api/inbox?team=helix&before=2026-01-01%7Ck&limit=300');
+  });
+
+  it('lists the admin team\'s requests in its inbox, as they are now, with its threads', async () => {
+    const state = { team: 'admin', data: null, scores: new Map() };
+    const pages = [
+      { team: 'admin', threads: [{ thread: 'a' }, { thread: 'b' }], page: { next: null } },
+      { team: 'admin', threads: [{ thread: 'a' }], page: { next: null } },
+    ];
+    const asked = [
+      [{ thread: 'request:channel:1' }, { thread: 'request:bot:slack:T:B1' }],
+      [{ thread: 'request:channel:1' }],
+    ];
+    let shown = true;
+    const { loadInbox } = piece('const BACKFILL = 1000;', '\nlet paging = null;', 'loadInbox', {
+      state,
+      personal: () => false,
+      scopeKey: () => 'admin',
+      scopeOf: (d) => d.team,
+      get: async () => pages.shift(),
+      syncSockets: () => {},
+      checkBells: () => {},
+      mergeProfiles: () => {},
+      renderUser: () => {},
+      renderFollowMenu: () => {},
+      coParticipants: () => new Map(),
+      inPass: (f) => f(),
+      smartScore: () => 0,
+      render: () => {},
+      backfill: () => {},
+      keepReads: () => {},
+      mergeStacks: (a, b) => ({ ...a, ...b }),
+      requestsShown: () => shown,
+      requestHere: (t) => state.team === 'admin' || t.team === state.team,
+      loadRequests: async () => asked.shift(),
+      isRequestKey: (k) => k.startsWith('request:'),
+    });
+    const keys = () => state.data.threads.map((t) => t.thread);
+    await loadInbox();
+    assert.deepEqual(keys(), ['a', 'b', 'request:channel:1', 'request:bot:slack:T:B1']);
+    // The older entries stay, but a request that is not listed any more goes.
+    await loadInbox();
+    assert.deepEqual(keys(), ['a', 'b', 'request:channel:1']);
+    // Another team's inbox has none.
+    shown = false;
+    pages.push({ team: 'admin', threads: [{ thread: 'a' }], page: { next: null } });
+    await loadInbox();
+    assert.deepEqual(keys(), ['a', 'b']);
+  });
+
+  it('lists the questions asked of you in the inbox of their thread\'s team, not in another', async () => {
+    const state = { team: 'edge', data: null, scores: new Map() };
+    const page = () => ({ team: 'edge', threads: [{ thread: 'a' }], page: { next: null } });
+    const pages = [page(), page()];
+    const asked = [
+      [{ thread: 'request:question:q1', team: 'edge' }, { thread: 'request:question:q2', team: 'forms' }],
+      [{ thread: 'request:question:q1', team: 'edge' }],
+    ];
+    const { loadInbox } = piece('const BACKFILL = 1000;', '\nlet paging = null;', 'loadInbox', {
+      state,
+      personal: () => false,
+      scopeKey: () => state.team,
+      scopeOf: (d) => d.team,
+      get: async () => pages.shift(),
+      syncSockets: () => {},
+      checkBells: () => {},
+      mergeProfiles: () => {},
+      renderUser: () => {},
+      renderFollowMenu: () => {},
+      coParticipants: () => new Map(),
+      inPass: (f) => f(),
+      smartScore: () => 0,
+      render: () => {},
+      backfill: () => {},
+      keepReads: () => {},
+      mergeStacks: (a, b) => ({ ...a, ...b }),
+      requestsShown: () => true,
+      requestHere: (t) => t.team === state.team,
+      loadRequests: async () => asked.shift(),
+      isRequestKey: (k) => k.startsWith('request:'),
+    });
+    await loadInbox();
+    assert.deepEqual(state.data.threads.map((t) => t.thread), ['a', 'request:question:q1']);
+    // Shown once, however often it is listed.
+    await loadInbox();
+    assert.deepEqual(state.data.threads.map((t) => t.thread), ['a', 'request:question:q1']);
+  });
+
   describe('a thread folded into a group (re-threading)', () => {
     const entry = (thread, members = [thread]) => ({
       thread, members: members.map((m) => ({ thread: m })),
@@ -575,6 +903,7 @@ describe('inbox page', () => {
         checkBells: () => {},
         mergeProfiles: () => {},
         renderUser: () => {},
+        renderFollowMenu: () => {},
         coParticipants: () => new Map(),
         inPass: (f) => f(),
         smartScore: () => 0,
@@ -582,6 +911,9 @@ describe('inbox page', () => {
         backfill: () => {},
         keepReads: () => {},
         mergeStacks: (a, b) => ({ ...a, ...b }),
+        // Not the admin team's inbox: no requests (see "the admin team's requests").
+        requestsShown: () => false,
+        isRequestKey: () => false,
       });
       return { state, keys: () => state.data.threads.map((t) => t.thread), ...fns };
     }
@@ -620,6 +952,7 @@ describe('inbox page', () => {
         stalePools: () => {},
         screenTeams: () => ['helix'],
         heardRead: () => {},
+        heardRequest: () => {},
         foldInto,
         splitFrom,
       });
@@ -835,6 +1168,8 @@ describe('inbox page', () => {
       tracesShown: () => true,
       threadRow: () => ({}),
       placeAgent: (k) => placed.push(state.agents.get(k).turn),
+      agentDid: () => {},
+      showSide: () => {},
       hidden: () => false,
       AGENT_POLL_MS: 1,
       AGENT_WAIT_MS: 1,
@@ -859,6 +1194,43 @@ describe('inbox page', () => {
     assert.equal(placed.pop(), null);
   });
 
+  it('wiggles the sidebar\'s tab as the agent sets to work or is done, not as a thread opens', () => {
+    const state = { open: 't' };
+    let wiggles = 0;
+    const { agentDid } = piece('// The open thread\'s agent, as the tab last knew it', '/** The tab wiggles, once', 'agentDid', {
+      state, wiggleSideTab: () => { wiggles += 1; },
+    });
+    const working = { startedAt: 'a', state: 'working', text: 'Reading the thread' };
+    agentDid('t', working);
+    assert.equal(wiggles, 0, 'the thread just opened: where its agent was');
+    agentDid('t', { ...working, text: 'Checking a web page' });
+    assert.equal(wiggles, 0, 'not for what it says while it works');
+    agentDid('t', { startedAt: 'a', state: 'done' });
+    assert.equal(wiggles, 1, 'done');
+    agentDid('t', { startedAt: 'b', state: 'working' });
+    assert.equal(wiggles, 2, 'at work again');
+    agentDid('u', { startedAt: 'c', state: 'working' });
+    assert.equal(wiggles, 2, 'not another thread\'s');
+    state.open = 'u';
+    agentDid('u', { startedAt: 'c', state: 'working' });
+    assert.equal(wiggles, 2, 'another thread opened');
+    const { agentDid: fresh } = piece('// The open thread\'s agent, as the tab last knew it', '/** The tab wiggles, once', 'agentDid', {
+      state, wiggleSideTab: () => { wiggles += 1; },
+    });
+    fresh('u', null);
+    fresh('u', null);
+    assert.equal(wiggles, 2, 'no agent, no wiggle');
+  });
+
+  it('puts the sidebar\'s tab on the thread\'s edge, and on the panel\'s while it is open', () => {
+    const css = SCRIPTS['spectrum-inbox.css'];
+    assert.match(css, /main\.siding #side-tab \{ margin-right: calc\(var\(--side-w\) \* var\(--side-open, 1\)\); \}/);
+    assert.match(css, /#side-tab\[hidden\] \{ display: none; \}/);
+    assert.match(css, /\.spectrum #side-tab\.wiggle \{ animation: side-tab-wiggle /);
+    // Pulled, the panel's motion is where the pointer is: placeSidePanel leaves it there.
+    assert.match(html, /if \(coming && side\.pulling\) drawSide\(\);/);
+  });
+
   it('talks to the agent in the sidebar through its own route only, and says who did', () => {
     const from = html.indexOf('async function askSide');
     const ask = html.slice(from, html.indexOf('\n}\n', from));
@@ -876,6 +1248,51 @@ describe('inbox page', () => {
     assert.equal(sidePeople(said(lena, { id: 3, name: 'Tom' }, me)), 'Lena Berg, Tom and you');
   });
 
+  it('keeps a sidebar conversation one line, whoever joins it and whatever the thread says meanwhile', () => {
+    const { sideConversations } = piece('// A pause this long between two sidebar messages', '/** "Lena Berg", "You"', 'sideConversations');
+    const lena = { id: 2, name: 'Lena Berg' };
+    const me = { id: 1, name: 'Dana Ops' };
+    const at = (hm) => `2026-10-21T${hm}:00.000Z`;
+    const ask = (id, by, hm) => ({
+      id, role: 'person', by, at: at(hm),
+    });
+    const answer = (to, hm) => ({
+      id: `${to}:answer`, role: 'agent', reply_to: to, at: at(hm),
+    });
+    const ids = (convs) => convs.map((c) => [c.run.map((m) => m.id), c.at, c.trailing, c.last]);
+    // Lena asks, the thread goes on, you join an hour later: one conversation, where it was
+    // last talked in, after the thread's message between.
+    const joined = [ask('a', lena, '10:00'), answer('a', '10:01'), ask('b', me, '11:00'), answer('b', '11:01')];
+    assert.deepEqual(ids(sideConversations(joined, [at('09:00'), at('10:30'), at('11:30')])), [
+      [['a', 'a:answer', 'b', 'b:answer'], 2, false, true],
+    ]);
+    // After the thread's latest message: trailing, so that the sidebar goes on with it.
+    assert.deepEqual(ids(sideConversations(joined, [at('09:00'), at('10:30')])), [
+      [['a', 'a:answer', 'b', 'b:answer'], 2, true, true],
+    ]);
+    // Asked before the thread's message, answered after it: the answer goes with it.
+    assert.deepEqual(ids(sideConversations(joined.slice(0, 2), ['2026-10-21T10:00:30.000Z'])), [
+      [['a', 'a:answer'], 1, true, true],
+    ]);
+    // A long pause, with the thread's messages in it: a conversation of its own.
+    const later = [...joined, ask('c', lena, '16:00'), answer('c', '16:01')];
+    assert.deepEqual(ids(sideConversations(later, [at('10:30'), at('12:00')])), [
+      [['a', 'a:answer', 'b', 'b:answer'], 1, false, false],
+      [['c', 'c:answer'], 2, true, true],
+    ]);
+    // A long pause with nothing in the thread between is still one line, as it always was.
+    assert.equal(sideConversations(later, [at('09:00')]).length, 1);
+    // The agent's follow-up after the thread moved on: a line of its own.
+    const followup = {
+      id: 'a:followup:1', role: 'agent', reply_to: 'a', at: at('10:40'),
+    };
+    assert.deepEqual(ids(sideConversations([...joined.slice(0, 2), followup], [at('10:30')])), [
+      [['a', 'a:answer'], 0, false, false],
+      [['a:followup:1'], 1, true, true],
+    ]);
+    assert.deepEqual(sideConversations([], [at('10:00')]), []);
+  });
+
   describe('the sidebar beside the thread, where there is room', () => {
     const lena = { id: 2, name: 'Lena Berg' };
     const run = [
@@ -886,11 +1303,14 @@ describe('inbox page', () => {
         id: 'sb1:answer', role: 'agent', body: 'Twice.', state: 'done', reply_to: 'sb1', at: '2026-10-21T10:00:30.000Z',
       },
     ];
-    /** The sidebar's markup with `side` as it stands, for who may talk to the agent, or not. */
-    const sidebar = (side, { may = true } = {}) => {
-      const globals = {
+    /**
+     * The sidebar's markup with `side` as it stands, for who may talk to the agent, or not, and
+     * who may work the thread (`work`), or only see it.
+     */
+    const sidebar = (side, { may = true, work = true } = {}) => {
+      const base = {
         side: { open: new Set(), ...side },
-        state: { me: { id: 1 }, agents: new Map(), cache: new Map() },
+        state: { me: { id: 1 }, agents: new Map(), cache: new Map([['t', { data: { can_work: work } }]]) },
         canSide: () => may,
         avatar: (name) => `<i>${name}</i>`,
         AGENT_NAME: 'Thread Agent',
@@ -902,8 +1322,15 @@ describe('inbox page', () => {
         clock: () => '10:00 AM',
         timeTag: () => '<time>10:00 AM</time>',
         dayLabel: () => 'Today',
+        // The commands and scripts the agent asked for there (test/ui-bashline.test.js).
+        bashSideCards: () => [],
+      };
+      const globals = {
+        ...base,
+        ...piece('/**\n * Whether you may work thread `key`', '/** Whether thread `key` is in sidebar mode', 'canWork, sideOff, sideAudience, onlyTeam', base),
       };
       return {
+        ...globals,
         ...piece('/** Whether thread `key` is in sidebar mode in the thread itself', '/** The reply box in sidebar mode', 'sideInline, sidePaneled, sideRun, sideGroup', globals),
         ...piece('/** The panel\'s top:', '/** The panel goes, with what it showed.', 'sidePanelHead, sidePanelItems, sidePanelBox', {
           ...globals, sideRun: (key, r) => r.map((m) => `<p>${m.body}</p>`),
@@ -933,7 +1360,7 @@ describe('inbox page', () => {
         const line = shut.sideGroup('t', run, { last: true, trailing: true });
         assert.match(line, /data-side-toggle="sb1" aria-expanded="false" aria-controls="side">/);
         assert.match(line, /Lena Berg had a sidebar conversation with <b>Thread Agent<\/b>/);
-        assert.match(line, /2 messages · 10:00 AM · not posted/);
+        assert.match(line, /2 messages, 10:00 AM, not posted/);
         assert.doesNotMatch(line, /sc-body|Seen before\?| open | live /);
         // In it: the same line, marked as shown beside the thread; never unfolded there too.
         const { sideGroup, sideInline, sidePaneled } = sidebar({ wide: true, key: 't' }, { may });
@@ -962,19 +1389,37 @@ describe('inbox page', () => {
       assert.deepEqual(items.map((h) => (/^<div class="sp-when" data-run="(\w+)">/.exec(h) || [])[1] || h), [
         'sb1', '<p>Seen before?</p>', '<p>Twice.</p>', 'sb2', '<p>And now?</p>',
       ]);
-      assert.match(items[0], /Today · 10:00 AM/);
+      assert.match(items[0], /Today, 10:00 AM/);
       assert.match(sidePanelItems('t', [])[0].html, /class="sc-wait blank".*It is never posted\./);
       // It says who sees it, and where nothing goes, as the box in the thread does.
-      assert.match(sidePanelHead({ source: 'slack' }), /Sidebar with Thread Agent<\/b><small>Only your team sees this\. Nothing goes to Slack\.<\/small>/);
-      assert.match(sidePanelHead({ source: 'slack' }), /<button type="button" class="sp-close" data-side-exit [^>]*aria-label="Close the sidebar">/);
+      assert.match(sidePanelHead('t', { source: 'slack' }), /Sidebar with Thread Agent<\/b><small>Only your team sees this\. Nothing goes to Slack\.<\/small>/);
+      assert.match(sidePanelHead('t', { source: 'slack' }), /<button type="button" class="sp-close" data-side-exit [^>]*aria-label="Close the sidebar">/);
       // The thread keeps its reply box, with the draft's and the commands' lines: the panel's
       // box is the sidebar's only.
       const box = sidePanelBox('t');
       assert.equal(box.match(/id="side-reply"/g).length, 1);
       assert.match(box, /id="side-send"/);
       assert.doesNotMatch(box, /id="(draftbar|bashbar|reply|send)"|data-side-exit/);
-      // Someone who may not talk to the agent reads there.
-      assert.equal(sidebar({ wide: true, key: 't' }, { may: false }).sidePanelBox('t'), '');
+      // Someone who may not talk to the agent reads there, and is told why, where the box was.
+      const off = sidebar({ wide: true, key: 't' }, { may: false }).sidePanelBox('t');
+      assert.doesNotMatch(off, /side-reply|side-send/);
+      assert.match(off, /<div class="composer sidebar off" role="note"><p class="side-off">Thread Agent is off in this channel\.<\/p><\/div>/);
+    });
+
+    it('tells who only sees the thread that its team sees the sidebar too, and why a folded one stops', () => {
+      // An admin, or who talked in it before the channel moved to another team: they talk, and
+      // the head says who else sees it.
+      const seen = sidebar({ wide: true, key: 't' }, { work: false });
+      assert.match(seen.sidePanelHead('t', { source: 'slack' }), /<small>Only the thread's team and you see this\. Nothing goes to Slack\.<\/small>/);
+      assert.match(seen.sidePanelBox('t'), /id="side-reply"/);
+      assert.match(seen.onlyTeam('grant it'), /^Only the thread's team can grant it\.$/);
+      // Folded under the thread, where it cannot go on: why, instead of Continue.
+      const shut = sidebar({ wide: false, key: null, open: new Set(['sb1']) }, { may: false });
+      const line = shut.sideGroup('t', run, { last: true, trailing: false });
+      assert.doesNotMatch(line, /sc-continue/);
+      assert.match(line, /<div class="sc-foot"><span class="sc-wait">Thread Agent is off in this channel\.<\/span><\/div>/);
+      const open = sidebar({ wide: false, key: null, open: new Set(['sb1']) });
+      assert.match(open.sideGroup('t', run, { last: true, trailing: false }), /data-side-enter>Continue in the sidebar/);
     });
 
     it('shows the panel where the list, the thread and it have room, measured from the list\'s left edge', () => {
@@ -1012,7 +1457,7 @@ describe('inbox page', () => {
 
     it('puts the panel beside the thread, in the content area, and hides it everywhere else', () => {
       const css = SCRIPTS['spectrum-inbox.css'];
-      assert.match(PAGES['inbox.html'], /<section id="pane" [^>]*>.*<\/section>\n {2}<section id="side" aria-label="Sidebar with Thread Agent" hidden><\/section>\n {2}<div id="side-join" aria-hidden="true" hidden><svg>.*<\/svg><\/div>\n<\/main>/);
+      assert.match(PAGES['inbox.html'], /<section id="pane" [^>]*>.*<\/section>\n {2}<section id="side" aria-label="Sidebar with Thread Agent" hidden><\/section>\n {2}<div id="side-join" aria-hidden="true" hidden><svg>.*<\/svg><\/div>\n {2}<button id="side-tab" [^>]*hidden><\/button>\n<\/main>/);
       assert.match(css, /#side \{ grid-row: 1; grid-column: 3; justify-self: end; width: var\(--side-w\);/);
       assert.match(css, /#side\[hidden\] \{ display: none; \}/);
       // It comes out of the line that opened it, and goes back into it.
@@ -1020,6 +1465,14 @@ describe('inbox page', () => {
       assert.match(css, /#side-join \{ position: absolute; z-index: 2; overflow: hidden; pointer-events: none; \}/);
       assert.match(css, /main\.side-veiled #side \{ opacity: 0; pointer-events: none; \}/);
       assert.match(css, /main \{ --side-motion: var\(--spectrum-animation-duration-1000\); \}/);
+      // Another thread opens: the panel slides out, quicker, inert, its box not wired to that one.
+      assert.match(css, /main \{ --side-leave: var\(--spectrum-animation-duration-300\); \}/);
+      assert.match(html, /if \(away && !REDUCED_MOTION\.matches\) \{[^}]*panel\.inert = true;[^}]*moveSide\(0, \{ animate: true, leave: true \}\);/);
+      assert.match(html, /getPropertyValue\(leave \? '--side-leave' : '--side-motion'\)/);
+      assert.match(html, /if \(!box \|\| box\.closest\('\[inert\]'\)\) return;/);
+      // The bridge from the joined line closes the panel: only its path takes the pointer.
+      assert.match(css, /#side-join path \{ pointer-events: visiblePainted; cursor: pointer; \}/);
+      assert.match(html, /\$\('side-join'\)\.onclick = \(e\) => \{\s*if \(e\.clientX >= panel\.getBoundingClientRect\(\)\.left\) return;\s*if \(sideMotion\.p === 1 && !sideMotion\.raf && sidePaneled\(state\.open\)\) exitSide\(\);/);
       assert.match(css, /\.spectrum #side \{[^}]*background: var\(--spectrum-purple-subtle-background-color-default\);/);
       assert.match(css, /main\.siding #pane \{ margin-right: calc\(var\(--side-w\) \* var\(--side-open, 1\)\); \}/);
       // The thread's reply box is the sidebar's only in the thread itself.
@@ -1029,7 +1482,11 @@ describe('inbox page', () => {
       assert.match(html, /if \(!sidePaneled\(key\)\) \{ hideSidePanel\(\); return; \}/);
       // A line in the thread opens the panel at its conversation, for anyone who sees it.
       assert.match(html, /if \(side\.wide\) \{ enterSide\(state\.open, \{ at: id \}\); return; \}/);
+      // The line joined to the open panel is part of it: picked, it closes the panel.
+      assert.match(html, /if \(side\.wide && sidePaneled\(state\.open\) && side\.joined === id\) \{ exitSide\(\); return; \}/);
       assert.match(html, /if \(!key \|\| !\(canSide\(key\) \|\| \(side\.wide && sideList\(key\)\.length\)\)\) return;/);
+      // The icon beside the reply box, still there while the panel is open, closes it again.
+      assert.match(html, /if \(enter\.matches\('\.sidebtn'\) && side\.key === state\.open\) exitSide\(\); else enterSide\(\);/);
     });
   });
 
@@ -1054,6 +1511,53 @@ describe('inbox page', () => {
     assert.equal(rowLabel({}, 'Slack'), 'Slack');
     const rows = html.slice(html.indexOf('function facetRows'), html.indexOf('const mentionBadge'));
     assert.match(rows, /title="\$\{esc\(\(f\.hint && f\.hint\[v\]\) \|\| label\)\}/);
+  });
+
+  it('counts what is unread still on the filter cards in unread only, the rows staying put', () => {
+    // Unread only keeps the threads the list has shown, read ones too (keptUnread): a row's count
+    // went down only on the next reload, not as you stepped through the list reading them.
+    const state = {
+      unread: true, sel: {}, not: {}, list: { held: new Set() },
+    };
+    let threads = [];
+    const kept = (t) => t.unread || state.list.held.has(t.thread);
+    const { facetRows } = piece('function facetRows', 'const cardFacets', 'facetRows', {
+      state,
+      listed: () => threads,
+      passes: (t) => !state.unread || kept(t),
+      unreadNow: (t) => t.unread,
+      valuesOf: (f, t) => [f.value(t)],
+      youCount: (t) => (t.unread ? t.you || 0 : 0),
+      youTitle: (n) => `${n}`,
+      statusOf: () => 'quiet',
+      rowLabel: (f, v) => v,
+      notButton: () => '',
+      bar: () => '',
+      esc: (s) => s,
+      withOrg: (h) => h,
+    });
+    const customer = { id: 'customer', value: (t) => t.org };
+    const counts = () => [...facetRows(customer).matchAll(/data-v="([^"]+)"[\s\S]*?<span class="n">(\d+)<\/span>/g)]
+      .map((m) => `${m[1]}=${m[2]}`);
+    const t = (thread, org, more = {}) => ({
+      thread, org, unread: true, ...more,
+    });
+    threads = [t('a1', 'acme'), t('a2', 'acme'), t('a3', 'acme'), t('g1', 'globex'), t('g2', 'globex')];
+    state.list.held = new Set(threads.map((x) => x.thread));
+    assert.deepEqual(counts(), ['acme=3', 'globex=2']);
+    // You read two of acme's: its count goes down, and it stays above globex until the list
+    // lets go of them.
+    threads[0].unread = false;
+    threads[1].unread = false;
+    assert.deepEqual(counts(), ['acme=1', 'globex=2']);
+    threads[2].unread = false;
+    assert.deepEqual(counts(), ['acme=0', 'globex=2']);
+    // After a while away (forgetRead), the list lets go of them, and so does the card.
+    state.list.held = new Set(['g1', 'g2']);
+    assert.deepEqual(counts(), ['globex=2']);
+    // Without unread only, a card counts every thread, read or not.
+    state.unread = false;
+    assert.deepEqual(counts(), ['acme=3', 'globex=2']);
   });
 
   it('looks at the list again as time passes, while it is on screen', () => {
@@ -1081,11 +1585,14 @@ describe('inbox page', () => {
     assert.equal(renders, 1);
   });
 
-  it('lets go of the threads read meanwhile only after five minutes away', () => {
-    let now = 0;
+  it('lets go of the threads read meanwhile, and reloads, only after five minutes away', () => {
+    // Not 0, which is "not away".
+    let now = 1;
     let focused = true;
     let timer = null;
     let forgets = 0;
+    let probes = 0;
+    const changed = new Set();
     const on = {};
     const { awayOrBack } = piece('// Away from the inbox', 'document.addEventListener(\'visibilitychange\'', 'awayOrBack', {
       hidden: () => false,
@@ -1105,9 +1612,18 @@ describe('inbox page', () => {
         forgets += 1;
         return true;
       },
+      forgetColumn: () => {
+        forgets += 1;
+        return false;
+      },
       render: () => {},
+      probeSockets: () => { probes += 1; },
+      changed,
+      GAP: 'gap',
+      state: { data: null },
     });
-    // Another window for a minute, and back: nothing is let go of.
+    // Another window for a minute, and back: nothing is let go of, nor reloaded; the sockets
+    // are asked whether they are still there.
     focused = false;
     on.blur();
     now = 60 * 1000;
@@ -1115,16 +1631,24 @@ describe('inbox page', () => {
     on.focus();
     assert.equal(timer, null);
     assert.equal(forgets, 0);
+    assert.equal(probes, 1);
+    assert.deepEqual([...changed], []);
+    // Focus again without having left: not asked again.
+    on.focus();
+    assert.equal(probes, 1);
     // Away for longer: let go of while away, and again when back (for a timer that was late).
     focused = false;
     on.blur();
     assert.equal(timer.at, now + 5 * 60 * 1000);
     now = timer.at;
     timer.f();
-    assert.equal(forgets, 1);
+    assert.equal(forgets, 2);
     focused = true;
     awayOrBack();
-    assert.equal(forgets, 2);
+    assert.equal(forgets, 4);
+    // And reloads, whatever was heard meanwhile: a socket may have lost it.
+    assert.equal(probes, 2);
+    assert.deepEqual([...changed], ['gap']);
   });
 
   it('outlines neighboring picked values as one, with no edge between them', () => {
@@ -1183,8 +1707,8 @@ describe('inbox page', () => {
     assert.equal(boxState({ text: 'draft, edited', from: 'draft', base: 'v1' }), 'diverged');
   });
 
-  it('tells where the file in the knowledge-base editor stands', () => {
-    const kb = SCRIPTS['kb.js'];
+  it('tells where the file open in a knowledge base stands', () => {
+    const kb = SCRIPTS['agent.js'];
     const from = kb.indexOf('/**\n * Where the open file stands');
     const to = kb.indexOf('/** Saves a pause after the last keystroke');
     // eslint-disable-next-line no-new-func
@@ -1239,7 +1763,7 @@ describe('inbox page', () => {
     });
     assert.equal(channelOf('Acme-Ops'), channelOf('C0AAAAAAAA1'));
     assert.deepEqual(channelOf('beta'), {
-      name: 'beta', href: 'https://slack.com/archives/C0BBBBBBBB2', title: '#beta is not in your inbox: open it in Slack',
+      name: 'beta', href: 'https://slack.com/archives/C0BBBBBBBB2', title: 'Open #beta in Slack',
     });
     assert.equal(channelOf('unknown'), undefined);
     assert.equal(channelNames('New channel: #C0AAAAAAAA1, #C0ZZZZZZZZ9.'), 'New channel: #acme-ops, #C0ZZZZZZZZ9.');
@@ -1266,7 +1790,8 @@ describe('inbox page', () => {
         fact('url', 'https://www.acme.example/pricing'),
         fact('url', 'https://main--www--acme.aem.page/en/'),
         fact('affected_url', 'main--www--acme.aem.page/en'),
-      ]);
+        fact('case', 'E-000001'),
+      ], { ticket: 'Ticket', cve: 'CVE' });
       assert.deepEqual(links.map((l) => [l.group, l.text, l.note]), [
         ['mentioned', 'main--www--acme.aem.page/en', 'Affected page'],
         ['mentioned', 'www.acme.example/pricing', ''],
@@ -1275,6 +1800,8 @@ describe('inbox page', () => {
         ['reference', 'www.aem.live/docs/cdn', ''],
         ['id', 'OPS-1', 'Ticket'],
         ['id', 'CVE-2026-1234', 'CVE'],
+        // An id whose field the API names not: as the field is named.
+        ['id', 'E-000001', 'case'],
       ]);
       assert.equal(links.find((l) => l.text === 'OPS-1').href, null);
       assert.equal(links.find((l) => l.group === 'id' && l.href).href, 'https://www.cve.org/CVERecord?id=CVE-2026-1234');
@@ -1314,7 +1841,7 @@ describe('inbox page', () => {
       assert.deepEqual(urlParts('https://da.example/#/org/site'), { lead: 'da.example', tail: '/#/org/site' });
     });
 
-    it('names the tech stack by what the thread shows, then its topics, then the customer\'s', () => {
+    it('names the tech stack by what the thread shows, then its topics; nothing of the channel\'s', () => {
       const { headTech } = header();
       const vocab = { tech: { eds: 'Edge Delivery', akamai: 'Akamai' }, topics: { cdn: 'CDN and caching' } };
       const data = {
@@ -1326,14 +1853,13 @@ describe('inbox page', () => {
       const t = headTech(data);
       assert.equal(t.label, 'Akamai');
       assert.deepEqual(t.here.map((x) => [x.name, x.p]), [['Akamai', 0.9]]);
-      assert.deepEqual(t.also.map((x) => x.name), ['Edge Delivery', 'fastly']);
+      // The channel's technologies are not the thread's: the customer's stack is its drawing.
+      assert.deepEqual(t.also, []);
       assert.deepEqual(t.topics.map((x) => x.name), ['CDN and caching']);
-      assert.equal(t.count, 4);
-      // Nothing the thread shows: its first topic, not the customer's likeliest (a da.live link
-      // elsewhere in the channel does not make a Sidekick thread Document Authoring's); with
-      // no topic either, the customer's likeliest.
+      assert.equal(t.count, 2);
+      // Nothing the thread shows: its first topic; with no topic either, nothing.
       assert.equal(headTech({ ...data, thread_tech: [] }).label, 'CDN and caching');
-      assert.equal(headTech({ ...data, thread_tech: [], topics: [] }).label, 'Edge Delivery');
+      assert.equal(headTech({ ...data, thread_tech: [], topics: [] }).label, '');
       assert.equal(headTech({ vocab, topics: ['cdn'] }).label, 'CDN and caching');
       assert.equal(headTech({ vocab }).count, 0);
     });
@@ -1386,6 +1912,8 @@ describe('inbox page', () => {
       assert.equal(computeStatus(t({ on: 'Customer', last: at(6, 10) })), 'quiet');
       Date.now = () => at(9, 11);
       assert.equal(computeStatus(t({ on: 'Customer', last: at(6, 10) })), 'silent');
+      // A vendor that has not answered for as long has gone silent too: chase it.
+      assert.equal(computeStatus(t({ on: 'Vendor', last: at(6, 10) })), 'silent');
     } finally {
       Date.now = real;
     }
@@ -1441,6 +1969,7 @@ describe('inbox page', () => {
         activityOf: (t) => String(t.last_at || t.any_at || ''),
         smartScore: (t) => t.score,
         statusOf: (t) => t.status || 'quiet',
+        sideCount: (t) => (t.sideNew || []).length,
       });
       state.list = api.newList();
       const shown = () => {
@@ -1471,6 +2000,16 @@ describe('inbox page', () => {
       shown();
       state.unread = true;
       assert.deepEqual(shown(), ['b', 'c']);
+    });
+
+    it('keeps a read thread with an answer to you in its sidebar you have not seen in unread only', () => {
+      const { state, shown } = list();
+      state.unread = true;
+      state.data.threads = [
+        thread('a', { score: 3, unread: false, sideNew: ['sb_1:answer'] }),
+        thread('b', { score: 2, unread: false }),
+      ];
+      assert.deepEqual(shown(), ['a']);
     });
 
     it('lets go of the threads read meanwhile, after a while away, but not of the open one', () => {

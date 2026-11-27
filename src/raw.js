@@ -43,6 +43,13 @@ export async function sha256(value) {
   return [...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, '0')).join('');
 }
 
+/** Gravatar URL for an email; Gravatar answers 404 when there is no picture. */
+export async function gravatar(email) {
+  return email
+    ? `https://gravatar.com/avatar/${await sha256(String(email).trim().toLowerCase())}?s=96&d=404`
+    : '';
+}
+
 function stringMetadata(meta) {
   return Object.fromEntries(
     Object.entries(meta)
@@ -51,15 +58,20 @@ function stringMetadata(meta) {
   );
 }
 
+/** Writes one raw object, without enqueueing it (`putRaw` does both): R2's promise. */
+export function writeRaw(env, key, body, meta = {}) {
+  return env.RAW.put(key, body, {
+    httpMetadata: { contentType: 'application/json' },
+    customMetadata: stringMetadata({ receivedAt: new Date().toISOString(), ...meta }),
+  });
+}
+
 /**
  * Writes one raw object and enqueues its key for normalization. Throws if either step
  * fails, so the caller can let the platform retry; a retry rewrites the same key.
  */
 export async function putRaw(env, key, body, meta = {}) {
-  await env.RAW.put(key, body, {
-    httpMetadata: { contentType: 'application/json' },
-    customMetadata: stringMetadata({ receivedAt: new Date().toISOString(), ...meta }),
-  });
+  await writeRaw(env, key, body, meta);
   await env.NORMALIZE.send({ key });
   return key;
 }
@@ -73,4 +85,24 @@ export function messageKey(tenantId, res, message) {
   const modified = new Date(message.lastModifiedDateTime || message.createdDateTime);
   return `teams/${segment(tenantId)}/${segment(res.teamId)}/${segment(res.channelId)}/`
     + `${dayPath(modified)}/${modified.getTime()}-${segment(message.id || res.messageId)}.json`;
+}
+
+const RESOURCE = /^\/?teams\('([^']+)'\)\/channels\('([^']+)'\)\/messages\('([^']+)'\)(?:\/replies\('([^']+)'\))?$/;
+
+/**
+ * Parses a channel-message resource path from a change notification, for example
+ * `teams('…')/channels('…')/messages('…')` or `…/messages('…')/replies('…')`.
+ */
+export function parseResource(resource) {
+  const m = RESOURCE.exec(resource || '');
+  if (!m) {
+    return null;
+  }
+  const [, teamId, channelId, rootId, replyId] = m;
+  const reply = replyId ? `/replies/${encodeURIComponent(replyId)}` : '';
+  const path = `/teams/${encodeURIComponent(teamId)}/channels/${encodeURIComponent(channelId)}`
+    + `/messages/${encodeURIComponent(rootId)}${reply}`;
+  return {
+    teamId, channelId, rootId, messageId: replyId || rootId, path,
+  };
 }

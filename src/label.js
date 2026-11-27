@@ -14,13 +14,15 @@ import { platformName } from './platforms.js';
 import { recordDead, sweepDelay, sweepsNow } from './deadjobs.js';
 import { fileCache, folderFiles } from './filecache.js';
 import {
-  extract, rulesFor, techFor, techLayerMap, techNames,
+  extract, factLabels, rulesFor, techFor, techLayerMap, techNames,
 } from './extract.js';
 import { isStaffDomain } from './lookup.js';
 import { LAYERS } from './stack.js';
-import {
-  coveredBy, GENERIC, nameKey, productKey, productLike, techIndex,
-} from './products.js';
+import { threadAreaStatements, threadTechStatements } from './follows.js';
+import { resolveTech, techMoves } from './catalog.js';
+import { questionKeys } from './techid.js';
+import { areaNames, areasFor } from './areas.js';
+import { LANGUAGE_QUESTION, languageOf } from './translate.js';
 
 /**
  * Thread labels (Clef, a decision model) and facts (the teams' extraction rules, plus Clairic,
@@ -34,7 +36,7 @@ export const CLAIRIC = '@cf/cloudflare/clairic';
 export const TITLER = '@cf/meta/llama-3.3-70b-instruct-fp8-fast';
 const MAX_TITLE = 90;
 
-/** At or above this, a technology is the channel's (channel_tech); a rule's detection is 1. */
+/** At or above this, a thread shows a technology (thread_tech); a rule's detection is 1. */
 export const TECH_MIN = 0.8;
 /** Questions per Clef call: more are asked in calls of their own, at the same time. */
 export const MAX_QUESTIONS = 24;
@@ -140,7 +142,10 @@ export const TOPIC_MIN = 0.55;
  * Topics no longer asked, for the labels from before: the topic that took one over, or null for
  * one that is a product, which the tech stack says now.
  */
-const RETIRED_TOPICS = { golive: 'project', commerce: null, integrations: null };
+// The ids of built-in topics from before, as their labels have them: one now another's. An id an
+// area has again (commerce, integrations: authored areas) is not here, or its answers would be
+// dropped on every read.
+const RETIRED_TOPICS = { golive: 'project' };
 export const LABEL_DELAY_SECONDS = 120;
 export const MIN_CONFIDENCE = 0.8;
 // Free-text spans are scored lower than typed values; this is the measured working point.
@@ -190,11 +195,55 @@ export const QUESTIONS = {
   },
 };
 
-/** The Clef questions about a channel's tech stack (src/extract.js techFor). */
-const techQuestions = (tech) => Object.fromEntries(tech.map((t) => [`tech.${t.tech}`, {
-  type: 'noul',
-  instructions: `Does this thread show that the customer uses ${t.description}?`,
-}]));
+/**
+ * What Clef is asked of a vendor's thread (`orgs.type` 'vendor'): a company whose product or
+ * service Adobe uses, so Adobe is the customer there, and the vendor answers, investigates and
+ * fixes. The same questions in the same order, but who acts next is Adobe or the vendor
+ * (`next_actor` 'vendor', which the inbox shows as waiting on the vendor), and urgency and
+ * resolution are Adobe's as the vendor's customer. The topics were measured with QUESTIONS
+ * (TOPIC_MIN): a vendor's threads are few, and asked this way they read the right way round.
+ */
+export const VENDOR_QUESTIONS = {
+  ...QUESTIONS,
+  next_actor: {
+    type: 'choice',
+    instructions: 'Who has to act next in this thread between Adobe staff and a vendor whose product'
+      + ' or service Adobe uses? Here Adobe is the customer, and the vendor answers, investigates'
+      + ' and fixes.',
+    criteria: {
+      us: 'Adobe staff: reply to the vendor, test or confirm a fix, send logs or information, decide, or close the case',
+      vendor: 'The vendor: answer, investigate, fix, escalate, quote, or follow up on what Adobe asked',
+      nobody: 'Nothing is pending: resolved, acknowledged, FYI, an announcement or social',
+    },
+  },
+  urgency: {
+    ...QUESTIONS.urgency,
+    criteria: [
+      ...QUESTIONS.urgency.criteria.slice(0, 3),
+      'Critical: production impact at Adobe or its customers right now',
+    ],
+  },
+  resolved: {
+    type: 'noul',
+    instructions: 'Has the issue or request in this thread been resolved or closed? A ✅ or ✔️'
+      + ' reaction by Adobe staff (or a 👍 by Adobe staff on the vendor\'s answer) confirms it is.',
+  },
+};
+
+/** The questions of a thread of an org of `type` (`orgs.type`; none is a customer). */
+export const questionsFor = (type) => (type === 'vendor' ? VENDOR_QUESTIONS : QUESTIONS);
+
+/**
+ * The Clef questions about a channel's tech stack (src/extract.js techFor), each by the hash of
+ * its id (src/techid.js `questionKeys`): a catalog path is no key. `techOf` maps them back.
+ */
+export const techQuestions = (tech) => {
+  const keys = questionKeys(tech.map((t) => t.tech));
+  return Object.fromEntries(tech.map((t) => [`tech.${keys[t.tech]}`, {
+    type: 'noul',
+    instructions: `Does this thread show that the customer uses ${t.description}?`,
+  }]));
+};
 
 /**
  * Clef on `state`: each group of questions asked in calls of its own, of at most MAX_QUESTIONS,
@@ -219,15 +268,31 @@ export async function askClef(env, state, ...groups) {
   };
 }
 
-const TOPIC_QUESTIONS = Object.fromEntries(Object.entries(TOPICS).map(([id, t]) => [`topic.${id}`, {
+/** TOPICS as areas (src/areas.js): what Clef asks until a team has written any. */
+export const BUILT_IN_AREAS = Object.entries(TOPICS)
+  .map(([id, t]) => ({ id, name: t.name, what: t.what }));
+
+/**
+ * The areas Clef asks about (src/areas.js `areasFor`): the teams', in the order the built-in ones
+ * were measured in, those added after them; the built-in ones until a team has written any.
+ */
+export const areasToAsk = (env) => areasFor(env, {
+  order: Object.keys(TOPICS), fallback: BUILT_IN_AREAS,
+});
+
+/** The Clef questions of `areas`, one per area: "Is this thread about <what>?". */
+export const areaQuestions = (areas) => Object.fromEntries(areas.map((t) => [`topic.${t.id}`, {
   type: 'noul',
   instructions: `Is this thread about ${t.what}?`,
 }]));
 
-/** The topics Clef is sure enough of, as `{ id: probability }`; null when there are none. */
-export function topicsOf(answers) {
+/**
+ * The areas (topics) Clef is sure enough of, of `areas` (the built-in ones by default), as
+ * `{ id: probability }`; null when there are none.
+ */
+export function topicsOf(answers, areas = BUILT_IN_AREAS) {
   const out = {};
-  for (const id of Object.keys(TOPICS)) {
+  for (const id of areas.map((a) => a.id)) {
     const p = answers && answers[`topic.${id}`] ? answers[`topic.${id}`].noul : null;
     if (typeof p === 'number' && p >= TOPIC_MIN) {
       out[id] = Math.round(p * 1000) / 1000;
@@ -252,37 +317,12 @@ export function topicList(stored) {
   return [...new Set(ids)];
 }
 
-/** The names the inbox shows for topic ids. */
+/** The names the inbox shows for the built-in areas' ids. */
 export const topicNames = () => Object.fromEntries(Object.entries(TOPICS)
   .map(([id, t]) => [id, t.name]));
 
-/**
- * The names the inbox shows for tech stack and topic ids, the layer of the stack each
- * technology is in (`layers`), and the layers, top to bottom (`stack`, src/stack.js).
- */
-export const vocab = async (env, team = null) => {
-  const [tech, layers] = await Promise.all([techNames(env, team), techLayerMap(env, team)]);
-  return {
-    tech, topics: topicNames(), layers, stack: LAYERS.map(({ id, name }) => ({ id, name })),
-  };
-};
-
-/**
- * Clairic's `products` field: the wording of the product census (docs/ARCHITECTURE.md, "Labels
- * and facts"), the fewest stray words of five at nearly the best recall. Clairic lists nearly
- * every name in the state, the header's and the authors' too, so productFacts reads its spans.
- */
-export const PRODUCTS_INSTRUCTIONS = 'Names of software products, cloud services, platforms and'
-  + ' developer tools that the customer uses or asks about, for example AEM Sites, Document'
-  + ' Authoring, Cloudflare, Algolia or GitHub. Not the names of people, customers or the channel,'
-  + ' and not generic words such as API, CDN, website or page.';
-/**
- * At most this many products per thread, each at most MAX_PRODUCT characters, of them at most
- * MAX_GAPS the tech stack does not cover.
- */
-export const MAX_PRODUCTS = 16;
-export const MAX_GAPS = 6;
-const MAX_PRODUCT = 60;
+/** The names the inbox shows for area ids: every team's (src/areas.js), else the built-in ones. */
+export const areaNamesOf = (env) => areaNames(env, topicNames());
 
 export const FIELDS = {
   problem: { type: 'text', instructions: "The customer's problem or request, in their own words" },
@@ -290,22 +330,53 @@ export const FIELDS = {
   error: { type: 'text', instructions: 'An error message, status code or failing behaviour quoted in the thread' },
   deadline: { type: 'date', instructions: 'Date by which the customer needs this answered or done' },
   go_live: { type: 'date', instructions: 'Planned go-live or launch date' },
-  // What the thread is about, by name: the tech stack's vocabulary is a list someone wrote, and
-  // the Topics page (src/topicmap.js) shows the names it does not have yet. One `product` fact
-  // per name.
-  products: {
-    type: 'list',
-    items: 'text',
-    instructions: PRODUCTS_INSTRUCTIONS,
-  },
 };
 
-function who(m) {
+/**
+ * What the inbox calls Clairic's facts, by field: those of FIELDS, and `product`, which it was
+ * asked before the tech stack said which products a thread is about (src/topicmap.js reads
+ * them). The extraction rules' facts are named by their rules (src/extract.js `factLabels`),
+ * which `vocab` puts over these.
+ */
+export const FIELD_LABELS = {
+  problem: 'Problem',
+  affected_url: 'Affected URL',
+  error: 'Error',
+  deadline: 'Deadline',
+  go_live: 'Go-live',
+  product: 'Product',
+};
+
+/**
+ * The names the inbox shows for tech stack and topic ids, and for the fields of facts
+ * (`facts`: the labels of the extraction rules that write them, src/extract.js `factLabels`,
+ * and Clairic's, FIELD_LABELS), the layer of the stack each technology is in (`layers`), and
+ * the layers, top to bottom (`stack`, src/stack.js).
+ */
+export const vocab = async (env, team = null) => {
+  const [tech, layers, topics, labels] = await Promise.all([
+    techNames(env, team), techLayerMap(env, team), areaNamesOf(env), factLabels(env, team),
+  ]);
+  return {
+    tech,
+    topics,
+    facts: { ...FIELD_LABELS, ...labels },
+    layers,
+    stack: LAYERS.map(({ id, name }) => ({ id, name })),
+  };
+};
+
+/**
+ * Who posted `m`, for the models: Adobe staff, else the side of the thread they are on, the
+ * customer, (`side` 'vendor') the vendor, or (`side` 'community member', a public channel's)
+ * anyone.
+ */
+function who(m, side = 'customer') {
   const a = m.author || {};
   if (a.kind !== 'person') {
     return `${a.name || a.kind || 'bot'} (${a.kind || 'bot'})`;
   }
-  return `${a.name || 'someone'} (${a.staff ? 'Adobe staff' : `customer${a.org ? `, ${a.org}` : ''}`})`;
+  return `${a.name || 'someone'} (${a.staff ? 'Adobe staff' : `${side}${a.org ? `, ${a.org}` : ''}`})`;
 }
 
 // Reaction names as the models should see them (Slack names; Teams sends characters).
@@ -335,32 +406,44 @@ const reactionChar = (e) => {
   return REACTION_CHAR[name] || (/^\p{Extended_Pictographic}/u.test(name) ? name : `:${name}:`);
 };
 
-/** One line per message with reactions: who reacted with what (customer or Adobe). */
-function reactionLine(list) {
+/** One line per message with reactions: who reacted with what (Adobe, or the `side`). */
+function reactionLine(list, side = 'customer') {
   if (!list || !list.length) {
     return '';
   }
   return `\nReactions: ${list.map((r) => `${reactionChar(r.emoji)} by ${r.name || 'someone'}`
-    + ` (${r.staff ? 'Adobe staff' : 'customer'})`).join(', ')}`;
+    + ` (${r.staff ? 'Adobe staff' : side})`).join(', ')}`;
 }
+
+/** The side of the thread its people outside Adobe are on, by org type, and its header. */
+const SIDE = { vendor: 'vendor', public: 'community member' };
+const HEADER = {
+  vendor: (t) => `Vendor: ${t.org} (Adobe is its customer here)`,
+  'community member': () => 'Public channel: anyone may join and post. The people outside Adobe'
+    + ' are of many organizations, or of none; whoever asks is the one Adobe answers, as a customer.',
+};
 
 /**
  * The thread as text for the models: a header, then one block per message, with the
- * reactions it got (`reactions`: message id → `{ emoji, name, staff }[]`).
+ * reactions it got (`reactions`: message id → `{ emoji, name, staff }[]`). A vendor's thread
+ * (`thread.org_type` 'vendor') says so: the people outside Adobe in it are the vendor's. So does
+ * a public one (`public`: a community's or an event's channel), whose people are of many orgs
+ * and none: whoever asks there is the one Adobe answers, as a customer.
  */
 export function stateOf(thread, messages, reactions = new Map()) {
   const live = messages.filter((m) => !m.deletedAt);
   const shown = live.length > MAX_MESSAGES
     ? [live[0], ...live.slice(-(MAX_MESSAGES - 1))]
     : live;
+  const side = SIDE[thread.org_type] || 'customer';
   const header = [
     `Channel: ${thread.channel_name || thread.channel_id} on ${platformName(thread.source)}`,
-    `Customer: ${thread.org}`,
+    HEADER[side] ? HEADER[side](thread) : `Customer: ${thread.org}`,
     thread.root_at ? null : 'The first message of this thread is missing.',
   ].filter(Boolean).join('\n');
   const body = shown.map((m) => {
     const text = String(m.body || '').slice(0, MAX_BODY);
-    return `[${m.at}] ${who(m)}:\n${text}${reactionLine(reactions.get(String(m.id)))}`;
+    return `[${m.at}] ${who(m, side)}:\n${text}${reactionLine(reactions.get(String(m.id)), side)}`;
   }).join('\n\n');
   return `${header}\n\n${body}`;
 }
@@ -396,94 +479,18 @@ async function threadReactions(env, key) {
 }
 
 /**
- * Clairic answers worth keeping: non-null, above the confidence threshold. Not the products,
- * whose list has one confidence that says nothing (it shrinks as the list grows): productFacts.
+ * Clairic answers worth keeping: non-null, above the confidence threshold, one value each (a
+ * list, which Clairic is no longer asked for, is not kept).
  */
 export function clairicFacts(answers) {
   const facts = [];
   for (const [field, a] of Object.entries(answers || {})) {
     const threshold = FIELD_CONFIDENCE[field] ?? MIN_CONFIDENCE;
-    if (field !== 'products' && a && a.value !== null && a.value !== undefined && a.value !== ''
+    if (a && a.value !== null && a.value !== undefined && a.value !== ''
       && !Array.isArray(a.value) && (a.confidence === undefined || a.confidence >= threshold)) {
       facts.push({ field, value: String(a.value), confidence: a.confidence ?? null });
     }
   }
-  return facts;
-}
-
-const PRODUCT_TRIM = /^[\s()[\]{}*?!,.:;"'`<>|/\\\-–—_=+~#$%&^•]+|[\s()[\]{}*?!,.:;"'`<>|/\\\-–—_=+~#$%&^•]+$/g;
-/** An author line of the state: `[time] Name (Adobe staff):`, as stateOf writes it. */
-const AUTHOR_LINE = /^\[[^\]\n]+\] ([^\n]*?) \((?:Adobe staff|customer[^)]*|[a-z]+)\):$/gm;
-
-/**
- * The products Clairic named in a thread (its `products` list), as `product` facts: the names
- * its spans point at in the messages, not in the header (the channel, the platform, the
- * customer) or an author line (people and bots), trimmed, without the names of the thread's
- * people and its customer; of those, the names the tech stack (`tech`, as techFor has it) covers,
- * and those that look like the name of a product (src/products.js productLike), each once, at most
- * MAX_PRODUCTS. Clairic lists nearly every name in the state; this keeps two in five of them, and
- * nine in ten of the products a hand-made table of aliases finds (docs/ARCHITECTURE.md).
- */
-export function productFacts(answer, state, thread = {}, tech = []) {
-  const index = techIndex(tech);
-  const text = String(state || '');
-  // Clairic's spans count code points, as Python does; a string here counts UTF-16 units, one
-  // more for every emoji. So the state is read as code points, and so are the places in it.
-  const chars = Array.from(text);
-  const at16 = (i) => Array.from(text.slice(0, i)).length;
-  const header = Math.max(0, at16(text.indexOf('\n\n')));
-  const authors = [...text.matchAll(AUTHOR_LINE)]
-    .map((m) => [at16(m.index), at16(m.index) + Array.from(m[0]).length]);
-  const inAuthor = (at) => authors.some(([from, to]) => at >= from && at < to);
-  const names = new Set([...text.matchAll(AUTHOR_LINE)].flatMap((m) => [m[1], ...m[1].split(/\s+/)])
-    .map((n) => n.toLowerCase()).filter((n) => n.length > 2));
-  const org = String(thread.org || '').toLowerCase();
-  [org, ...org.split(/[-_.]/)].filter((w) => w.length > 3).forEach((w) => names.add(w));
-  // The customer as written in a message: "Acme Corp" for acme-corp.
-  const squash = (v) => v.toLowerCase().replace(/[^a-z0-9]/g, '');
-  const own = squash(org);
-  const isOrg = (v) => own.length > 3 && (squash(v) === own || squash(v).startsWith(own));
-  const spans = Array.isArray(answer?.spans) && answer.spans.length ? answer.spans : null;
-  let items = Array.isArray(answer?.value) ? answer.value : [];
-  if (spans) {
-    // Not a mention of someone (`@Name`), nor a piece of a word: Clairic's spans now and then
-    // start or end inside one ("zure Storage").
-    const inWord = (c) => c !== undefined && /[\p{L}\p{N}]/u.test(c);
-    items = spans.filter(([at, end]) => at >= header && !inAuthor(at) && chars[at - 1] !== '@'
-      && !inWord(chars[at - 1]) && !inWord(chars[end]))
-      .map(([at, end]) => chars.slice(at, end).join(''));
-  }
-  // A word written in lower case elsewhere in the thread ("Release" at the start of a sentence,
-  // "release" in the next) is a word, not a name.
-  const words = new Set(text.match(/\b\p{Ll}[\p{Ll}-]+\b/gu) || []);
-  const aWord = (v) => /^\p{Lu}\p{Ll}+$/u.test(v) && words.has(v.toLowerCase());
-  // A name the tech stack covers, once per entry (its first name); one it does not, by how often
-  // the thread names it, then the first, at most MAX_GAPS of them.
-  const covered = new Map();
-  const others = new Map();
-  items.forEach((item, i) => {
-    const value = String(item ?? '').replace(/\s+/g, ' ').replace(PRODUCT_TRIM, '')
-      .slice(0, MAX_PRODUCT);
-    const key = value.toLowerCase();
-    if (value.length < 2 || !/[a-z]/i.test(value) || value.includes('@') || names.has(key)
-      || isOrg(value) || GENERIC.has(nameKey(value)) || GENERIC.has(key)) {
-      return;
-    }
-    const entry = coveredBy(value, index);
-    if (entry) {
-      if (!covered.has(entry)) {
-        covered.set(entry, value);
-      }
-    } else if (productLike(value) && !aWord(value)) {
-      const k = productKey(value);
-      const o = others.get(k) || { value, n: 0, i };
-      o.n += 1;
-      others.set(k, o);
-    }
-  });
-  const gaps = [...others.values()].sort((x, y) => y.n - x.n || x.i - y.i).slice(0, MAX_GAPS);
-  const facts = [...covered.values(), ...gaps.map((g) => g.value)].slice(0, MAX_PRODUCTS)
-    .map((value) => ({ field: 'product', value, confidence: null }));
   return facts;
 }
 
@@ -526,17 +533,78 @@ export function namedIn(title, thread) {
  * title, please provide …"): no title, so the inbox shows the thread's first words instead.
  */
 const NO_TITLE = /^(?:none|null|n\/a|untitled|no title\b.*|no (?:specific )?(?:topic|information|issue|discussion)\b.*|invalid title\b.*|(?:general )?inquiry)$/i;
-export const isTitle = (t) => Boolean(t) && !NO_TITLE.test(String(t).trim());
+
+// What no title, name or sentence has: the replacement character (bytes that were no text),
+// half a surrogate pair, private-use and control characters, and the marks of a model's special
+// tokens. Full-width forms belong to Chinese, Japanese and Korean text, and to no other.
+const MANGLED = /[\uFFFD\u2581\p{Co}\p{Cs}]|(?![\t\n\r])\p{Cc}|<\||\|>/u;
+const FULL_WIDTH = /[\uFF01-\uFF5E]/;
+const CJK = /[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Hangul}]/u;
+
+/** Whether `text` has characters that only an inference gone wrong writes. */
+export function mangled(text) {
+  const s = String(text ?? '');
+  return MANGLED.test(s) || (FULL_WIDTH.test(s) && !CJK.test(s));
+}
+
+/**
+ * Whether a title or a name is what a model writes when its inference went wrong, not its
+ * answer: tokens of no language ("Kaufpeater\uFFFDadierstash partic404 Kauf Rear Kauf Kauf\uFF5C",
+ * once in production, for a thread the same model titles well every other time). It is mangled,
+ * or says one word of four letters or more three times, which no title of eight words does.
+ */
+export function garbled(text) {
+  if (mangled(text)) {
+    return true;
+  }
+  const seen = new Map();
+  for (const w of String(text ?? '').toLowerCase().match(/[\p{L}\p{N}]{4,}/gu) || []) {
+    seen.set(w, (seen.get(w) || 0) + 1);
+    if (seen.get(w) > 2) {
+      return true;
+    }
+  }
+  return false;
+}
+
+export const isTitle = (t) => Boolean(t) && !NO_TITLE.test(String(t).trim()) && !garbled(t);
 
 const firstLine = (res) => String((res && (res.response || res.choices?.[0]?.message?.content)) || '')
   .split('\n')[0].replace(/^["'`*#\s]+|["'`*.\s]+$/g, '').trim();
+
+// A title takes about ten tokens. An answer that did not end within these is not one.
+const TITLE_TOKENS = 40;
+const cutOff = (res) => res?.choices?.[0]?.finish_reason === 'length'
+  || Number(res?.usage?.completion_tokens) >= TITLE_TOKENS;
+
+/**
+ * The model's answer to `messages`, its first line. One that is garbled or was cut off is the
+ * inference's fault, not the thread's (asked again, the model answers as ever), so it is asked
+ * for once more; '' when that is no better. The log counts them (`route: 'title'`).
+ */
+async function titleBy(env, messages, thread) {
+  for (let attempt = 1; attempt <= 2; attempt += 1) {
+    // eslint-disable-next-line no-await-in-loop
+    const res = await env.AI.run(TITLER, { messages, max_tokens: TITLE_TOKENS });
+    const title = firstLine(res);
+    const dropped = (garbled(title) && 'garbled') || (cutOff(res) && 'cut off');
+    if (!dropped) {
+      return title;
+    }
+    console.log(JSON.stringify({
+      route: 'title', thread: thread?.thread, dropped, attempt,
+    }));
+  }
+  return '';
+}
 
 /**
  * A short title by a language model: the specific failure, or the topic, without what the
  * inbox already shows next to it. A title that still names the customer or the product is
  * asked for once more, with the names it should leave out; it is never cut up, because what
  * is left of a sentence without its subject ("Headless options in without App Builder")
- * reads worse than the name.
+ * reads worse than the name. An answer that is no language is asked for once more, and is no
+ * title when that is no better: the thread keeps the title it had, or shows its first words.
  */
 export async function writeTitle(env, state, alert, thread) {
   const instructions = [
@@ -550,18 +618,15 @@ export async function writeTitle(env, state, alert, thread) {
     { role: 'system', content: instructions },
     { role: 'user', content: state.slice(0, 6000) },
   ];
-  let title = firstLine(await env.AI.run(TITLER, { messages, max_tokens: 40 }));
+  let title = await titleBy(env, messages, thread);
   const named = isTitle(title) ? namedIn(title, thread) : [];
   if (named.length) {
-    const again = firstLine(await env.AI.run(TITLER, {
-      messages: [...messages, { role: 'assistant', content: title }, {
-        role: 'user',
-        content: `The inbox shows ${named.map((n) => `"${n}"`).join(' and ')} next to the title already.`
-          + ' Write the title again without naming it, as a whole phrase that says the same.'
-          + ' Reply with the title only, no quotes.',
-      }],
-      max_tokens: 40,
-    }).catch(() => null));
+    const again = await titleBy(env, [...messages, { role: 'assistant', content: title }, {
+      role: 'user',
+      content: `The inbox shows ${named.map((n) => `"${n}"`).join(' and ')} next to the title already.`
+        + ' Write the title again without naming it, as a whole phrase that says the same.'
+        + ' Reply with the title only, no quotes.',
+    }], thread).catch(() => '');
     if (isTitle(again)) {
       title = again;
     }
@@ -570,13 +635,23 @@ export async function writeTitle(env, state, alert, thread) {
 }
 
 /**
- * The technologies a thread shows, as `{ id: probability }`: Clef's answers about `tech` at or
- * above TECH_MIN, and what the rules `detected` (as sure as can be, 1).
+ * The Clef questions whether the thread is about each of `tech` (those it showed), by the hash
+ * of the id, as `techQuestions`; `aboutOf` maps them back.
  */
-export function techOf(tech, answers, detected = []) {
+export const aboutQuestions = (tech) => {
+  const keys = questionKeys(tech.map((t) => t.tech));
+  return Object.fromEntries(tech.map((t) => [`about.${keys[t.tech]}`, {
+    type: 'noul',
+    instructions: `Is this thread about ${t.description}: is that what the question, the problem or the work in it concerns, not only something it mentions?`,
+  }]));
+};
+
+/** What the thread is about, of `tech`, as `{ id: probability }` at or above TECH_MIN. */
+export function aboutOf(tech, answers) {
   const out = {};
-  for (const id of tech.map((t) => t.tech)) {
-    const p = detected.includes(id) ? 1 : answers && answers[`tech.${id}`]?.noul;
+  const keys = questionKeys(tech.map((t) => t.tech));
+  for (const { tech: id } of tech) {
+    const p = answers && answers[`about.${keys[id]}`]?.noul;
     if (typeof p === 'number' && p >= TECH_MIN) {
       out[id] = Math.round(p * 1000) / 1000;
     }
@@ -584,27 +659,20 @@ export function techOf(tech, answers, detected = []) {
   return out;
 }
 
-/** The channel's technologies, from those `found` in a thread: each keeps the highest. */
-async function recordTech(env, thread, found) {
-  for (const [id, p] of Object.entries(found)) {
-    // eslint-disable-next-line no-await-in-loop
-    await env.DB.prepare(`INSERT INTO channel_tech (source, tenant, channel_id, tech, p, thread, updated_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?)
-      ON CONFLICT (source, tenant, channel_id, tech) DO UPDATE SET
-        p = MAX(channel_tech.p, excluded.p),
-        thread = CASE WHEN excluded.p > channel_tech.p THEN excluded.thread ELSE channel_tech.thread END,
-        updated_at = excluded.updated_at`)
-      .bind(
-        thread.source,
-        thread.tenant,
-        thread.channel_id,
-        id,
-        p,
-        thread.thread,
-        new Date().toISOString(),
-      )
-      .run();
+/**
+ * The technologies a thread shows, as `{ id: probability }`: Clef's answers about `tech` at or
+ * above TECH_MIN, and what the rules `detected` (as sure as can be, 1).
+ */
+export function techOf(tech, answers, detected = []) {
+  const out = {};
+  const keys = questionKeys(tech.map((t) => t.tech));
+  for (const id of tech.map((t) => t.tech)) {
+    const p = detected.includes(id) ? 1 : answers && answers[`tech.${keys[id]}`]?.noul;
+    if (typeof p === 'number' && p >= TECH_MIN) {
+      out[id] = Math.round(p * 1000) / 1000;
+    }
   }
+  return out;
 }
 
 async function replaceFacts(db, thread, source, facts) {
@@ -642,6 +710,31 @@ async function labelAlert(env, thread, now) {
   return { result: 'titled', title: Boolean(title) };
 }
 
+/**
+ * `POST /api/admin/relabel`: the channel threads with a label and at least `minMessages`
+ * messages, by key after `after`, `limit` of them, each queued to be labeled again though it
+ * did not change (`force`), five seconds apart. `{ queued, next }`: `next` is the `after` of
+ * the next batch, or null when there are no more.
+ */
+export async function queueRelabel(env, {
+  after = '', limit = 100, minMessages = 3, threads = null,
+} = {}) {
+  const n = Math.min(Math.max(Number(limit) || 100, 1), 500);
+  // `threads`: these, of the labeled channel threads (those a relabel left behind, say).
+  const only = Array.isArray(threads) ? JSON.stringify(threads.map(String).slice(0, 500)) : null;
+  const { results } = await env.DB.prepare(`SELECT t.thread FROM threads t
+    JOIN labels l ON l.thread = t.thread
+    WHERE t.kind = 'channel' AND t.messages >= ?1 AND t.thread > ?2
+      AND (?4 IS NULL OR t.thread IN (SELECT value FROM json_each(?4)))
+    ORDER BY t.thread LIMIT ?3`).bind(Math.max(Number(minMessages) || 1, 1), String(after || ''), n, only).all();
+  const keys = (results || []).map((r) => r.thread);
+  for (const [i, thread] of keys.entries()) {
+    // eslint-disable-next-line no-await-in-loop
+    await env.NORMALIZE.send({ label: thread, force: true }, sweepDelay(i));
+  }
+  return { queued: keys.length, next: keys.length === n ? keys[keys.length - 1] : null };
+}
+
 const LABEL_SWEEP_AFTER_MS = 60 * 60 * 1000;
 const LABEL_SWEEP_DAYS = 14;
 const LABEL_SWEEP_LIMIT = 50;
@@ -650,7 +743,7 @@ const LABEL_SWEEP_LIMIT = 50;
  * Labels one thread. Skips threads that have not changed since they were last labeled,
  * and alert threads (their kind is known and nobody is waiting).
  */
-export async function labelThread(env, key, now = new Date()) {
+export async function labelThread(env, key, now = new Date(), { force = false } = {}) {
   const thread = await env.DB.prepare('SELECT * FROM threads WHERE thread = ?').bind(key).first();
   if (!thread) {
     return { result: 'missing' };
@@ -670,26 +763,42 @@ export async function labelThread(env, key, now = new Date()) {
   const through = rx.latest && rx.latest > thread.any_at ? rx.latest : thread.any_at;
   const done = await env.DB.prepare('SELECT labeled_through FROM labels WHERE thread = ?')
     .bind(key).first();
-  if (done && done.labeled_through === through) {
+  // `force`: asked again though nothing changed (`POST /api/admin/relabel`: new questions, a
+  // new catalog).
+  if (done && done.labeled_through === through && !force) {
     return { result: 'unchanged' };
   }
   const messages = await threadMessages(env, thread);
   if (!messages.length) {
     // Even a deleted message leaves a file, so these are missing. Not a label: `labeled_through`
-    // says that Clef has read the thread (src/resolve.js, src/review.js). As a dead job it shows in
+    // says that Clef has read the thread (src/resolve.js). As a dead job it shows in
     // `/diag/dead`, and the sweep leaves the thread alone for a day.
     await recordDead(env, `label:${key}`, { label: key }, 'no messages');
     return { result: 'skip', reason: 'no messages' };
   }
 
-  const [rules, tech] = await Promise.all([rulesFor(env, thread.team), techFor(env, thread.team)]);
+  const [rules, tech, moves, areas, org] = await Promise.all([
+    rulesFor(env, thread.team), techFor(env, thread.team), techMoves(env), areasToAsk(env),
+    env.DB.prepare('SELECT type FROM orgs WHERE slug = ?').bind(thread.org).first(),
+  ]);
+  const orgType = (org && org.type) || 'customer';
   const found = await extract(env, rules, thread, messages);
+  // A script may still detect a technology by an id it had (src/catalog.js).
+  found.tech = [...new Set(found.tech.map((id) => resolveTech(id, moves)))];
   await replaceFacts(env.DB, key, 'rule', found.facts);
 
-  const state = stateOf(thread, messages, rx.by);
+  const state = stateOf({ ...thread, org_type: orgType }, messages, rx.by);
   const [clef, clairic, title] = await Promise.all([
-    // The topics on their own, so the tech stack's entries do not move their answers.
-    askClef(env, state, { ...QUESTIONS, ...TOPIC_QUESTIONS }, techQuestions(tech)),
+    // The topics on their own, so the tech stack's entries do not move their answers, and the
+    // language on its own too (src/translate.js), so that it moves none. A vendor's thread is
+    // asked the other way round (VENDOR_QUESTIONS).
+    askClef(
+      env,
+      state,
+      { ...questionsFor(orgType), ...areaQuestions(areas) },
+      techQuestions(tech),
+      LANGUAGE_QUESTION,
+    ),
     env.AI.run(CLAIRIC, {
       model: 'clairic', state, fields: FIELDS, reference_date: now.toISOString().slice(0, 10),
     }),
@@ -704,16 +813,37 @@ export async function labelThread(env, key, now = new Date()) {
   };
   const [nextActor, nextActorP] = choice('next_actor');
   const [kind, kindP] = choice('kind');
-  const topics = topicsOf(a);
+  const topics = topicsOf(a, areas);
+  const language = languageOf(a);
   const shown = techOf(tech, a, found.tech);
-  await env.DB.prepare(`INSERT INTO labels (thread, next_actor, next_actor_p, kind, kind_p,
-      urgency, resolved_p, labeled_through, model, labeled_at, title, topics, tech)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  // Of what it shows, what it is about: a second call, only for those (src/label.js aboutOf).
+  const asked = tech.filter((t) => shown[t.tech] !== undefined);
+  // A call that failed is no answer: `about` stays NULL ("not asked"), not `{}` ("about none").
+  let about = {};
+  if (asked.length) {
+    try {
+      about = aboutOf(asked, (await askClef(env, state, aboutQuestions(asked))).answers);
+    } catch (e) {
+      about = null;
+      console.error(JSON.stringify({
+        route: 'label', thread: key, about: 'failed', error: e.message,
+      }));
+    }
+  }
+  // What it showed before, for the inboxes that follow what it shows or showed (src/follows.js).
+  const [{ results: before }, { results: areasBefore }] = await Promise.all([
+    env.DB.prepare('SELECT tech FROM thread_tech WHERE thread = ?').bind(key).all(),
+    env.DB.prepare('SELECT area FROM thread_areas WHERE thread = ?').bind(key).all(),
+  ]);
+  const label = env.DB.prepare(`INSERT INTO labels (thread, next_actor, next_actor_p, kind, kind_p,
+      urgency, resolved_p, labeled_through, model, labeled_at, title, topics, tech, about,
+      language, language_p)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT (thread) DO UPDATE SET next_actor = excluded.next_actor,
       next_actor_p = excluded.next_actor_p, kind = excluded.kind, kind_p = excluded.kind_p,
       urgency = excluded.urgency, resolved_p = excluded.resolved_p, topics = excluded.topics,
-      tech = excluded.tech,
-      labeled_through = excluded.labeled_through, model = excluded.model,
+      tech = excluded.tech, about = excluded.about, language = excluded.language,
+      language_p = excluded.language_p, labeled_through = excluded.labeled_through, model = excluded.model,
       labeled_at = excluded.labeled_at, title = COALESCE(excluded.title, labels.title)`)
     .bind(
       key,
@@ -729,25 +859,50 @@ export async function labelThread(env, key, now = new Date()) {
       title,
       topics ? JSON.stringify(topics) : null,
       JSON.stringify(shown),
-    )
-    .run();
-  await recordTech(env, thread, shown);
-  const loose = [...clairicFacts(clairic.answers),
-    ...productFacts(clairic.answers?.products, state, thread, tech)];
+      about ? JSON.stringify(about) : null,
+      language.language,
+      language.p,
+    );
+  // The label and what the thread shows by index (`thread_tech`) at once.
+  await env.DB.batch([label, ...threadTechStatements(env.DB, key, shown, about || {}),
+    ...threadAreaStatements(env.DB, key, topics)]);
+  const was = (before || []).map((r) => r.tech).sort();
+  const is = Object.keys(shown).sort();
+  const hadAreas = (areasBefore || []).map((r) => r.area).sort();
+  const hasAreas = Object.keys(topics || {}).sort();
+  const loose = clairicFacts(clairic.answers);
   await replaceFacts(env.DB, key, 'clairic', loose);
   return {
     result: 'labeled',
     next_actor: nextActor,
     kind,
     topics: topics ? Object.keys(topics) : [],
+    language: language.language,
     facts: loose.length,
     title: Boolean(title),
+    // From the history import (src/history.js): nobody is told (src/normalizer.js).
+    ...(Number(thread.imported) ? { imported: true } : {}),
+    // What it shows, when that changed: the inboxes that follow a technology it gained or lost
+    // list it again (src/normalizer.js).
+    ...(was.join() !== is.join() ? {
+      tech: {
+        gained: is.filter((t) => !was.includes(t)), lost: was.filter((t) => !is.includes(t)),
+      },
+    } : {}),
+    // And the areas it is in: those who follow one that it joined or left hear of it too.
+    ...(hadAreas.join() !== hasAreas.join() ? {
+      areas: {
+        gained: hasAreas.filter((t) => !hadAreas.includes(t)),
+        lost: hadAreas.filter((t) => !hasAreas.includes(t)),
+      },
+    } : {}),
   };
 }
 
 /**
  * Cron: the threads a person posted in since their label, and quiet for longer than a label job
  * and its retries take: the job died. Recent ones only: nobody looks at the older ones' labels.
+ * Never an imported thread (src/history.js), which is labeled only when someone asks.
  * A thread whose job died within the day waits, so that one that always fails goes out once a day.
  */
 export async function sweepLabels(env, now = new Date()) {
@@ -759,7 +914,7 @@ export async function sweepLabels(env, now = new Date()) {
   }
   const { results } = await env.DB.prepare(`SELECT t.thread FROM threads t
     LEFT JOIN labels l ON l.thread = t.thread
-    WHERE t.kind = 'channel' AND t.last_at >= ? AND t.last_at < ?
+    WHERE t.kind = 'channel' AND t.last_at >= ? AND t.last_at < ? AND t.imported = 0
       AND (l.thread IS NULL OR l.labeled_through < t.last_at)
       AND EXISTS (SELECT 1 FROM messages m WHERE m.thread = t.thread AND m.deleted = 0)
       AND NOT EXISTS (SELECT 1 FROM dead_jobs d WHERE d.job = 'label:' || t.thread AND d.at > ?)

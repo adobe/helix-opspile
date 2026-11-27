@@ -3,10 +3,11 @@
  * this adds to. Only Spectrum 2 tokens (see ui/spectrum.css).
  *
  * What each part is in Spectrum 2 (https://s2.spectrum.corp.adobe.com):
- * - the page: layer 1 under the header, the graph and the panel cards on layer 2.
+ * - the page: layer 1 under the header, the graph and the panel cards on layer 2; the sidebar
+ *   on the left is every list page's (ui/spectrum.css, "the sidebar").
  * - the filters: a toolbar of one size: a Picker (the team), the kinds shown as toggle
- *   ActionButtons with their swatch (a legend that filters), a Picker (the shared threads), a
- *   SearchField with suggestions (find), and the build's date beside an ActionButton (Rebuild).
+ *   ActionButtons with their swatch (a legend that filters), and the build's date beside an
+ *   ActionButton (Rebuild); the SearchField that finds is the sidebar's.
  * - the graph: the page's own SVG, a node per person, topic, tag or customer in Spectrum 2's
  *   categorical palette (s2Categorical16: indigo, seafoam, orange, magenta, celery), the lines
  *   neutral, a product not in the tech stack a hollow ring of its color;
@@ -17,44 +18,84 @@
  */
 
 /* ==== The page's layout ========================================================================
-   Where everything is: the toolbar on top, the graph beside its panel under it, as tall as what
-   is left of the window. Its look, in Spectrum 2's components, follows below. */
+   Where everything is: the sidebar on the left (ui/sidenav.js, as Teams' and Customers'), and
+   beside it the toolbar on top, the graph beside its panel under it, as tall as what is left of
+   the window. Its look, in Spectrum 2's components, follows below. */
 :root { --safe-bottom: env(safe-area-inset-bottom, 0px); }
 :root.keyboard { --safe-bottom: 0px; }
 button { white-space: nowrap; }
 button:disabled { opacity: .45; cursor: default; }
 
 /* The header is every page's (ui/spectrum.css). */
-main { flex: 1; min-height: 0; display: flex; flex-direction: column; overflow: hidden;
-  padding: 0 calc(var(--spectrum-spacing-400) - var(--spectrum-spacing-50)) calc(var(--spectrum-spacing-300) + var(--safe-bottom)); }
+main { flex: 1; min-height: 0; display: grid; grid-template-columns: calc(var(--spectrum-spacing-100) * 34) minmax(0, 1fr); overflow: hidden;
+  padding: 0 calc(var(--spectrum-spacing-400) - var(--spectrum-spacing-50)) 0px 0px; }
+main > .sidenav { padding: var(--spectrum-spacing-200) var(--frame-gap) var(--safe-bottom) var(--spectrum-spacing-300); }
+main > .page { min-width: 0; min-height: 0; display: flex; flex-direction: column; padding-bottom: calc(var(--spectrum-spacing-300) + var(--safe-bottom)); }
 #body { flex: 1; min-height: 0; display: flex; flex-direction: column; }
 .empty { padding: var(--spectrum-spacing-400) var(--spectrum-spacing-100); }
 
 .bar { display: flex; flex-wrap: wrap; align-items: center; }
-.bar .group { display: flex; align-items: center; }
+.bar .group { display: flex; align-items: center; min-width: 0; max-width: 100%; }
+/* A team's long name does not make the picker wider than the page (a phone). */
+.bar select { min-width: 0; max-width: 100%; text-overflow: ellipsis; }
 /* The kinds wrap where the bar is narrower than they are (a phone), so none is cut off. */
 .bar .legend { flex-wrap: wrap; }
 .bar .spacer { flex: 1; }
-.bar input.search { width: calc(var(--spectrum-spacing-100) * 24); }
 
 .split { flex: 1; min-height: 0; display: grid; grid-template-columns: minmax(0, 1fr) calc(var(--spectrum-spacing-100) * 52); }
 .graph { position: relative; min-height: 0; overflow: hidden; }
-.graph svg { display: block; width: 100%; height: 100%; touch-action: none; cursor: grab; user-select: none; }
-.graph svg:active { cursor: grabbing; }
-.graph .node { cursor: pointer; }
-.graph .tools { position: absolute; top: 0; right: 0; }
+/* The map: a WebGL canvas (ui/topicview.js), its names in it, and how to use it under it. */
+.graph canvas.space { display: block; width: 100%; height: 100%; touch-action: none; cursor: grab; user-select: none; }
+/* No frame: the map fades into the page at its edges. */
+.graph canvas.space {
+  mask-image: linear-gradient(to right, transparent, black 6%, black 94%, transparent),
+    linear-gradient(to bottom, transparent, black 6%, black 94%, transparent);
+  mask-composite: intersect;
+}
+.graph canvas.space:active { cursor: grabbing; }
+.graph canvas.space.over { cursor: pointer; }
+.graph .probe { display: none; }
+.graph .how { position: absolute; left: 0; right: 0; top: 0; pointer-events: none; }
+#only { display: inline-flex; align-items: center; }
+#only[hidden] { display: none; }
 .graph > .empty { position: absolute; inset: 0; text-align: center; }
 .tip { position: absolute; z-index: 5; pointer-events: none; display: flex; flex-direction: column; }
 .tip[hidden], .graph > .empty[hidden] { display: none; }
 .panel { min-height: 0; overflow: auto; }
+/* The agent of what is picked (ui/kbchat.js, ui/spectrum-kbchat.css): a third column where it
+   fits, as on Teams' and Customers' pages, the sidebar and the page in their own cells; over the
+   page where it does not, its tab on the window's right edge. */
+@media (min-width: 1000px) {
+  main > .sidenav { grid-area: 1 / 1; }
+  main > .page { grid-area: 1 / 2; }
+}
+@media (max-width: 999px) {
+  main > #kbchatTab { position: fixed; top: 50%; right: 0px; transform: translateY(-50%); }
+}
 
 .panel .head { display: flex; align-items: flex-start; }
+/* A product's catalog entry, knowledge, rules and who has it (productSections in ui/topics.js). */
+.panel button.ask { display: inline-flex; align-items: center; }
+.panel button.ask svg { flex: none; }
+.panel .chips { display: flex; flex-wrap: wrap; align-items: center; }
+.panel ul.kbhits, .panel ul.rules { list-style: none; margin: 0; padding: 0; }
+.panel ul.rules code { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* A team's catalog file of it: its markdown, folded past a few lines until Show all. */
+.panel .tk-md { overflow-wrap: anywhere; }
+.panel .tk-md.folded { max-height: calc(var(--spectrum-spacing-100) * 28); overflow: hidden;
+  mask-image: linear-gradient(to bottom, black 70%, transparent); }
+.panel .tk-md pre { overflow: auto; white-space: pre-wrap; }
+.panel .tk-md table { display: block; overflow-x: auto; border-collapse: collapse; }
+.panel details.tk-other > summary { cursor: pointer; }
 .panel .head > div { flex: 1; min-width: 0; }
 .panel .head .dot { flex: none; }
+.panel > .acts { display: flex; flex-wrap: wrap; }
 .panel ul.rel, .panel ol.threads { list-style: none; margin: 0; padding: 0; }
 .panel .pickr { display: grid; grid-template-columns: auto minmax(0, 1fr) calc(var(--spectrum-spacing-100) * 8) auto; align-items: center; width: 100%; text-align: left; }
 .panel .pickr .nm { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .panel .pickr .n { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+/* An area's name wraps, rather than push its table past the panel's edge. */
+.panel table.areas .pickr-a { white-space: normal; }
 .meter { display: block; overflow: hidden; }
 .meter .fill { display: block; height: 100%; }
 .meter .w1 { width: 10%; } .meter .w2 { width: 20%; } .meter .w3 { width: 30%; } .meter .w4 { width: 40%; }
@@ -68,13 +109,37 @@ tr.pick { cursor: pointer; }
 .name { display: flex; align-items: center; }
 .dot { display: inline-block; flex: none; }
 
+
+/* Over the bottom of the map, its trends (ui/trendview.js): as wide as it, as tall as the chart
+   needs; only the chart and its legend take the pointer, the map shows through the rest. */
+.split > .col { min-height: 0; display: flex; flex-direction: column; }
+.split > .col > .graph { flex: 1; min-height: calc(var(--spectrum-spacing-100) * 60); }
+.graph > .tchart { position: absolute; left: 0; right: 0; bottom: 0; pointer-events: none; }
+.graph > .tchart > :is(svg, .tlegend) { pointer-events: auto; }
+.tchart svg { display: block; width: 100%; height: calc(var(--spectrum-spacing-100) * 22); }
+.tchart .hit { cursor: crosshair; }
+.tlegend { display: flex; flex-wrap: wrap; list-style: none; margin: 0; padding: 0; }
+.tlegend li { display: flex; align-items: center; }
+.swatch { display: inline-block; flex: none; }
+.tip .row { display: flex; align-items: center; }
+.spark { display: block; width: calc(var(--spectrum-spacing-100) * 8); height: var(--spectrum-spacing-300); }
+p.trend { display: flex; align-items: center; }
+
 @media (max-width: 999px) {
-  main { overflow: auto; }
+  /* One column: the toolbar, the map and its panel, then the sidebar under them. */
+  main { display: flex; flex-direction: column; overflow: auto; padding: 0 calc(var(--spectrum-spacing-400) - var(--spectrum-spacing-50)); }
+  main > .sidenav { order: 2; flex: none; height: calc(var(--spectrum-spacing-100) * 60); padding: var(--spectrum-spacing-300) 0px var(--safe-bottom); }
+  main > .page { flex: none; }
   .split { grid-template-columns: minmax(0, 1fr); grid-template-rows: calc(var(--spectrum-spacing-100) * 60) auto; }
   .panel { overflow: visible; }
 }
 @media (max-width: 699px) {
   main { padding: 0 var(--spectrum-spacing-200) calc(var(--spectrum-spacing-500) + var(--safe-bottom)); }
+  main > .page { padding-bottom: 0px; }
+  /* The page scrolls down, not sideways: a table's headings and names wrap to fit. */
+  main { overflow-x: hidden; }
+  th, td > button.link { white-space: normal; text-align: left; }
+  th.n { text-align: right; }
 }
 
 /* ==== Its look ================================================================================= */
@@ -131,17 +196,23 @@ tr.pick { cursor: pointer; }
 
 /* ---- the kinds: Spectrum 2's categorical palette ------------------------------------------ */
 
-.spectrum [data-type="topic"] { --s2-type: var(--spectrum-indigo-1100); }
-.spectrum [data-type="person"] { --s2-type: var(--spectrum-seafoam-700); }
-.spectrum [data-type="tag"] { --s2-type: var(--spectrum-orange-700); }
-.spectrum [data-type="org"] { --s2-type: var(--spectrum-magenta-900); }
-.spectrum [data-type="product"] { --s2-type: var(--spectrum-celery-700); }
+.spectrum [data-type="topic"] { --s2-type: var(--spectrum-indigo-700); }
+.spectrum [data-type="person"] { --s2-type: var(--spectrum-red-700); }
+/* Adobe's people in red, the customers' (and the customers) in green. */
+.spectrum [data-type="customer"] { --s2-type: var(--spectrum-seafoam-700); }
+.spectrum [data-type="tag"] { --s2-type: var(--spectrum-indigo-1100); }
+.spectrum [data-type="org"] { --s2-type: var(--spectrum-seafoam-1000); }
+.spectrum [data-type="team"] { --s2-type: var(--spectrum-red-1000); }
+.spectrum [data-type="product"] { --s2-type: var(--spectrum-orange-700); }
+/* On the map, a group a darker shade of its members' (as a team of its people's), and the
+   vendors' technologies apart from Adobe's products. */
+.spectrum [data-type="product-group"] { --s2-type: var(--spectrum-orange-1000); }
+.spectrum [data-type="vendor"] { --s2-type: var(--spectrum-yellow-700); }
+.spectrum [data-type="vendor-group"] { --s2-type: var(--spectrum-yellow-1000); }
+/* The map's names, and its card, which it is drawn on. */
+.spectrum .probe[data-type="label"] { --s2-type: var(--spectrum-neutral-content-color-default); }
+.spectrum .probe:is([data-type="halo"], [data-type="card"]) { --s2-type: var(--spectrum-background-layer-1-color); }
 /* A product no tech stack entry names: a ring of its color, hollow, so the gaps stand out. */
-.spectrum .node[data-gap] circle {
-  fill: var(--spectrum-background-layer-2-color);
-  stroke: var(--s2-type);
-  stroke-width: var(--spectrum-border-width-400);
-}
 .spectrum .dot[data-gap] {
   background: transparent;
   box-shadow: inset 0 0 0 var(--spectrum-border-width-200) var(--s2-type);
@@ -155,36 +226,19 @@ tr.pick { cursor: pointer; }
 
 /* ---- the graph -------------------------------------------------------------------------- */
 
-.spectrum .graph .tools { padding: var(--spectrum-spacing-200); }
-.spectrum .edge { stroke: var(--spectrum-gray-400); stroke-opacity: .45; transition: stroke-opacity var(--s2-ease); }
-.spectrum .node circle {
-  fill: var(--s2-type);
-  stroke: var(--spectrum-background-layer-2-color);
-  stroke-width: var(--spectrum-border-width-200);
-  transition: opacity var(--s2-ease);
+/* The map is on the page itself, no card. */
+.spectrum .card.graph { background: transparent; border-radius: 0; }
+/* Each kind's color, which the map's bubbles take (ui/topicview.js reads it). */
+.spectrum .graph .probe { color: var(--s2-type); }
+/* How to use it: only while the pointer is on the map. */
+.spectrum .graph .how { opacity: 0; transition: opacity var(--s2-ease); }
+.spectrum .graph:hover .how { opacity: 1; }
+.spectrum .graph .how {
+  margin: 0;
+  padding: var(--spectrum-spacing-200);
+  font-size: var(--spectrum-font-size-50);
 }
-.spectrum .node .lbl {
-  fill: var(--spectrum-neutral-content-color-default);
-  font-size: calc(var(--spectrum-font-size-50) / var(--zoom, 1));
-  text-anchor: middle;
-  pointer-events: none;
-  paint-order: stroke;
-  stroke: var(--spectrum-background-layer-2-color);
-  stroke-width: calc(var(--spectrum-border-width-400) / var(--zoom, 1));
-  stroke-linejoin: round;
-}
-.spectrum .node[data-type="topic"] .lbl { font-weight: var(--spectrum-bold-font-weight); font-size: calc(var(--spectrum-font-size-75) / var(--zoom, 1)); }
-.spectrum .node:not(.named) .lbl { display: none; }
-.spectrum .node:focus-visible { outline: none; }
-.spectrum .node:focus-visible circle, .spectrum .node.sel circle {
-  stroke: var(--spectrum-neutral-content-color-default);
-  stroke-width: var(--spectrum-border-width-400);
-}
-/* What is pointed at, picked or found, and what it is joined to: the rest fades. */
-.spectrum svg.focus .node:not(.hi) { opacity: .15; }
-.spectrum svg.focus .node.hi .lbl { display: inline; }
-.spectrum svg.focus .edge:not(.hi) { stroke-opacity: .05; }
-.spectrum svg.focus .edge.hi { stroke: var(--spectrum-gray-700); stroke-opacity: .8; }
+.spectrum #only { gap: var(--spectrum-text-to-visual-100); }
 
 /* The tooltip: a Popover. */
 .spectrum .tip {
@@ -212,6 +266,59 @@ tr.pick { cursor: pointer; }
 .spectrum .panel details.gaps { margin-top: var(--spectrum-spacing-200); }
 .spectrum .panel details.gaps > summary { cursor: pointer; color: var(--spectrum-neutral-subdued-content-color-default); font-size: var(--spectrum-font-size-75); }
 .spectrum .panel .more { margin-top: var(--spectrum-spacing-75); }
+/* Following a node, and the areas: the teams author them here (src/topicsapi.js). */
+.spectrum .panel > .acts { gap: var(--spectrum-spacing-100); margin-top: var(--spectrum-spacing-100); }
+.spectrum .panel table.areas td.acts { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: var(--spectrum-spacing-75); }
+.spectrum .panel table.areas tr.off td:first-child { color: var(--spectrum-neutral-subdued-content-color-default); }
+.spectrum .panel table.areas .pickr-a { text-align: left; }
+.spectrum .panel .areaform { display: flex; flex-direction: column; gap: var(--spectrum-spacing-200); margin: var(--spectrum-spacing-200) 0; padding: var(--spectrum-spacing-300); border-radius: var(--spectrum-corner-radius-200); background: var(--spectrum-gray-75); }
+.spectrum .panel .areaform h3 { margin: 0; }
+.spectrum .panel .areaform textarea { width: 100%; resize: vertical; }
+.spectrum .panel .areaform .acts { display: flex; gap: var(--spectrum-spacing-100); }
+.spectrum .panel .areaform .only { display: flex; align-items: center; gap: var(--spectrum-spacing-100); }
+.spectrum .panel .hint.err { color: var(--spectrum-negative-content-color-default); }
+.spectrum .panel #newArea { margin-top: var(--spectrum-spacing-100); }
+/* A product's: an ActionButton with its icon that opens the agent, the names it goes by and who
+   follows or runs it as tags, the knowledge bases' entries as Links over where each is from, the
+   rules a Link over their pattern in the code font, an off one subdued. */
+.spectrum .panel button.ask { gap: var(--spectrum-text-to-visual-100); }
+.spectrum .panel button.ask svg { width: var(--spectrum-workflow-icon-size-75); height: var(--spectrum-workflow-icon-size-75); }
+.spectrum .panel .chips { gap: var(--spectrum-spacing-75); margin: var(--spectrum-spacing-100) 0 0; }
+.spectrum .panel .chips .sub { margin-right: var(--spectrum-spacing-50); }
+.spectrum .panel section > .hint:last-child { margin: var(--spectrum-spacing-100) 0 0; }
+.spectrum .panel .hint .askfor { margin-left: var(--spectrum-spacing-50); font-size: inherit; }
+.spectrum .panel :is(ul.kbhits, ul.rules) li { padding: var(--spectrum-spacing-100) 0; border-bottom: var(--spectrum-border-width-100) solid var(--spectrum-gray-200); }
+.spectrum .panel :is(ul.kbhits, ul.rules) li:last-child { border-bottom: 0; }
+.spectrum .panel :is(ul.kbhits, ul.rules, .tk-cat) a { color: var(--spectrum-accent-content-color-default); text-decoration: none; }
+.spectrum .panel :is(ul.kbhits, ul.rules, .tk-cat) a:hover { text-decoration: underline; }
+.spectrum .panel ul.kbhits .sub { margin-top: var(--spectrum-spacing-50); }
+.spectrum .panel ul.kbhits .desc { color: var(--spectrum-neutral-content-color-default); }
+.spectrum .panel ul.rules code { margin-top: var(--spectrum-spacing-50); font-family: var(--s2-code); font-size: var(--spectrum-font-size-75); color: var(--spectrum-neutral-subdued-content-color-default); }
+.spectrum .panel ul.rules li.off a { color: var(--spectrum-neutral-subdued-content-color-default); }
+.spectrum .panel .tk-cat .n { color: var(--spectrum-neutral-subdued-content-color-default); }
+.spectrum .panel .tk-wait { margin: var(--spectrum-spacing-300) 0 0; }
+/* The record: Body text on a well (layer 1 in the card), its headings small, its code the
+   code font; where it is a Detail above it. */
+.spectrum .panel .tk-record { margin: var(--spectrum-spacing-100) 0 var(--spectrum-spacing-200); padding: var(--spectrum-spacing-200) var(--spectrum-spacing-300);
+  background: var(--spectrum-background-layer-1-color); border-radius: var(--spectrum-corner-radius-200); }
+.spectrum .panel .tk-where { margin: 0 0 var(--spectrum-spacing-100); }
+.spectrum .panel .tk-where a { color: var(--spectrum-accent-content-color-default); text-decoration: none; }
+.spectrum .panel .tk-where a:hover { text-decoration: underline; }
+.spectrum .panel .tk-md { font-size: var(--spectrum-font-size-100); line-height: var(--spectrum-line-height-200); color: var(--spectrum-neutral-content-color-default); }
+.spectrum .panel .tk-md > :first-child { margin-top: 0; }
+.spectrum .panel .tk-md > :last-child { margin-bottom: 0; }
+.spectrum .panel .tk-md p, .spectrum .panel .tk-md :is(ul, ol) { margin: var(--spectrum-spacing-100) 0; }
+.spectrum .panel .tk-md :is(ul, ol) { padding-left: var(--spectrum-spacing-400); }
+.spectrum .panel .tk-md :is(h1, h2, h3, h4, h5, h6) { margin: var(--spectrum-spacing-300) 0 var(--spectrum-spacing-75); font-size: var(--spectrum-font-size-100); font-weight: var(--spectrum-bold-font-weight); }
+.spectrum .panel .tk-md code { font-family: var(--s2-code); font-size: var(--spectrum-font-size-75); }
+.spectrum .panel .tk-md pre { margin: var(--spectrum-spacing-100) 0; padding: var(--spectrum-spacing-100); background: var(--spectrum-gray-100); border-radius: var(--spectrum-corner-radius-100); }
+.spectrum .panel .tk-md :is(th, td) { padding: var(--spectrum-spacing-50) var(--spectrum-spacing-100); font-size: var(--spectrum-font-size-75); }
+.spectrum .panel .tk-md a { color: var(--spectrum-accent-content-color-default); }
+.spectrum .panel .tk-md blockquote { margin: var(--spectrum-spacing-100) 0; padding-left: var(--spectrum-spacing-200); border-left: var(--spectrum-border-width-200) solid var(--spectrum-gray-300); color: var(--spectrum-neutral-subdued-content-color-default); }
+.spectrum .panel .tk-more { margin-top: var(--spectrum-spacing-75); }
+.spectrum .panel .tk-record .hint { margin: var(--spectrum-spacing-100) 0 0; }
+.spectrum .panel details.tk-other { margin: 0 0 var(--spectrum-spacing-100); }
+.spectrum .panel details.tk-other > summary { color: var(--spectrum-neutral-subdued-content-color-default); font-size: var(--spectrum-font-size-75); }
 /* What it is joined to: ListView rows, quiet, each with a Meter of its share. */
 .spectrum .panel .pickr {
   gap: var(--spectrum-spacing-100);
@@ -269,3 +376,94 @@ tr.pick { cursor: pointer; }
 .spectrum tr.pick:hover td { background: rgb(var(--spectrum-gray-900-rgb), var(--spectrum-table-row-hover-opacity)); }
 .spectrum .name { gap: var(--spectrum-text-to-visual-100); }
 .spectrum .name .dot { margin-top: var(--spectrum-spacing-50); }
+
+/* ---- Trends: a line chart in the categorical palette, its legend quiet buttons, the trees
+   ListViews with a disclosure each, a badge for what is moving (positive, negative, neutral). - */
+
+.spectrum .s0 { --s2-series: var(--spectrum-indigo-900); }
+.spectrum .s1 { --s2-series: var(--spectrum-orange-700); }
+.spectrum .s2 { --s2-series: var(--spectrum-seafoam-700); }
+.spectrum .s3 { --s2-series: var(--spectrum-magenta-800); }
+.spectrum .s4 { --s2-series: var(--spectrum-celery-900); }
+.spectrum .s5 { --s2-series: var(--spectrum-purple-800); }
+.spectrum .s6 { --s2-series: var(--spectrum-cyan-900); }
+.spectrum .s7 { --s2-series: var(--spectrum-yellow-1000); }
+/* A line of the map's: its bubble's color (TopicSpace.colorKey), then two other shades of it. */
+.spectrum .k-topic { --s2-series: var(--spectrum-indigo-700); }
+.spectrum .k-topic.v1 { --s2-series: var(--spectrum-indigo-500); }
+.spectrum .k-topic.v2 { --s2-series: var(--spectrum-indigo-900); }
+.spectrum .k-tag { --s2-series: var(--spectrum-indigo-1100); }
+.spectrum .k-tag.v1 { --s2-series: var(--spectrum-indigo-1300); }
+.spectrum .k-tag.v2 { --s2-series: var(--spectrum-indigo-1000); }
+.spectrum .k-product { --s2-series: var(--spectrum-orange-700); }
+.spectrum .k-product.v1 { --s2-series: var(--spectrum-orange-500); }
+.spectrum .k-product.v2 { --s2-series: var(--spectrum-orange-900); }
+.spectrum .k-product-group { --s2-series: var(--spectrum-orange-1000); }
+.spectrum .k-product-group.v1 { --s2-series: var(--spectrum-orange-1200); }
+.spectrum .k-product-group.v2 { --s2-series: var(--spectrum-orange-800); }
+.spectrum .k-vendor { --s2-series: var(--spectrum-yellow-700); }
+.spectrum .k-vendor.v1 { --s2-series: var(--spectrum-yellow-500); }
+.spectrum .k-vendor.v2 { --s2-series: var(--spectrum-yellow-900); }
+.spectrum .k-vendor-group { --s2-series: var(--spectrum-yellow-1000); }
+.spectrum .k-vendor-group.v1 { --s2-series: var(--spectrum-yellow-1200); }
+.spectrum .k-vendor-group.v2 { --s2-series: var(--spectrum-yellow-800); }
+.spectrum .split > .col { gap: var(--spectrum-spacing-300); }
+/* The chart on the map: the page's color rising from the bottom, so the bubbles behind fade out
+   under the lines; a wash of each line's color under it. */
+.spectrum .graph > .tchart {
+  padding: var(--spectrum-spacing-400) var(--spectrum-spacing-300) var(--spectrum-spacing-200);
+  background: linear-gradient(to top, var(--spectrum-background-layer-1-color) 70%, transparent);
+}
+.spectrum .tchart .area { fill: var(--s2-series); fill-opacity: .08; stroke: none; }
+.spectrum .tchart .line { fill: none; stroke: var(--s2-series); stroke-width: var(--spectrum-border-width-400); stroke-linejoin: round; stroke-linecap: round; }
+.spectrum .tchart .line.picked { stroke-width: calc(var(--spectrum-border-width-400) * 1.5); }
+.spectrum .tchart .line.partial { stroke-width: var(--spectrum-border-width-200); stroke-dasharray: var(--spectrum-spacing-75) var(--spectrum-spacing-75); }
+.spectrum .tchart .grid { stroke: var(--spectrum-gray-200); stroke-width: var(--spectrum-border-width-100); stroke-dasharray: var(--spectrum-spacing-50) var(--spectrum-spacing-75); }
+.spectrum .tchart .grid.month { stroke: var(--spectrum-gray-200); stroke-opacity: .5; stroke-dasharray: none; }
+.spectrum .tchart .axis { fill: var(--spectrum-neutral-subdued-content-color-default); font-size: var(--spectrum-font-size-50); }
+.spectrum .tchart .cursor { stroke: var(--spectrum-gray-500); stroke-width: var(--spectrum-border-width-100); stroke-dasharray: var(--spectrum-spacing-50) var(--spectrum-spacing-50); }
+.spectrum .tchart .hit { fill: transparent; }
+.spectrum .swatch {
+  width: calc(var(--spectrum-spacing-100) + var(--spectrum-spacing-50));
+  height: calc(var(--spectrum-spacing-100) + var(--spectrum-spacing-50));
+  margin-right: var(--spectrum-text-to-visual-100);
+  background: var(--s2-series);
+  border-radius: var(--spectrum-corner-radius-100);
+}
+.spectrum .tlegend { gap: var(--spectrum-spacing-50) var(--spectrum-spacing-200); margin-top: var(--spectrum-spacing-100); }
+.spectrum .tlegend button { min-height: var(--spectrum-component-height-75); padding: 0 var(--spectrum-spacing-75); background: transparent; border: 0; font-weight: var(--spectrum-regular-font-weight); }
+.spectrum .tlegend button.term { display: inline-flex; align-items: center; gap: var(--spectrum-spacing-75); }
+.spectrum .tlegend button:hover:not(:disabled) { background: var(--spectrum-gray-100); }
+.spectrum .tlegend li.off .swatch { opacity: .3; }
+.spectrum .tlegend li.off button.term { color: var(--spectrum-neutral-subdued-content-color-default); }
+.spectrum .tlegend button.x { color: var(--spectrum-neutral-subdued-content-color-default); }
+.spectrum .tlegend button.clear { color: var(--spectrum-accent-content-color-default); }
+.spectrum .tip .row { gap: var(--spectrum-spacing-75); }
+.spectrum .panel section h3 .swatch { margin-right: var(--spectrum-spacing-75); }
+/* The sidebar's rows (ui/spectrum.css has the sidebar): a kind's dot, what is in a group or what
+   it is in, subdued, and a trend's arrow, positive up and negative down, neutral from a peak. */
+.spectrum .sidenav .dot { margin: 0 var(--spectrum-spacing-50); }
+.spectrum .sidenav .nm .sub { font-size: var(--spectrum-font-size-75); }
+.spectrum .sidenav .trend { flex: none; font-size: var(--spectrum-font-size-75); font-weight: var(--spectrum-bold-font-weight); }
+.spectrum .sidenav .trend.up { color: var(--spectrum-positive-visual-color); }
+.spectrum .sidenav .trend.down { color: var(--spectrum-negative-visual-color); }
+.spectrum .sidenav .trend.peak { color: var(--spectrum-neutral-subdued-content-color-default); }
+.spectrum .badge {
+  padding: 0 var(--spectrum-spacing-75);
+  border-radius: var(--spectrum-corner-radius-100);
+  font-size: var(--spectrum-font-size-50);
+  font-weight: var(--spectrum-bold-font-weight);
+  line-height: var(--spectrum-line-height-200);
+  white-space: nowrap;
+}
+.spectrum .badge.trending { color: var(--spectrum-positive-color-1000); background: var(--spectrum-positive-subtle-background-color-default); }
+.spectrum .badge.declining { color: var(--spectrum-negative-content-color-default); background: var(--spectrum-negative-subtle-background-color-default); }
+.spectrum .badge.peaked { color: var(--spectrum-neutral-subdued-content-color-default); background: var(--spectrum-gray-100); }
+.spectrum .badge.one { opacity: .6; }
+.spectrum .spark polyline { fill: none; stroke: var(--spectrum-gray-600); stroke-width: var(--spectrum-border-width-200); stroke-linejoin: round; }
+.spectrum .spark.trending polyline { stroke: var(--spectrum-positive-visual-color); }
+.spectrum .spark.declining polyline { stroke: var(--spectrum-negative-visual-color); }
+.spectrum .spark.peaked polyline { stroke: var(--spectrum-notice-visual-color); }
+.spectrum .spark .grid { stroke: var(--spectrum-gray-300); stroke-width: var(--spectrum-border-width-100); }
+.spectrum p.trend { gap: var(--spectrum-spacing-200); margin: var(--spectrum-spacing-200) 0 0; font-size: var(--spectrum-font-size-75); line-height: var(--spectrum-line-height-100); }
+.spectrum p.trend .spark { flex: none; width: calc(var(--spectrum-spacing-100) * 12); height: var(--spectrum-spacing-500); }

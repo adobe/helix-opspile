@@ -14,7 +14,7 @@ import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import { inbox } from '../src/api.js';
 import {
-  mentionCandidates, mentionKinds, partnerOf, profiles, relationOf,
+  mentionCandidates, mentionKinds, mentionedPeople, partnerOf, profiles, relationOf,
 } from '../src/profiles.js';
 import { indexMessage } from '../src/threads.js';
 import { d1 } from './d1.js';
@@ -35,10 +35,23 @@ describe('relationOf', () => {
   });
 
   it('matches partner domains and their subdomains only', () => {
-    assert.deepEqual(partnerOf('eu.agency.example', partners), { domain: 'agency.example', name: 'Agency' });
+    assert.deepEqual(partnerOf('eu.agency.example', partners), { domain: 'agency.example', name: 'Agency', org: null });
     assert.equal(partnerOf('notagency.example', partners), null);
     assert.equal(partnerOf('example', partners), null);
     assert.equal(partnerOf(null, partners), null);
+  });
+
+  it('stops at a domain that is not a partner\'s, and gives a partner org', () => {
+    const found = new Map([
+      ['agency.example', { name: 'Agency', org: 'agency' }],
+      ['eu.agency.example', null],
+      ['dev.eu.agency.example', { name: 'Agency Dev', org: null }],
+    ]);
+    assert.deepEqual(partnerOf('agency.example', found), { domain: 'agency.example', name: 'Agency', org: 'agency' });
+    assert.equal(partnerOf('eu.agency.example', found), null);
+    assert.equal(partnerOf('mail.eu.agency.example', found), null);
+    assert.deepEqual(partnerOf('dev.eu.agency.example', found), { domain: 'dev.eu.agency.example', name: 'Agency Dev', org: null });
+    assert.equal(relationOf(env, { kind: 'person', email: 'p@eu.agency.example' }, found), 'customer');
   });
 });
 
@@ -76,6 +89,7 @@ describe('profiles', () => {
       domain: 'staff.example',
       relation: 'adobe',
       partner: null,
+      customer: null,
       teams: ['Helix'],
     });
     assert.equal(cards['slack:E1:U2'].relation, 'partner');
@@ -122,9 +136,40 @@ describe('profiles', () => {
     assert.deepEqual(await mentionKinds({ ...env, DB }, { source: 'slack', tenant: 'E1' }, ['no one']), {});
   });
 
+  it('finds the accounts of the names a thread mentions', async () => {
+    const DB = fresh();
+    DB.sqlite.exec(`INSERT INTO identities (source, tenant, user_id, kind, name, email, person,
+        fetched_at) VALUES
+      ('slack', 'E1', 'U3', 'person', 'Cy Young', 'cy@acme.example', NULL, '2026-10-21'),
+      ('slack', 'E1', 'U4', 'person', 'Dee Same', 'dee@acme.example', NULL, '2026-10-21'),
+      ('slack', 'E1', 'U5', 'person', 'Dee Same', 'dee@staff.example', NULL, '2026-10-21'),
+      ('teams', 'T9', 'g-9', 'person', 'Eve Elsewhere', 'eve@acme.example', NULL, '2026-10-21')`);
+    const { kinds, keys } = await mentionedPeople({ ...env, DB }, {
+      source: 'slack', tenant: 'E1', threads: ['t1'],
+    }, ['@Ada and @Alerts: cc @Cy Young, @Dee Same and @Eve Elsewhere']);
+    assert.equal(kinds['Cy Young'], 'customer');
+    // Ada by her name as a person, at her account here; two people go by Dee Same; Eve has no
+    // account in this workspace.
+    assert.deepEqual(keys, { Ada: 'slack:E1:U1', Alerts: 'slack:E1:B1', 'Cy Young': 'slack:E1:U3' });
+  });
+
   it('finds the names after each @', () => {
     assert.deepEqual(mentionCandidates(['hi @Ada Lovelace, see', 'a@b.example @Young, Cy.']), [
       'Ada', 'Ada Lovelace', 'Ada Lovelace, see', 'see Ada Lovelace', 'Young', 'Young, Cy', 'Cy Young',
     ]);
+  });
+
+  it('takes names that are not all letters, without what follows them', () => {
+    // A company after a dash, pronouns in brackets, a curly apostrophe, accents as combining marks.
+    const names = mentionCandidates([
+      '@Cy Young - Acme one small fix', 'hi (@Di Duck (she/her)).', '**@Ed O\u2019Hare**',
+      '[@Fe\u0301lix Nu\u0301n\u0303ez](https://x.example) @Gil @Hal Ho',
+    ]);
+    for (const name of ['Cy Young - Acme', 'Di Duck (she/her)', 'Ed O\u2019Hare',
+      'Fe\u0301lix Nu\u0301n\u0303ez', 'Gil', 'Hal Ho']) {
+      assert.ok(names.includes(name), name);
+    }
+    // Neither an email nor markdown around a name is part of it.
+    assert.ok(!names.some((n) => /[*[\]]|\)\)|@/.test(n)), names.join(' | '));
   });
 });

@@ -17,6 +17,7 @@
  * - `{ op: 'delete', message }`: a tombstone (`deletedAt`, no body)
  * - `{ op: 'channel', channel }`: channel metadata changed (rename, creation)
  * - `{ op: 'reaction', reaction }`: someone reacted to a message (read state only)
+ * - `{ op: 'lobby', lobby }`: how a lobby of the customer portal is now (src/portalrequests.js)
  * - `{ op: 'skip', reason }`: nothing for pile 2
  *
  * A message carries an `authorRef` that the caller resolves to an author, and its body
@@ -25,6 +26,7 @@
 
 import { snowflakeMs } from './discord.js';
 import { mdLink, sizeTitle } from './markdown.js';
+import { parseResource } from './raw.js';
 import { canonicalUrl } from './teamsfiles.js';
 
 /** Slack subtypes that are ordinary messages from a person or a bot. */
@@ -112,9 +114,12 @@ function slackMessage(payload, key, msg, channel, extra = {}) {
   if (msg.subtype && !SLACK_CONTENT.has(msg.subtype)) {
     authorRef = { kind: 'system', name: 'Slack' };
   } else if (msg.bot_id && !msg.user) {
+    const icons = (msg.bot_profile && msg.bot_profile.icons) || {};
     authorRef = {
       kind: 'bot',
       name: (msg.bot_profile && msg.bot_profile.name) || msg.username || null,
+      // The bot's picture, for its identity when it has none (src/lookup.js, botIdentity).
+      ...(icons.image_72 || icons.image_48 ? { avatar: icons.image_72 || icons.image_48 } : {}),
       botId: msg.bot_id,
       tenant,
       // Org-wide tokens need the workspace for bots.info.
@@ -511,22 +516,74 @@ export function teamsEventText(detail, name = (u) => u.displayName) {
   }
 }
 
+/** Slack's notices that a channel was archived or restored (message subtypes). */
+const SLACK_ARCHIVE_NOTICES = new Set([
+  'channel_archive', 'channel_unarchive', 'group_archive', 'group_unarchive',
+]);
+
 /**
- * Whether a message is a Teams system notice that its channel or its Teams team got a new name:
- * the normalizer looks the channel up again then (the rules read both names).
+ * Whether a message is a system notice that its channel changed in a way its row keeps: on
+ * Teams, that the channel or its Teams team got a new name (the rules read both names), or was
+ * archived or restored; on Slack, that the channel was archived or restored. The normalizer
+ * looks the channel up again then.
  */
-export const isRenameNotice = (message) => /^#?microsoft\.graph\.(channel|team)RenamedEventMessageDetail$/
-  .test(String((message && message.event && message.event['@odata.type']) || ''));
+export const isChannelNotice = (message) => /^#?microsoft\.graph\.(channel|team)(Renamed|Archived|Unarchived)EventMessageDetail$/
+  .test(String((message && message.event && message.event['@odata.type']) || ''))
+  || Boolean(message && message.source === 'slack' && SLACK_ARCHIVE_NOTICES.has(message.subtype));
 
 /** Text as an HTML attribute value (or element text). */
 const attr = (s) => String(s).replace(/[&"<>]/g, (c) => ({
   '&': '&amp;', '"': '&quot;', '<': '&lt;', '>': '&gt;',
 })[c]);
 
-export function normalizeTeams(key, msg) {
+/**
+ * A Teams change notification (src/teams.js). A new or edited message is filed from the copy
+ * fetched next to it; a deleted one only from the notification, since Graph answers 404 for a
+ * deleted channel message. The notification names the message (its `resource`) and nothing
+ * else: the tombstone's time is when it was received (`receivedAt`, the object's metadata, or
+ * else the day in its key), and its creation time is its id, the milliseconds Teams gives it.
+ */
+function teamsNotification(key, item, { receivedAt } = {}) {
+  if (!item || item.changeType !== 'deleted') {
+    return { op: 'skip', reason: 'notification' };
+  }
+  const res = parseResource(item.resource);
+  if (!res) {
+    return { op: 'skip', reason: 'notification' };
+  }
+  const parts = key.split('/');
+  const [, tenant] = parts;
+  const [y, m, d] = parts.slice(-4, -1);
+  const deletedAt = (receivedAt && !Number.isNaN(Date.parse(receivedAt))
+    ? new Date(receivedAt).toISOString() : null)
+    || (/^\d{4}$/.test(y) ? `${y}-${m}-${d}T00:00:00.000Z` : new Date(0).toISOString());
+  const created = /^\d{10,15}$/.test(res.messageId) ? Number(res.messageId) : NaN;
+  return {
+    op: 'delete',
+    message: {
+      source: 'teams',
+      tenant,
+      channelId: res.channelId,
+      groupId: res.teamId,
+      rootId: res.rootId,
+      id: res.messageId,
+      thread: `teams:${tenant}:${res.teamId}:${res.channelId}:${res.rootId}`,
+      at: Number.isNaN(created) ? deletedAt : new Date(created).toISOString(),
+      // A deletion carries no version; it is newer than any version of the message.
+      version: '9'.repeat(15),
+      deletedAt,
+      authorRef: { kind: 'system', name: 'Microsoft Teams' },
+      format: 'text',
+      text: '',
+      raw: key,
+    },
+  };
+}
+
+export function normalizeTeams(key, msg, meta = {}) {
   const [, tenant] = key.split('/');
   if (key.split('/').pop().startsWith('notification-')) {
-    return { op: 'skip', reason: 'notification' };
+    return teamsNotification(key, msg, meta);
   }
   const identity = msg.channelIdentity || {};
   const rootId = msg.replyToId || msg.id;
@@ -635,8 +692,133 @@ export function normalizeTeams(key, msg) {
   return { op: 'upsert', message };
 }
 
-/** Dispatches on the pile-1 key's source. */
-export function normalize(key, json) {
+/**
+ * A customer portal event (src/portal/events.js, stored by src/portalsource.js) to a pile-2
+ * operation. The portal is this repository's own, so its events say what the normalizer needs
+ * in the normalizer's terms: a message as it is now (posted, edited or deleted; `rev` counts
+ * its changes, and is its version), with its channel's name and its author's name and mail address,
+ * which the lookups take from here (`channelHint`, `authorRef`) instead of asking the portal;
+ * its files as links to the portal, which the inbox opens through it, and whom it mentions.
+ * The tenant is the lobby, the customer's mail domain.
+ */
+/** A portal message's files as the list every platform's files are (see `slackFiles`). */
+function portalFiles(files) {
+  const ok = (Array.isArray(files) ? files : []).filter((f) => f && f.url && f.name);
+  const shown = (f) => /^image\/(png|jpeg|gif|webp)$/.test(f.type || '');
+  const images = ok.filter(shown)
+    .map((f) => mdLink(f.name, f.url, true, sizeTitle(f.width, f.height)));
+  const links = ok.filter((f) => !shown(f)).map((f) => `- ${mdLink(f.name, f.url)}`);
+  return [images.join('\n'), links.join('\n')].filter(Boolean).join('\n\n');
+}
+
+/**
+ * Where the inbox shows the picture of a portal account: one the person uploaded there comes
+ * through the inbox (`GET /api/portal/avatar/…`, src/portalsource.js), one the inbox gave for
+ * its own people is where it was; '' when the event names neither.
+ */
+const portalAvatar = (a) => (a.picture
+  ? `/api/portal/avatar/${encodeURIComponent(a.id)}?v=${encodeURIComponent(a.picture)}`
+  : (/^https:\/\//.test(a.avatar || '') && a.avatar) || '');
+
+export function normalizePortal(key, event) {
+  const e = event || {};
+  const tenant = e.domain;
+  if (e.type === 'lobby') {
+    return {
+      op: 'lobby',
+      lobby: {
+        ...(e.lobby || {}), domain: tenant, portal: e.portal || 'portal', seq: e.seq, at: e.at,
+      },
+    };
+  }
+  const ch = e.channel || {};
+  const channelHint = { name: ch.name, topic: ch.topic || null, company: ch.company || null };
+  if (e.type === 'channel') {
+    return {
+      op: 'channel',
+      channel: {
+        source: 'portal', tenant, channelId: ch.id, name: ch.name, at: e.at,
+      },
+    };
+  }
+  const a = e.author || {};
+  const authorRef = a.kind === 'bot'
+    ? {
+      kind: 'bot', name: a.name || 'Enterprise Support', source: 'portal', tenant, botId: a.id,
+    }
+    : {
+      source: 'portal',
+      tenant,
+      userId: a.id,
+      name: a.name || null,
+      email: a.email || null,
+      avatar: portalAvatar(a),
+      // An embedded account's verified address: one person's accounts are one by it, and only
+      // that (src/lookup.js keeps it apart from `email`).
+      ...(!a.email && a.verifiedEmail ? {
+        mergeEmail: String(a.verifiedEmail).toLowerCase(),
+        ...(a.verifiedAt ? { mergeAt: String(a.verifiedAt) } : {}),
+      } : {}),
+    };
+  if (e.type === 'reaction') {
+    const r = e.reaction || {};
+    return {
+      op: 'reaction',
+      reaction: {
+        removed: Boolean(r.removed),
+        emoji: r.emoji,
+        source: 'portal',
+        tenant,
+        channelId: ch.id,
+        id: r.message,
+        userId: a.id,
+        at: r.at || e.at,
+        // Who reacted, for the lookup: the event names them.
+        userRef: a.kind === 'bot' ? undefined : authorRef,
+      },
+    };
+  }
+  if (e.type !== 'message' || !e.message) {
+    return { op: 'skip', reason: e.type || 'unknown' };
+  }
+  const m = e.message;
+  const files = m.deletedAt ? '' : portalFiles(m.files);
+  // Who it mentions: the portal names them, so their accounts are known before they are asked for.
+  const mentioned = (Array.isArray(m.mentions) ? m.mentions : []).filter((x) => x && x.id);
+  const message = {
+    source: 'portal',
+    tenant,
+    channelId: ch.id,
+    channelHint,
+    rootId: m.root || m.id,
+    id: m.id,
+    thread: `portal:${tenant}:${ch.id}:${m.root || m.id}`,
+    at: m.at,
+    editedAt: m.editedAt || undefined,
+    // The message as it is now: the portal counts its changes (an edit, its deletion).
+    version: String(Number(m.rev) || 0).padStart(9, '0'),
+    authorRef,
+    format: 'portal',
+    text: m.text || '',
+    files: files ? `Attachments:\n${files}` : undefined,
+    // No link to it: the portal is its customers', and nobody of the inbox can open it there.
+    raw: key,
+    mentionIds: mentioned.map((x) => x.id),
+    mentionRefs: mentioned.filter((x) => x.kind !== 'bot' && (x.name || x.email)).map((x) => ({
+      source: 'portal', tenant, userId: x.id, name: x.name || null, email: x.email || null,
+    })),
+  };
+  if (m.deletedAt) {
+    return { op: 'delete', message: { ...message, deletedAt: m.deletedAt, text: '' } };
+  }
+  return { op: 'upsert', message };
+}
+
+/**
+ * Dispatches on the pile-1 key's source. `meta` is the object's custom metadata (`receivedAt`),
+ * for what the event does not say itself.
+ */
+export function normalize(key, json, meta = {}) {
   const source = key.split('/')[0];
   if (source === 'slack' && json && json.type === 'file_info') {
     // A kept files.info answer (src/slackfiles.js), not an event.
@@ -646,10 +828,13 @@ export function normalize(key, json) {
     return normalizeSlack(key, json);
   }
   if (source === 'teams') {
-    return normalizeTeams(key, json);
+    return normalizeTeams(key, json, meta);
   }
   if (source === 'discord') {
     return normalizeDiscord(key, json);
+  }
+  if (source === 'portal') {
+    return normalizePortal(key, json);
   }
   return { op: 'skip', reason: `unknown source ${source}` };
 }

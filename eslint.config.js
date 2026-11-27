@@ -14,7 +14,7 @@ import { recommended } from '@adobe/eslint-config-helix';
 
 export default [
   {
-    ignores: ['node_modules/**', '.wrangler/**', '.cloudflare/**', 'coverage/**', 'dist/**'],
+    ignores: ['node_modules/**', '**/.wrangler/**', '**/.cloudflare/**', 'coverage/**', 'dist/**', 'graphviz/node_modules', 'portal/node_modules'],
   },
   {
     ...recommended,
@@ -27,6 +27,7 @@ export default [
         ...recommended.languageOptions.globals,
         ...globals.serviceworker,
         WebSocketPair: 'readonly',
+        WebSocketRequestResponsePair: 'readonly',
       },
     },
     rules: {
@@ -74,12 +75,47 @@ export default [
         Rank: 'readonly',
         // The preview of attached files, ui/table.js (the inbox).
         Table: 'readonly',
-        // A customer's stack drawing, ui/stack.js (the inbox).
+        // Markdown formatting in a text box, ui/writing.js (the inbox, the customer portal).
+        Writing: 'readonly',
+        // A rich text box, ui/richtext.js (the customer portal).
+        RichText: 'readonly',
+        // A customer's stack drawing, ui/stack.js (the inbox, a team's overview in Teams).
         Stack: 'readonly',
-        // The Topics page's graph, ui/topicgraph.js.
+        // The notification troubleshooter's steps, ui/notifyhelp.js (the inbox).
+        NotifyHelp: 'readonly',
+        Tour: 'readonly',
+        // What to follow, suggested and found, ui/followsuggest.js (every page with your menu).
+        FollowSuggest: 'readonly',
+        // Following and muting, every page's Follow button and your menu's Following, ui/follow.js.
+        Follow: 'readonly',
+        // The Topics page's graph, ui/topicgraph.js, its space, ui/topicspace.js, and its
+        // drawing, ui/topicview.js.
         TopicGraph: 'readonly',
+        TopicSpace: 'readonly',
+        TopicView: 'readonly',
+        // The Topics page's trends: their counting, ui/trends.js, and their chart, ui/trendview.js.
+        Trends: 'readonly',
+        TrendView: 'readonly',
+        // A team's or a customer's agent, ui/agent.js (in Teams and Customers, ui/admin.js).
+        Agent: 'readonly',
+        // What a team's and a customer's overviews are drawn with, ui/overview.js.
+        Overview: 'readonly',
+        // A team's overview, ui/team.js (in Teams, ui/admin.js).
+        TeamView: 'readonly',
+        // A customer's overview, ui/customer.js (in Customers, ui/admin.js).
+        CustomerView: 'readonly',
+        // The knowledge base's sidebar, ui/kbchat.js (in Teams and Customers, ui/admin.js).
+        KbChat: 'readonly',
+        // A person's parts, as both people cards draw them, ui/person.js (the inbox, Teams).
+        Person: 'readonly',
+        // The sidebar of Teams, Customers and Topics, ui/sidenav.js.
+        SideNav: 'readonly',
+        // What waits in Teams and Customers: the sidebar's Review entry, ui/review.js.
+        Review: 'readonly',
         // Content swaps that fade in, ui/app.js.
         Swap: 'readonly',
+        // Links to the app opened in it, installed, ui/app.js.
+        Launch: 'readonly',
       },
     },
     rules: {

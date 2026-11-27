@@ -113,12 +113,58 @@ if (window.visualViewport && matchMedia('(hover: none) and (pointer: coarse)').m
     if (bar && !(popup && !popup.closed) && await signedIn()) back();
   });
 
+  // D1 turning queries away for a few seconds (src/api.js): 503 with Retry-After. A read is
+  // asked once more after it (and a moment at random, so the pages it turned away together do
+  // not come back together); what writes is not, its caller says it failed.
+  const reads = (input, init) => String(init.method || (input instanceof Request ? input.method : 'GET'))
+    .toUpperCase() === 'GET';
+  const busy = (res) => res.status === 503 && res.headers.has('retry-after');
+  const later = (res) => new Promise((resolve) => {
+    const s = Math.min(Number(res.headers.get('retry-after')) || 1, 10);
+    setTimeout(resolve, s * 1000 + Math.random() * 1000);
+  });
+
+  // D1's bookmark (src/d1session.js): the newest state of the database this browser has seen,
+  // from /api's answers and the rooms' events (`D1Bookmark.see`), in every tab. Each fetch of
+  // /api says it, so its reads come from a copy of the database at least that new. Bookmarks
+  // are hex fields of fixed width: of two as long, the greater is the newer.
+  const MARK = 'opspile.d1bookmark';
+  const MARK_HEADER = 'x-d1-bookmark';
+  let mark = null;
+  const newer = (a, b) => typeof a === 'string' && a !== '' && (!b || a.length !== b.length || a > b);
+  const marked = () => {
+    let kept = null;
+    try { kept = localStorage.getItem(MARK); } catch { /* storage is off */ }
+    return newer(kept, mark) ? kept : mark;
+  };
+  const see = (b) => {
+    if (!newer(b, marked())) return;
+    mark = b;
+    try { localStorage.setItem(MARK, b); } catch { /* storage is off */ }
+  };
+  window.D1Bookmark = { see, get: marked };
+  const withMark = (input, init) => {
+    const b = marked();
+    if (!b) return init;
+    const headers = new Headers(init.headers || (input instanceof Request ? input.headers : undefined));
+    headers.set(MARK_HEADER, b);
+    return { ...init, headers };
+  };
+  const ask = (input, init) => native(input, { ...withMark(input, init), redirect: 'manual' }).then((res) => {
+    see(res.headers?.get?.(MARK_HEADER));
+    return res;
+  });
+
   window.fetch = async (input, init = {}) => {
     if (!api(input) || init.redirect) return native(input, init);
-    const res = await native(input, { ...init, redirect: 'manual' });
+    let res = await ask(input, init);
+    if (busy(res) && reads(input, init)) {
+      await later(res);
+      res = await ask(input, init);
+    }
     if (res.type !== 'opaqueredirect') return res;
     signedOut();
-    throw new Error('Signed out: sign in again');
+    throw Object.assign(new Error('Signed out: sign in again'), { signedOut: true });
   };
 })();
 
@@ -197,4 +243,25 @@ window.Swap = (() => {
     }).observe(region, { childList: true });
   };
   return { watch };
+})();
+
+/**
+ * A link to the app opened in it, installed (src/pwa.js: `handle_links`, with `launch_handler`
+ * focus-existing): the window it came to takes it. A page that can show it where it is says so
+ * (`Launch.take = (url) => …`, true where it did: the inbox opens a thread, at a message); any
+ * other page loads it, which asks first where something would be lost (beforeunload). The launch
+ * that loaded the page is its own address, shown already.
+ */
+window.Launch = (() => {
+  const landed = location.href;
+  let first = true;
+  const launch = { take: null };
+  window.launchQueue?.setConsumer?.((params) => {
+    const url = params?.targetURL;
+    const own = first && url === landed;
+    first = false;
+    if (!url || own) return;
+    if (!launch.take?.(url)) location.assign(url);
+  });
+  return launch;
 })();

@@ -86,7 +86,9 @@ export async function linkedMessage(env, address, { near = null, canSee } = {}) 
   const find = async (tenant) => {
     const row = await env.DB.prepare(lookupSql)
       .bind(ref.source, String(tenant), ref.channel, ref.id).first();
-    const place = row && { source: ref.source, channel_id: row.channel_id, team: row.team };
+    const place = row && {
+      source: ref.source, channel_id: row.channel_id, team: row.team, thread: row.thread,
+    };
     return row && await canSee(await teamsOf(env, place), place) ? row : null;
   };
   let row = first && await find(first);

@@ -17,13 +17,18 @@ import { isStaffDomain } from './lookup.js';
  * `resolved_p` until a customer writes again after it: the thread is then reopened, and is
  * open until Clef has labeled the thread with that message in it (then Clef decides again,
  * so a customer's "thanks, works now" does not keep it open) or until staff resolve it again.
+ * The thread's agent resolving it (resolve_thread, src/agentlabels.js) counts as such a ✅,
+ * from when it did, though nothing is put on the platform.
  */
+
+/** Who resolved a thread, when its agent did. */
+export const AGENT_RESOLVER = 'opspile agent';
 
 // Clef's `resolved_p` from which a thread counts as resolved.
 const RESOLVED_P = 0.5;
 
 /** The reaction each platform uses for "resolved" (the one opspile adds). */
-export const RESOLVED_EMOJI = { slack: 'white_check_mark', teams: '✅' };
+export const RESOLVED_EMOJI = { slack: 'white_check_mark', teams: '✅', portal: '✅' };
 
 // ✅ and ✔️ both mean resolved, on either platform.
 const RESOLVED = new Set(['white_check_mark', 'heavy_check_mark', '✅', '✔']);
@@ -79,8 +84,9 @@ export async function signalFacts(env, keys) {
 }
 
 /**
- * What D1 knows about the resolution of each thread: the staff ✅ on its root (`checks`:
- * when, by whom), and the time of the latest customer message (`customerAt`).
+ * What D1 knows about the resolution of each thread: the staff ✅ on its root and its agent's
+ * resolution (`checks`: when, by whom; `agent` on the agent's), and the time of the latest
+ * customer message (`customerAt`).
  *
  * @param {object} env
  * @param {string[]} keys platform thread keys
@@ -88,7 +94,7 @@ export async function signalFacts(env, keys) {
  */
 export async function resolutionFacts(env, keys) {
   const list = JSON.stringify(keys);
-  const [{ results: checks }, { results: customer }] = await Promise.all([
+  const [{ results: checks }, { results: customer }, { results: agent }] = await Promise.all([
     env.DB.prepare(`SELECT r.thread, r.user_key,
       COALESCE(r.at, t.root_at) AS at, COALESCE(p.name, i.name) AS name, i.person,
       MAX(COALESCE(p.staff, 0), COALESCE(i.staff, 0)) AS staff, i.email
@@ -102,12 +108,21 @@ export async function resolutionFacts(env, keys) {
     env.DB.prepare(`SELECT thread, MAX(at) AS at FROM messages
     WHERE thread IN (SELECT value FROM json_each(?)) AND counted = 1 AND staff = 0
       AND deleted = 0 GROUP BY thread`).bind(list).all(),
+    env.DB.prepare(`SELECT thread, at FROM agent_labels
+    WHERE thread IN (SELECT value FROM json_each(?)) AND question = 'resolved'`).bind(list).all(),
   ]);
   const facts = new Map(keys.map((k) => [k, { checks: [], customerAt: null }]));
   for (const c of checks || []) {
     if (facts.has(c.thread) && (c.staff || isStaffDomain(env, c.email))) {
       facts.get(c.thread).checks.push({
         at: c.at || null, name: c.name || null, person: c.person || null, userKey: c.user_key,
+      });
+    }
+  }
+  for (const a of agent || []) {
+    if (facts.has(a.thread)) {
+      facts.get(a.thread).checks.push({
+        at: a.at, name: AGENT_RESOLVER, person: null, userKey: null, agent: true,
       });
     }
   }
@@ -127,8 +142,9 @@ export async function resolutionFacts(env, keys) {
  * @param {object|null} label the entry's effective label (`labeled_through`)
  * @param {number} me the viewer's person id
  * @returns {null|{ state: 'resolved'|'reopened', verdict: 'resolved'|'open'|null, at: string,
- *   by: string[], mine: boolean, reopenedAt?: string }} null without a staff ✅; `verdict`
- *   is what the Resolved facet shows, null meaning "as Clef says"
+ *   by: string[], mine: boolean, agent?: true, reopenedAt?: string }} null without a staff
+ *   ✅; `verdict` is what the Resolved facet shows, null meaning "as Clef says"; `agent` when
+ *   only the thread's agent resolved it (the ✅ button takes that back)
  */
 export function resolution(facts, label, me) {
   const { checks = [], customerAt = null } = facts || {};
@@ -138,15 +154,23 @@ export function resolution(facts, label, me) {
   const at = checks.map((c) => c.at || '').sort().pop() || null;
   const by = [...new Set(checks.map((c) => c.name).filter(Boolean))];
   const mine = checks.some((c) => me != null && c.person === me);
+  // Only the agent resolved it: whoever works the thread may take that back.
+  const agent = checks.every((c) => c.agent) ? { agent: true } : {};
   if (customerAt && (!at || customerAt > at)) {
     const through = label && label.labeled_through;
     const relabeled = Boolean(through && through >= customerAt);
     return {
-      state: 'reopened', verdict: relabeled ? null : 'open', at, by, mine, reopenedAt: customerAt,
+      state: 'reopened',
+      verdict: relabeled ? null : 'open',
+      at,
+      by,
+      mine,
+      ...agent,
+      reopenedAt: customerAt,
     };
   }
   return {
-    state: 'resolved', verdict: 'resolved', at, by, mine,
+    state: 'resolved', verdict: 'resolved', at, by, mine, ...agent,
   };
 }
 

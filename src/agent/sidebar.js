@@ -18,8 +18,8 @@ import { sidebarTurns, turnSidebar } from './turn.js';
 
 /**
  * The agent's side of the sidebar (src/sidebar.js). `agent` is the ThreadAgent (its `env`,
- * `name`, `syncTools`, `syncMcp` and `harness`); these functions are its `sidebar`, `inSidebar`
- * and the sidebar half of `keepTurn`, kept here so they run in Node tests.
+ * `name`, `syncTools`, `syncMcp` and `harness`); these functions are its `sidebar`, `inSidebar`,
+ * `sidebarMessage` and the sidebar half of `keepTurn`, kept here so they run in Node tests.
  */
 
 /**
@@ -51,6 +51,19 @@ export async function inSidebar(agent) {
     return Boolean(turnSidebar(await agent.harness.messages()));
   } catch {
     return true;
+  }
+}
+
+/**
+ * ThreadAgent.sidebarMessage: the id of the sidebar message the turn running now answers, or
+ * null (a turn on the thread's messages, or a transcript that cannot be read), for the tools
+ * that act for the person who wrote it (src/agent/channelrequest.js, src/agent/memberrequest.js).
+ */
+export async function currentSidebar(agent) {
+  try {
+    return turnSidebar(await agent.harness.messages());
+  } catch {
+    return null;
   }
 }
 

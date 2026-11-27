@@ -129,7 +129,8 @@ describe('message time', () => {
 });
 
 /** `message` and what it asks of the page: you may react, and edit your own. */
-function page({ readonly = false } = {}) {
+function page({ readonly = false, orgs = {} } = {}) {
+  const { withOrg } = piece('/** Whether `org` is a customer of its own', '/** What GET /api/customers/profile', 'withOrg', { esc });
   const state = {
     profiles: new Map(), editing: null, data: { me: { readonly } }, me: { name: 'Dana Ops' },
   };
@@ -143,7 +144,7 @@ function page({ readonly = false } = {}) {
     timeTag: (iso, dated) => `<time datetime="${iso}" title="whole">${dated ? 'day and time' : 'time'}</time>`,
     profileKey: (key, { name }) => key || `local:${name}`,
     avatar: (name) => `<span class="av">${esc(name[0])}</span>`,
-    favicon: (d) => `/favicon/${d}`,
+    favImg: piece('const FAV_RETRY_MS', '// A favicon that failed', 'favImg', { esc, favicon: (d) => `/favicon/${d}` }).favImg,
     canReact: (m) => !readonly && !m.pending && m.author?.kind !== 'system',
     canEdit: (m) => !readonly && Boolean(m.editable),
     emojiChip: emoji,
@@ -151,6 +152,8 @@ function page({ readonly = false } = {}) {
     SIGNAL_HINT: {},
     pendingFiles: () => '',
     sendState: () => '',
+    orgOfDomain: (d) => orgs[d] || null,
+    withOrg,
   });
 }
 
@@ -162,7 +165,7 @@ describe('message header', () => {
   it('has the name, with its profile card, and the time, with its date, in the header', () => {
     const html = page().message(msg({ authorKey: 'slack:U1' }), null, false);
     const [, who] = html.match(/<div class="who">(.*?)<\/div>/);
-    assert.equal(who, '<b data-p="slack:U1" role="button" tabindex="0">Sam Reyes</b> · <time datetime="2026-11-12T10:43:00.000Z" title="whole">time</time>');
+    assert.equal(who, '<b data-p="slack:U1" role="button" tabindex="0">Sam Reyes</b> <time datetime="2026-11-12T10:43:00.000Z" title="whole">time</time>');
   });
 
   it('says the day in the header of the thread\'s latest message only', () => {
@@ -188,12 +191,17 @@ describe('message header', () => {
     assert.doesNotMatch(html.match(/<div class="bubble">(.*?)<\/div>/)[1], /quick|data-pick/);
   });
 
-  it('has the pen with them on your own message, and no bar where there is nothing to do', () => {
+  it('has the pen with them on your own message, and only the menu where one may not react', () => {
     const own = page().message(msg({ mine: true, editable: 'user', author: { kind: 'person', name: 'Dana Ops', staff: true } }), null, false);
     assert.match(own, /<div class="quick-at"><div class="quick" role="toolbar" aria-label="React, as you"><button class="edit" data-edit="1"/);
+    // Viewing as someone: no reactions, no pen, the message's menu (its links) still.
     const looking = page({ readonly: true }).message(msg(), null, false);
-    assert.doesNotMatch(looking, /quick/);
-    assert.match(looking, /<div class="col"><div class="head"><div class="who">.*?<\/div><\/div>\s*<div class="bubble">/);
+    assert.match(looking, /<div class="quick" role="toolbar" aria-label="Message actions"><button class="acts" data-acts="1"[^>]*>.*?<\/button><\/div>/);
+    assert.doesNotMatch(looking, /data-pick|data-edit/);
+    // A reply on its way has nothing yet: no bar.
+    const sending = page().message(msg({ pending: true, id: undefined }), null, false);
+    assert.doesNotMatch(sending, /quick/);
+    assert.match(sending, /<div class="col"><div class="head"><div class="who">.*?<\/div><\/div>\s*<div class="bubble">/);
   });
 
   it('keeps the header line of a message that goes on from the one before, for its reactions', () => {
@@ -206,12 +214,28 @@ describe('message header', () => {
     assert.match(html, /<div class="head"><div class="who">.*?<\/div><div class="quick-at">/);
   });
 
+  it('shows the customer\'s card on the badge of its people\'s pictures, and the domain where it has none', () => {
+    const face = (html) => html.match(/<span class="face">(.*?)<\/span><\/span>|<span class="face">(.*)$/s)[0];
+    const known = page({ orgs: { 'acme.example': 'acme' } }).message(msg(), null, false);
+    assert.match(face(known), /<img data-org="acme" title="" class="badge-ico" src="\/favicon\/acme\.example" alt="" data-fav>/);
+    const unknown = page().message(msg(), null, false);
+    assert.match(face(unknown), /<img class="badge-ico" src="\/favicon\/acme\.example" alt="" title="acme\.example" data-fav>/);
+    assert.doesNotMatch(unknown, /data-org/);
+    // Adobe's people have no badge, so no card on it.
+    const staff = page({ orgs: { 'adobe.com': 'adobe' } }).message(msg({
+      author: {
+        kind: 'person', name: 'Dana Ops', staff: true, org: 'adobe.com',
+      },
+    }), null, false);
+    assert.doesNotMatch(staff, /badge-ico|data-org/);
+  });
+
   it('gives system lines, the line between a group\'s posts and the sidebar the same time', () => {
     const html = page().message(msg({ author: { kind: 'system' }, body: 'Sam joined.' }), null, false);
-    assert.match(html, /^<div class="sys " data-id="[^"]+"><p>Sam joined\.<\/p> · <time datetime="2026-11-12T10:43:00\.000Z" title="whole">time<\/time><\/div>$/);
-    assert.match(js, /<div class="post"><span>new post · \$\{timeTag\(m\.at\)\}<\/span><\/div>/);
+    assert.match(html, /^<div class="sys " data-id="[^"]+"><p>Sam joined\.<\/p> <time datetime="2026-11-12T10:43:00\.000Z" title="whole">time<\/time><\/div>$/);
+    assert.match(js, /<div class="post"><span>new post \$\{timeTag\(m\.at\)\}<\/span><\/div>/);
     // The sidebar's messages too.
-    assert.equal(js.match(/<div class="who"><b>[^<]*<\/b> · \$\{(?:m\.pending \? 'sending…' : )?timeTag\(m\.at\)\}<\/div>/g).length, 2);
+    assert.equal(js.match(/<div class="who"><b>[^<]*<\/b> \$\{(?:m\.pending \? 'sending…' : )?timeTag\(m\.at\)\}<\/div>/g).length, 2);
   });
 });
 

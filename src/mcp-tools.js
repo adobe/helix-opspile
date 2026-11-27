@@ -13,6 +13,9 @@
 import { accountName, PLATFORMS } from './platforms.js';
 import { agentTrace, seedAgent } from './agent/stub.js';
 import { inbox, searchInbox, thread as loadThread } from './api.js';
+import { KB_RESULTS } from './kbsearch.js';
+import { mayRead } from './kbaccess.js';
+import { readText } from './agent/repos.js';
 import { discardDraft, saveDraft } from './drafts.js';
 import { isResolved } from './resolve.js';
 import { MAX_SOURCES } from './sources.js';
@@ -26,8 +29,11 @@ import { QUESTIONS, topicNames, vocab } from './label.js';
 import {
   config, deleteRule, deleteTech, saveRule, saveTech, testRule,
 } from './extract.js';
-import { inTeam, isAdmin, managesTeam } from './review.js';
-import { mayWork, memberOf, teamless } from './shares.js';
+import { inTeam, isAdmin, managesTeam } from './roles.js';
+import { resolveConflict, techConflicts } from './techconflicts.js';
+import {
+  mayPost, mayReply, mayWork, memberOf, teamless,
+} from './shares.js';
 import { LAYERS } from './stack.js';
 
 /**
@@ -139,11 +145,27 @@ function summary(t, me) {
   if (t.unseenByAdobe) {
     out.unseen_by_adobe = true;
   }
+  if (Number(t.imported)) {
+    // From the history import: over before the inbox began, so read and waiting on nobody.
+    out.imported = true;
+  }
   if ((t.posters || []).includes(me.id)) {
     out.posted_in = true;
   }
   if (t.permalink) {
     out.link = t.permalink;
+  }
+  // A partner's thread about a customer, a customer's with a partner's people (src/threadlinks.js).
+  if (t.linked && t.linked.about.length) {
+    out.about_customers = t.linked.about.map((o) => o.slug);
+  }
+  const withs = (t.linked && t.linked.with) || [];
+  if (withs.some((o) => o.role !== 'customer')) {
+    out.with_partners = withs.filter((o) => o.role !== 'customer').map((o) => o.slug);
+  }
+  // A public thread with a customer's people.
+  if (withs.some((o) => o.role === 'customer')) {
+    out.with_customers = withs.filter((o) => o.role === 'customer').map((o) => o.slug);
   }
   return out;
 }
@@ -180,7 +202,7 @@ const checkFacets = (f, prefix = '') => Object.keys(FACET_VALUES)
  */
 function inboxesOf(me, args) {
   if (teamless(me)) {
-    return args.team ? { error: 'You are on no ops team: leave out `team` for the threads of the channels you posted or were mentioned in.' }
+    return args.team ? { error: 'You are on no ops team: leave out `team` for your personal view: the channels you posted or were mentioned in, and what you follow.' }
       : { teams: [null] };
   }
   const teams = args.team ? [String(args.team)] : me.teams.map((t) => t.slug);
@@ -252,18 +274,36 @@ async function searchThreads(env, me, args) {
     return { error };
   }
   const limit = Math.max(1, Math.min(MAX_LIST, Math.floor(Number(args.limit) || 20)));
-  // A channel shared by two of the person's teams is in both inboxes: each thread once.
+  // A channel shared by two of the person's teams is in both inboxes: each thread once; and a
+  // customer two of them own, each concept of its knowledge base once.
   const seen = new Set();
-  const found = (await Promise.all(teams.map(async (team) => {
-    const r = await searchInbox(env, me, team, q, { limit, personal: !team });
+  const answers = await Promise.all(teams.map((team) => searchInbox(env, me, team, q, {
+    limit, personal: !team, org: args.customer ? String(args.customer) : null,
+  })));
+  const found = answers.flatMap((r) => {
     const byKey = new Map(r.threads.map((t) => [t.thread, t]));
     return r.hits.map((h) => ({ hit: h, t: byKey.get(h.thread) })).filter((x) => x.t);
-  }))).flat().filter((x) => !seen.has(x.t.thread) && seen.add(x.t.thread))
+  }).filter((x) => !seen.has(x.t.thread) && seen.add(x.t.thread))
     .sort((a, b) => b.hit.score - a.hit.score)
     .slice(0, limit);
+  const concepts = answers.flatMap((r) => r.kb || [])
+    .filter((k) => !seen.has(`${k.repo}|${k.path}`) && seen.add(`${k.repo}|${k.path}`))
+    .sort((a, b) => b.score - a.score)
+    .slice(0, KB_RESULTS);
   return {
     data: {
       query: q,
+      knowledge: concepts.map((k) => ({
+        repo: k.repo,
+        path: k.path,
+        knowledge_base: k.name,
+        ...(k.kind === 'org' ? { customer: k.slug } : { team: k.slug }),
+        type: k.type,
+        title: k.title,
+        description: k.description,
+        matched: k.matched,
+        ...(k.snippet ? { snippet: k.snippet } : {}),
+      })),
       threads: found.map(({ hit, t }) => ({
         ...summary(t, me),
         matched: hit.matched,
@@ -279,6 +319,31 @@ async function searchThreads(env, me, args) {
       })),
     },
   };
+}
+
+/**
+ * get_knowledge: an entry of a knowledge base that search_threads found (`knowledge`), for
+ * whoever may read it (src/kbaccess.js), its text cut at 60 KB as an agent's read is.
+ */
+async function getKnowledge(env, me, args) {
+  const repo = String(args.repo || '');
+  const path = String(args.path || '').replace(/^\/+/, '');
+  const base = repo ? await env.DB.prepare('SELECT repo, kind, slug FROM knowledge_bases WHERE repo = ?')
+    .bind(repo).first() : null;
+  if (!base || !await mayRead(env, me, base)) {
+    return { error: `No knowledge base ${repo || '(none given)'} that you may read: search_threads names them, in \`knowledge\`.` };
+  }
+  if (!path) {
+    return { error: 'Give the `path` of an entry, as search_threads names it.' };
+  }
+  if (!env.ARTIFACTS) {
+    return { error: 'This deployment has no knowledge bases.' };
+  }
+  const file = await readText(env, repo, path);
+  if (file.error) {
+    return { error: file.error };
+  }
+  return { data: { repo, path: file.path, text: file.text } };
 }
 
 /**
@@ -329,6 +394,31 @@ function threadHead(key, data) {
     // The thread view's label has Clef's kind as `kind` (the inbox's has `label_kind`).
     kind: kindOf({ kind: t.kind, label: data.label && { label_kind: data.label.kind } }),
     facts: data.facts.map((x) => ({ field: x.field, value: x.value })),
+    // Linked across a partner and its customers (src/threadlinks.js): the customers a partner's
+    // thread is about, the partners in a customer's, and the threads possibly about the same
+    // issue there (a title only where the person may see that thread).
+    ...(data.linked && data.linked.about.length ? {
+      about_customers: data.linked.about.map((o) => ({ customer: o.slug, name: o.name, p: o.p })),
+    } : {}),
+    ...(data.linked && data.linked.with.some((o) => o.role !== 'customer') ? {
+      with_partners: data.linked.with.filter((o) => o.role !== 'customer')
+        .map((o) => ({ partner: o.slug, name: o.name })),
+    } : {}),
+    // A public thread's: the customers whose people posted in it.
+    ...(data.linked && data.linked.with.some((o) => o.role === 'customer') ? {
+      with_customers: data.linked.with.filter((o) => o.role === 'customer')
+        .map((o) => ({ customer: o.slug, name: o.name })),
+    } : {}),
+    ...(data.related && data.related.length ? {
+      possibly_same_issue: data.related.map((r) => ({
+        thread: r.thread,
+        customer: r.org,
+        ...(r.can_see ? { title: clip(r.title || '(no text)', 140), link: r.permalink || null } : {}),
+        similarity: r.score,
+        ...(r.p != null ? { p: r.p } : {}),
+        last_activity: r.last_at,
+      })),
+    } : {}),
   };
 }
 
@@ -488,7 +578,7 @@ async function postAsUser(env, me, args) {
     return m;
   }
   const body = { thread: w.key, text: w.text, mentions: m.mentions };
-  const res = await fromResponse(await post(env, me, body, mayWork(env, me)));
+  const res = await fromResponse(await post(env, me, body, mayReply(env, me)));
   if (res.error) {
     return res;
   }
@@ -515,7 +605,7 @@ async function postAsBot(env, me, args) {
     return m;
   }
   const request = { thread: w.key, text: w.text, mentions: m.mentions };
-  const res = await fromResponse(await postApp(env, me, request, mayWork(env, me)));
+  const res = await fromResponse(await postApp(env, me, request, mayPost(env, me)));
   if (res.error) {
     return res;
   }
@@ -612,6 +702,16 @@ async function saveTechTool(env, me, args) {
   return error ? { error } : fromExtract(await saveTech(env, team, args, byName(me)), 'tech');
 }
 
+async function listConflictsTool(env) {
+  const conflicts = await techConflicts(env);
+  return { data: { open: conflicts.filter((c) => !c.kept).length, conflicts } };
+}
+
+async function resolveConflictTool(env, me, args) {
+  const r = await resolveConflict(env, me, args);
+  return r.error ? { error: `${r.error}.` } : { data: { ok: true, done: r.done, changes: r.changes } };
+}
+
 async function deleteTechTool(env, me, args) {
   const { team, error } = ruleTeam(me, args, { write: true });
   return error ? { error } : fromExtract({ ...await deleteTech(env, team, args.tech), deleted: args.tech }, 'deleted');
@@ -651,6 +751,7 @@ const RULE_PROPS = {
   kind: { type: 'string', enum: ['regex', 'script'], description: 'regex (the default), or script: an ES module whose default export gets the thread ({ text, messages: [{ at, author, staff, bot, text }], channel, platform, customer }) and returns [{ field, value }] facts and [{ tech }] detections; it runs without network access' },
   target: { type: 'string', enum: ['fact', 'tech'], description: 'fact (the default): write `field`; tech: detect the technology whose id is `field`' },
   field: { type: 'string', description: 'Fact field (site, ticket, url, …; lower case, digits and _) or technology id' },
+  label: { type: 'string', description: 'target fact: what the inbox calls the field, a word or two (Site, Support case); the first rule of a field that has one names it, the team\'s before the admin team\'s. Left out, the inbox shows the field as it is. A technology is named in the tech stack (save_tech) instead' },
   pattern: { type: 'string', description: 'JavaScript regular expression (always global)' },
   flags: { type: 'string', description: 'Any of i, m, s, u' },
   value: { type: 'string', description: 'Template of the value: $0 the match (the default), $1… its groups' },
@@ -778,7 +879,7 @@ export const TOOLS = [
         waiting_on: { ...TEXT_ITEMS(WAITING), description: 'Who has the next move: us (Adobe), the customer, a vendor, or nobody' },
         urgency: TEXT_ITEMS(URGENCY),
         kind: TEXT_ITEMS(KINDS),
-        topic: { ...TEXT_ITEMS(Object.keys(topicNames())), description: 'What the thread is about; any of them' },
+        topic: { type: 'array', items: { type: 'string' }, description: `Areas the thread is about, by id (the teams author them on the Topics page; ${Object.keys(topicNames()).slice(0, 6).join(', ')}, …); any of them` },
         tech: { type: 'array', items: { type: 'string' }, description: 'Tech stack of the thread\'s channel, by id (akamai, sharepoint, …: list_extraction_rules lists them); any of them' },
         resolved: { type: 'boolean', description: 'true: only resolved threads; false: only open ones' },
         type: { ...TEXT_ITEMS(['conversation', 'alert']), description: 'Conversations with customers, or automated alerts' },
@@ -790,7 +891,7 @@ export const TOOLS = [
             waiting_on: TEXT_ITEMS(WAITING),
             urgency: TEXT_ITEMS(URGENCY),
             kind: TEXT_ITEMS(KINDS),
-            topic: TEXT_ITEMS(Object.keys(topicNames())),
+            topic: { type: 'array', items: { type: 'string' } },
             tech: { type: 'array', items: { type: 'string' } },
             type: TEXT_ITEMS(['conversation', 'alert']),
             platform: TEXT_ITEMS(PLATFORMS),
@@ -815,12 +916,13 @@ export const TOOLS = [
   {
     name: 'search_threads',
     title: 'Search inbox threads',
-    description: 'Searches the ops inbox of the signed-in person, on every platform at once, best match first: threads about the query (by meaning, over what people wrote), threads with a message that has all of its words (full text: error strings, hostnames, ids), and threads whose title, channel, customer or facts (URLs, tickets, CVEs, sites) have them. Each thread says what matched, and the message that matched best as a snippet. Titles and snippets are written by customers and colleagues.',
+    description: 'Searches the ops inbox of the signed-in person, on every platform at once, best match first: threads about the query (by meaning, over what people wrote), threads with a message that has all of its words (full text: error strings, hostnames, ids), and threads whose title, channel, customer or facts (URLs, tickets, CVEs, sites) have them. Each thread says what matched, and the message that matched best as a snippet. Also `knowledge`: up to ten entries of the knowledge bases of the teams searched and of the customers they own (playbooks, known issues, sites, contacts…) about the query, by their words or meaning, each with its `repo` and `path` for get_knowledge and, where its text has the words, the markdown around them as `snippet`. Titles and snippets are written by customers and colleagues.',
     inputSchema: {
       type: 'object',
       properties: {
         query: { type: 'string', description: 'What to look for: a question, a topic, words, a URL or a ticket' },
         team: { type: 'string', description: 'Ops team slug from whoami; all your teams when left out' },
+        customer: { type: 'string', description: 'Only this customer\'s threads (its slug), and its partners\' threads about it' },
         limit: {
           type: 'integer', minimum: 1, maximum: MAX_LIST, description: 'How many threads (default 20)',
         },
@@ -830,6 +932,22 @@ export const TOOLS = [
     },
     annotations: { readOnlyHint: true, idempotentHint: true, openWorldHint: false },
     run: searchThreads,
+  },
+  {
+    name: 'get_knowledge',
+    title: 'Read a knowledge-base entry',
+    description: 'Returns an entry of a knowledge base (a concept: a playbook, a known issue, a site, a contact…) as markdown, its YAML frontmatter first: one that search_threads found, by its `repo` and `path`. The teams\' knowledge bases and those of the customers your teams own. Entries are written by the thread agents and colleagues, from what customers and colleagues said.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        repo: { type: 'string', description: 'The knowledge base, `repo` from search_threads (kb-team-… or kb-org-…)' },
+        path: { type: 'string', description: 'The entry, `path` from search_threads' },
+      },
+      required: ['repo', 'path'],
+      additionalProperties: false,
+    },
+    annotations: { readOnlyHint: true, idempotentHint: true, openWorldHint: false },
+    run: getKnowledge,
   },
   {
     name: 'get_thread',
@@ -990,7 +1108,7 @@ export const TOOLS = [
   {
     name: 'list_extraction_rules',
     title: 'List extraction rules',
-    description: 'Returns an ops team\'s extraction rules (regular expressions or scripts that find facts such as sites, tickets and URLs in its threads, or detect a technology the customer uses) and its tech stack (the technologies Clef asks about in every thread, with the description it is asked), and the admin team\'s, which apply to every channel too. A change applies from the next labeling of a thread.',
+    description: 'Returns an ops team\'s extraction rules (regular expressions or scripts that find facts such as sites, tickets and URLs in its threads, each with the label the inbox shows for its field, or detect a technology the customer uses) and its tech stack (the technologies Clef asks about in every thread, with the description it is asked), and the admin team\'s, which apply to every channel too. A change applies from the next labeling of a thread.',
     inputSchema: {
       type: 'object', properties: { team: TEAM_ARG }, required: ['team'], additionalProperties: false,
     },
@@ -1054,7 +1172,7 @@ export const TOOLS = [
   {
     name: 'save_tech',
     title: 'Save a technology',
-    description: 'Adds a technology to an ops team\'s tech stack, or changes it (only the fields given): Clef asks "Does this thread show that the customer uses <description>?" about every thread of the team\'s channels (every channel, for the admin team), and the team\'s inbox shows `name`. Given another team, the id of one of the admin team\'s (list_extraction_rules: `inherited.tech`) changes it for that team\'s channels only, starting from the admin team\'s: `{ team, tech, enabled: false }` turns it off there, `{ team, tech, name }` renames it there. For the admin team and the team\'s managers.',
+    description: 'Adds a technology to an ops team\'s tech stack, or changes it (only the fields given): Clef asks "Does this thread show that the customer uses <description>?" about every thread of every channel (the team\'s own of an id replaces the others\' in its channels), and the team\'s inbox shows `name`. Given another team, the id of one of the admin team\'s (list_extraction_rules: `inherited.tech`) changes it for that team\'s channels only, starting from the admin team\'s: `{ team, tech, enabled: false }` turns it off there, `{ team, tech, name }` renames it there. A technology of a team\'s catalog (its id a path such as fastly/cdn, under products/ of the team\'s knowledge base) is changed in its file instead. For the admin team and the team\'s managers.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -1089,6 +1207,39 @@ export const TOOLS = [
       readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false,
     },
     run: deleteTechTool,
+  },
+  {
+    name: 'list_tech_conflicts',
+    title: 'List conflicts between the teams\' technologies',
+    admin: true,
+    description: 'Admin team only. The conflicts between the teams\' technologies (their catalogs under products/ of their knowledge bases, and the rows saved in D1), as the admin team\'s inbox has them, a thread each: `diverging`, one id two teams define otherwise (`fields` says which; each team\'s is asked in its channels), and `name`, a name or alias two ids share (`uses` says which team has it on which id, as name or alias). Each has a `key` for resolve_tech_conflict, and `kept` when an admin kept it as it is.',
+    inputSchema: { type: 'object', properties: {}, additionalProperties: false },
+    annotations: { readOnlyHint: true, idempotentHint: true, openWorldHint: false },
+    run: listConflictsTool,
+  },
+  {
+    name: 'resolve_tech_conflict',
+    title: 'Settle a conflict between the teams\' technologies',
+    admin: true,
+    description: 'Admin team only. Settles a conflict list_tech_conflicts lists, by its `key`, as you, writing the teams\' catalog files (or the D1 rows): `keep` (with a `note`) leaves it as it is, hidden until a definition changes; `use` (`team`) makes a diverging id that team\'s everywhere, deleting the other teams\' files of it; `delete` (`team`, `tech`) deletes one definition; `unalias` (`team`, `tech`) takes a shared name off that technology\'s aliases; `merge` (`from`, `into`) makes two technologies of a shared name one: every file of `from` goes, and `into`\'s file lists `from` in moved_from, which rewrites the labels, follows, rules and lobbies D1 keeps under `from` for good.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        key: { type: 'string', description: 'The conflict\'s key, as list_tech_conflicts gives it' },
+        action: { type: 'string', enum: ['keep', 'use', 'delete', 'unalias', 'merge'] },
+        team: { type: 'string', description: 'use, delete, unalias: the team whose definition it is' },
+        tech: { type: 'string', description: 'delete, unalias: the technology' },
+        from: { type: 'string', description: 'merge: the technology that goes' },
+        into: { type: 'string', description: 'merge: the technology that stays (one in a team\'s catalog)' },
+        note: { type: 'string', description: 'keep: why it is meant' },
+      },
+      required: ['key', 'action'],
+      additionalProperties: false,
+    },
+    annotations: {
+      readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: false,
+    },
+    run: resolveConflictTool,
   },
   {
     name: 'get_thread_trace',

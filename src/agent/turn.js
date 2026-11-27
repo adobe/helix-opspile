@@ -25,13 +25,24 @@ const MAX_TEXT = 1200;
 const DOING = {
   read_thread: 'Reading the thread',
   read_any_thread: 'Reading another thread',
+  find_channels: 'Looking for the customer\'s channel',
+  list_any_channel_threads: 'Looking through another channel',
   get_draft: 'Reading the draft',
   read_file: 'Reading an attached file',
+  raw_message: 'Reading a message as it was sent',
   update_draft: 'Updating the draft',
   discard_draft: 'Discarding the draft',
   kb_write: 'Filing what it learned in the knowledge bases',
   request_bash: 'Asking the team to run a command',
+  request_codemode: 'Asking the team to run a script',
+  wakeup_after: 'Setting itself a reminder',
+  wakeup_after_idle: 'Setting itself a reminder',
+  watch_related: 'Watching what the thread waits on',
+  unwatch_related: 'No longer watching something',
 };
+
+/** What a command of the computer is doing, when it says more than "Working". */
+const commandDoing = (command) => (/\bplaywright-cli\b/.test(command) ? 'Checking a web page' : null);
 
 /** What a tool call is doing, in a few words. */
 function doing({ name, arguments: args }) {
@@ -41,13 +52,13 @@ function doing({ name, arguments: args }) {
   if (/^git_/.test(name)) {
     return 'Looking things up in the knowledge bases and repositories';
   }
+  if (name === 'bash') {
+    return commandDoing(String((args && args.command) || '')) || 'Working';
+  }
   if (name !== 'codemode') {
     return 'Working';
   }
   const code = String((args && args.code) || '');
-  if (/mcp__browser/.test(code)) {
-    return 'Checking a web page';
-  }
   return /mcp__github/.test(code) ? 'Looking at GitHub' : 'Running a script';
 }
 

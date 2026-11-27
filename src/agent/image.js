@@ -34,9 +34,15 @@
  * every agent of this isolate: the trees of the last few images, and pieces and whole blobs up
  * to CACHE_BYTES, the least recently used going first. None of a file over CACHE_BLOB_MAX: of
  * one with pieces, the mount holds the last HOLD_PIECES it read; of one without, the file
- * handle that read it holds it whole. A kernel keeps its own copy of a program it runs, so
- * while it runs what is kept here is a second one; it is worth it when the agent's kernel
- * boots again in the same isolate, as it mostly does, and then finds every program here.
+ * handle that read it holds it whole.
+ *
+ * The kernel keeps no copy of a program (since 1.189.1): it compiles one, and a Dynamic Worker
+ * that starts cold reads it again, whole, through this mount. So what is kept here is the only
+ * copy of a program in the agent's object, which serves those reads, and the kernel's next
+ * boot in this isolate (an agent mostly comes back to the same one): a command in some 100 ms
+ * instead of one to three seconds. Reading a program costs, while the Worker Loader takes it,
+ * its bytes once more (gh's 50 MB), beside what is kept here and the agent itself (its model
+ * loop runs in the same object), all in the object's 128 MB.
  *
  * No Workers runtime is needed here, so this is tested in Node, with a bucket in memory.
  */
@@ -48,10 +54,16 @@ export const isImageName = (name) => /^[a-z][a-z0-9-]{0,31}$/.test(String(name |
 export const IMAGE_ROOT = '/opt/image';
 export const IMAGE_COMMANDS = `${IMAGE_ROOT}/node_modules`;
 
-const CACHE_BYTES = 32 * 1024 * 1024;
-// Of a file larger than this none is kept for the isolate: the kernel keeps its own copy of a
-// program it runs (gh's 50 MB), and two would crowd the object's 128 MB.
-const CACHE_BLOB_MAX = CACHE_BYTES / 2;
+// Measured on stage (`npm run computer:check -- --measure`, GitHub image): at 64 MiB, kept
+// with gh in it, the object exceeded its memory when its kernel booted again and read gh. At
+// 48 MiB it does not, and leaves room for the agent's own loop.
+const CACHE_BYTES = 48 * 1024 * 1024;
+// Of a file larger than this none is kept for the isolate: gh (50 MB) and yq (28 MB) would push
+// out every other program, which a kernel that boots again then reads from the bucket, and gh,
+// kept, beside its copy for the Worker Loader, is what made 64 MiB too much.
+const CACHE_BLOB_MAX = 24 * 1024 * 1024;
+/** What the isolate keeps at most (CACHE_BYTES), and of one file (CACHE_BLOB_MAX). */
+const budget = { bytes: CACHE_BYTES, fileMax: CACHE_BLOB_MAX };
 const CACHE_TREES = 8;
 // How many pieces of a file over CACHE_BLOB_MAX a mount holds: the last two it read.
 const HOLD_PIECES = 2;
@@ -99,6 +111,8 @@ const kept = new Map();
 let cached = 0;
 /** What is being read from the bucket now, by sha256: two reads of it wait for one GET. */
 const reading = new Map();
+/** What this isolate asked of the bucket: GETs, the bytes they brought, and reads it had. */
+const reads = { gets: 0, fetched: 0, hits: 0 };
 
 /** Forgets what this isolate kept of the bucket (for tests). */
 export function forgetImages() {
@@ -106,7 +120,38 @@ export function forgetImages() {
   kept.clear();
   reading.clear();
   cached = 0;
+  Object.assign(reads, { gets: 0, fetched: 0, hits: 0 });
+  Object.assign(budget, { bytes: CACHE_BYTES, fileMax: CACHE_BLOB_MAX });
 }
+
+/** The least recently used go until what is kept fits the budget. */
+function evict() {
+  while (cached > budget.bytes && kept.size > 0) {
+    const [oldest, old] = kept.entries().next().value;
+    kept.delete(oldest);
+    cached -= old.length;
+  }
+}
+
+/**
+ * Sizes what this isolate keeps of the bucket's files: `bytes` in all, `fileMax` of one file
+ * (by default CACHE_BYTES and CACHE_BLOB_MAX). For the dev computer's measurements
+ * (scripts/dev-computer/worker.mjs): the Worker keeps the defaults.
+ */
+export function sizeImageCache({ bytes = CACHE_BYTES, fileMax = CACHE_BLOB_MAX } = {}) {
+  Object.assign(budget, { bytes, fileMax: Math.min(fileMax, bytes) });
+  evict();
+  return { ...budget };
+}
+
+/**
+ * What this isolate asked of the bucket for files, and keeps of them: `{ gets, fetched, hits,
+ * entries, bytes, budget, fileMax }`, `fetched` the bytes the GETs brought, `hits` the reads
+ * of a piece or a blob it had.
+ */
+export const imageReads = () => ({
+  ...reads, entries: kept.size, bytes: cached, budget: budget.bytes, fileMax: budget.fileMax,
+});
 
 /** What this isolate keeps of the bucket's files now: `{ entries, bytes }` (for tests). */
 export const keptOfImages = () => ({ entries: kept.size, bytes: cached });
@@ -117,6 +162,7 @@ function recall(hash) {
   if (bytes) {
     kept.delete(hash);
     kept.set(hash, bytes);
+    reads.hits += 1;
   }
   return bytes;
 }
@@ -128,11 +174,7 @@ function keep(hash, bytes) {
   }
   kept.set(hash, bytes);
   cached += bytes.length;
-  while (cached > CACHE_BYTES && kept.size > 1) {
-    const [oldest, old] = kept.entries().next().value;
-    kept.delete(oldest);
-    cached -= old.length;
-  }
+  evict();
 }
 
 /** `read()` once at a time for `hash`: a second caller meanwhile waits for the first. */
@@ -232,10 +274,12 @@ async function blob(bucket, hash, path) {
       throw fsError('EIO', `the images bucket has no blobs/${hash} (${path})`);
     }
     const bytes = new Uint8Array(await object.arrayBuffer());
+    reads.gets += 1;
+    reads.fetched += bytes.length;
     if (await sha256(bytes) !== hash) {
       throw fsError('EIO', `blobs/${hash} is not the file it names (${path})`);
     }
-    if (bytes.length <= CACHE_BLOB_MAX) {
+    if (bytes.length <= budget.fileMax) {
       keep(hash, bytes);
     }
     return bytes;
@@ -258,6 +302,8 @@ async function readPieces(bucket, file, first, last, path) {
     throw fsError('EIO', `the images bucket has no ${key} (${path})`);
   }
   const bytes = new Uint8Array(await object.arrayBuffer());
+  reads.gets += 1;
+  reads.fetched += bytes.length;
   if (bytes.length !== length) {
     throw fsError('EIO', `${key} is not the file it names (${path})`);
   }
@@ -294,12 +340,13 @@ export function imageDriver(bucket, tree) {
     }
   };
   const have = (file, hash) => {
-    if (file.size <= CACHE_BLOB_MAX) {
+    if (file.size <= budget.fileMax) {
       return recall(hash);
     }
     const bytes = held.get(hash);
     if (bytes) {
       hold(hash, bytes);
+      reads.hits += 1;
     }
     return bytes;
   };
@@ -339,7 +386,7 @@ export function imageDriver(bucket, tree) {
         if (!reading.has(hash)) {
           const one = got.then((parts) => {
             const bytes = parts[i - from];
-            if (file.size <= CACHE_BLOB_MAX) {
+            if (file.size <= budget.fileMax) {
               keep(hash, bytes);
             } else {
               hold(hash, bytes);

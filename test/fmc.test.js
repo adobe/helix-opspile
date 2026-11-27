@@ -95,7 +95,7 @@ describe('FMC block diagrams (src/fmc.js)', () => {
     assert.ok(r, 'an R');
     assert.ok(Number(r[6]) > Number(r[2]), 'pointing down');
     assert.doesNotMatch(svg, /style=|fill="#|stroke="#/);
-    const css = SCRIPTS['spectrum-inbox.css'];
+    const css = SCRIPTS['spectrum.css'];
     assert.match(css, /\.fmc \.fmc-node \.fmc-shape \{[^}]*stroke-width: var\(--spectrum-border-width-200\);/);
     assert.match(css, /\.fmc \.fmc-edge \{[^}]*stroke-width: var\(--spectrum-border-width-100\);/);
   });

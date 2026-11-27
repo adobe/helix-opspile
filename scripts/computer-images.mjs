@@ -74,6 +74,7 @@ export const LAYERS = {
   ],
   text: [
     { name: '@ai-ecoverse/wasm-grep' },
+    { name: '@ai-ecoverse/wasi-ripgrep' },
     { name: '@ai-ecoverse/wasm-sed' },
     { name: '@ai-ecoverse/wasm-gawk' },
     { name: '@ai-ecoverse/wasm-jq' },
@@ -120,14 +121,25 @@ export const LAYERS = {
   github: [
     { name: '@ai-ecoverse/wasi-gh' },
   ],
+  // Graphviz's dot, its layouts and its core renderers (svg, json, xdot): for the diagrams of the
+  // knowledge bases (src/dot.js), in the agents' computers and in the renderer Worker
+  // (src/graphviz/worker.js), whose image it is alone.
+  diagrams: [
+    { name: '@ai-ecoverse/wasm-graphviz' },
+  ],
+  // playwright-cli (@ai-ecoverse/slicc-cdp): it drives a browser over CDP at SLICC_CDP_URL,
+  // which the agent's object serves from Cloudflare Browser Run (src/agent/browser.js) for an
+  // image that has it. Not its curlwright.
+  browser: [
+    { name: '@ai-ecoverse/slicc-cdp', commands: ['playwright-cli'] },
+  ],
   data: [
-    { name: '@ai-ecoverse/wasi-ripgrep' },
     { name: '@ai-ecoverse/wasm-sqlite3' },
     { name: '@ai-ecoverse/wasm-binutils', commands: ['strings'] },
   ],
 };
 
-const BASE_TOOLS = 'coreutils (cat, sort, uniq, head, tail, cut, tr, wc, base64, sha256sum, date and the rest), grep, sed, awk (gawk), jq, yq, find, xargs, diff, cmp, patch, tar, gzip, zip, unzip, xz, bzip2, tree, column, rev, hexdump, xxd, file, html2markdown, curl, dig, host, nslookup, openssl, git, qjs';
+const BASE_TOOLS = 'coreutils (cat, sort, uniq, head, tail, cut, tr, wc, base64, sha256sum, date and the rest), grep, rg, sed, awk (gawk), jq, yq, find, xargs, diff, cmp, patch, tar, gzip, zip, unzip, xz, bzip2, tree, column, rev, hexdump, xxd, file, html2markdown, curl, dig, host, nslookup, openssl, git, qjs, dot (Graphviz)';
 
 /**
  * The images: `name` is what a team's choice stores, `title` and `description` are for the
@@ -139,24 +151,24 @@ export const IMAGES = [
   {
     name: 'base',
     title: 'Base',
-    description: 'GNU bash, coreutils, grep, sed, gawk, jq, yq, find, diff, tar, gzip, zip,'
-      + ' html2markdown, curl, dig, openssl, git and qjs (JavaScript): for reading logs, text,'
-      + ' JSON and YAML, asking APIs and DNS, reading certificates, cloning repositories, and'
-      + ' small scripts.',
+    description: 'GNU bash, coreutils, grep, ripgrep, sed, gawk, jq, yq, find, diff, tar, gzip,'
+      + ' zip, html2markdown, curl, dig, openssl, git, qjs (JavaScript) and dot (Graphviz): for'
+      + ' reading logs, text, JSON and YAML, searching many files, asking APIs and DNS, reading'
+      + ' certificates, cloning repositories, small scripts, and laying out diagrams.',
     tools: BASE_TOOLS,
-    layers: ['shell', 'text', 'archive', 'net', 'tls', 'js', 'git', 'formats'],
+    layers: ['shell', 'text', 'archive', 'net', 'tls', 'js', 'git', 'formats', 'diagrams'],
   },
   {
     name: 'data',
     from: 'base',
     title: 'Data',
-    description: 'Base, with ripgrep, sqlite3 and strings: for searching many files and'
-      + ' querying CSV or JSON as tables.',
-    tools: `${BASE_TOOLS}, rg, sqlite3, strings`,
+    description: 'Base, with sqlite3 and strings: for querying CSV or JSON as tables, and'
+      + ' reading the text in binary files.',
+    tools: `${BASE_TOOLS}, sqlite3, strings`,
     layers: ['data'],
   },
-  // Not in Base: gh.wasm is 50 MB, which the agent's object keeps a copy of while its kernel
-  // runs, and each gh has a Dynamic Worker to itself.
+  // Not in Base: gh.wasm is 50 MB, which the agent's object reads whole each time a Dynamic
+  // Worker of gh starts cold (src/agent/image.js), and each gh has a Dynamic Worker to itself.
   {
     name: 'github',
     from: 'base',
@@ -165,6 +177,46 @@ export const IMAGES = [
       + ' workflow runs. Give the team a GH_TOKEN secret for github.com.',
     tools: `${BASE_TOOLS}, gh`,
     layers: ['github'],
+  },
+  // The images with a browser: each of the three above with the browser layer (playwright-cli,
+  // driving Chromium on Cloudflare Browser Run, src/agent/browser.js). Not in them: a session
+  // costs by the hour, and playwright-cli.wasm is 6.5 MB.
+  {
+    name: 'browser',
+    from: 'base',
+    title: 'Base + browser',
+    description: 'Base, with a browser (Chromium on Cloudflare Browser Run) and playwright-cli'
+      + ' to drive it: open a page, wait for its scripts, read its accessibility tree, run'
+      + ' JavaScript or add CSS in it, click and type, and take screenshots at any viewport.',
+    tools: `${BASE_TOOLS}, playwright-cli`,
+    layers: ['browser'],
+  },
+  {
+    name: 'data-browser',
+    from: 'data',
+    title: 'Data + browser',
+    description: 'Data (Base with sqlite3 and strings), with the browser and playwright-cli.',
+    tools: `${BASE_TOOLS}, sqlite3, strings, playwright-cli`,
+    layers: ['browser'],
+  },
+  {
+    name: 'github-browser',
+    from: 'github',
+    title: 'GitHub + browser',
+    description: 'GitHub (Base with gh), with the browser and playwright-cli. Give the team a'
+      + ' GH_TOKEN secret for github.com.',
+    tools: `${BASE_TOOLS}, gh, playwright-cli`,
+    layers: ['browser'],
+  },
+  // The renderer Worker's (src/graphviz/worker.js): dot alone, no shell. Not offered to teams
+  // (`internal`: not in the index the knowledge-base editor lists).
+  {
+    name: 'graphviz',
+    title: 'Graphviz',
+    description: 'dot alone, for the renderer Worker.',
+    tools: 'dot',
+    layers: ['diagrams'],
+    internal: true,
   },
 ];
 
@@ -231,7 +283,7 @@ export function imagePackage(manifest, { commands, files } = {}, present = []) {
 }
 
 /** The programs `tools` names: its words, without what stands in brackets as a gloss. */
-export const toolNames = (tools) => tools.replace(/\((gawk)\)/g, '')
+export const toolNames = (tools) => tools.replace(/\((gawk|Graphviz)\)/g, '')
   .replace(/ and the rest/g, '')
   .split(/[\s,()]+/)
   .filter((w) => w && w !== 'and');
@@ -339,6 +391,7 @@ export async function build({
       title: image.title,
       description: image.description,
       tools: image.tools,
+      ...(image.internal ? { internal: true } : {}),
       commands,
       digest: sha256(stack.map((l) => l.digest).join('\n')),
       bytes: [...merged.values()].reduce((n, f) => n + f.size, 0),
@@ -356,7 +409,7 @@ export async function build({
 /** The index of `images` (their manifests): what the knowledge-base editor lists. */
 export const indexOf = (images) => ({
   v: 2,
-  images: images.map(({
+  images: images.filter((i) => !i.internal).map(({
     name, title, description, digest, bytes, layers,
   }) => ({
     name, title, description, digest, bytes, layers: layers.map((l) => l.name),

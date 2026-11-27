@@ -61,5 +61,5 @@ const built = await build();
 await ready();
 await syncImages(origin, built, { token: process.env.COMPUTER_TOKEN, log: () => {} });
 console.log(`computer:dev: ${objectsOf(built).length} image objects are in the local bucket; try\n`
-  + `  curl ${origin} -d '{"command":"uname -a; ls /usr/bin | wc -l","runtime":"slicc-kernel"}'\n`
+  + `  curl ${origin} -d '{"command":"uname -a; ls /usr/bin | wc -l"}'\n`
   + `  npm run computer:check -- ${origin}`);

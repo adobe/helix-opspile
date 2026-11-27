@@ -15,7 +15,7 @@
  * micromark, CommonMark with GitHub's strike-through, tables, task lists and bare links,
  * plus what chat needs on top of it:
  *
- * - a single line break is a break, as in Slack and Teams
+ * - a single line break is a break, as in Slack and Teams (`soft`: a space, for a file)
  * - no raw HTML (shown as text), no indented code (chat indents prose), no footnotes
  * - links open in a new tab; Slack and Teams images go through the inbox's media proxy
  * - `@Full Name` mentions and `:emoji:` codes (characters or images), outside code; `emojiLookup`
@@ -24,6 +24,8 @@
  * - `suggestMentions` (src/mention-match.js): the composer's `@` suggestions from a thread's
  *   pool, ranked as the Worker ranks them
  * - code blocks highlighted by what the page gives `render` (`highlight`, src/ui-highlight.js)
+ * - `pick`: the Markdown of a part of a message as the page shows it (src/mdpick.js), the part
+ *   of a draft someone selected
  *
  * The page does not load this file: scripts/ui-markdown.mjs bundles it, with micromark,
  * into src/ui-markdown.bundle.js, which src/page.js puts into the page as `Markdown`. The
@@ -41,6 +43,7 @@ import { gfmTaskListItem, gfmTaskListItemHtml } from 'micromark-extension-gfm-ta
 import { CHANNEL_REF, QUOTE_TITLE, unlazy } from './markdown.js';
 import { slackMessageKey } from './slackurl.js';
 import { channelUrlKey } from './channelurl.js';
+import { pickSource } from './mdpick.js';
 
 export { emojiLookup, matchEmoji } from './emojinames.js';
 export { CHANNEL_REF, withoutQuotes } from './markdown.js';
@@ -476,7 +479,7 @@ export function fileCard({
   const nm = href
     ? `<a class="file-name" href="${href}" target="_blank" rel="noopener" title="${title}">${name}</a>`
     : `<span class="file-name">${name}</span>`;
-  const sub = note || [label, home].filter(Boolean).join(' · ');
+  const sub = note || [label, home].filter(Boolean).join(', ');
   const viewable = preview && href && (kind === 'table' || kind === 'text');
   const act = viewable
     ? `<button type="button" class="file-act" data-preview="${kind}" aria-expanded="false" title="${kind === 'table' ? 'Show the table here' : 'Show the text here'}">Preview</button>`
@@ -550,17 +553,24 @@ const highlighted = (html, highlight) => (typeof highlight !== 'function' ? html
  * @param {(code: string, lang: string) => string|null} [options.highlight] a code block's text
  *   as HTML, highlighted (src/ui-highlight.js), for its text and the fence's language ('' when
  *   it names none); null leaves it plain text
+ * @param {(name: string) => string|undefined} [options.person] the profile card a mentioned
+ *   name shows (its key, as `data-p`); without one the mention is text
+ * @param {boolean} [options.soft] a single line break is a space, as CommonMark has it, not a
+ *   break: a knowledge base's files are wrapped at a line length (the Topics page shows them)
  */
 export function render(src, {
   mentions = null, emoji = () => undefined, proxy = (u) => u, kindOf = () => undefined,
   channel = () => undefined, fileUrl = () => undefined, slack = null, highlight = null,
-  channelUrl = null,
+  channelUrl = null, person = () => undefined, soft = false,
 } = {}) {
   const mark = (_, before, at) => {
-    const kind = MENTION_KINDS[kindOf(decode(at.slice(1)))];
-    return kind
-      ? `${before}<span class="mention ${kind.cls}" title="${kind.title}">${at}</span>`
-      : `${before}<span class="mention">${at}</span>`;
+    const name = decode(at.slice(1));
+    const kind = MENTION_KINDS[kindOf(name)];
+    const key = person(name);
+    // With a card, the card says who they are: no title.
+    const card = key ? ` data-p="${encode(key)}" role="button" tabindex="0"` : '';
+    const hint = kind && !key ? ` title="${kind.title}"` : '';
+    return `${before}<span class="mention${kind ? ` ${kind.cls}` : ''}"${hint}${card}>${at}</span>`;
   };
   // The files listed at the end: images as images (one paragraph each, so two or more are a
   // gallery), the others as cards, without the "Attachments:" line.
@@ -569,7 +579,7 @@ export function render(src, {
     : String(src || '').replaceAll(BREAK, '');
   const quoted = new Set();
   const lookup = typeof slack === 'function' ? slack : null;
-  const marked = highlighted(cards(toHtml(body, '<br />\n'), lookup, quoted), highlight);
+  const marked = highlighted(cards(toHtml(body, soft ? '\n' : '<br />\n'), lookup, quoted), highlight);
   const html = channelUrls(marked, channelUrl);
   const channelLink = (m, before, token) => {
     const c = channel(token);
@@ -619,3 +629,20 @@ export function render(src, {
   }).join('')).trim();
   return embedSlack(built, lookup, quoted) + (files ? fileCards(files, fileUrl) : '');
 }
+
+/**
+ * The Markdown of `text.slice(start, end)`, a part of message `src` as the page shows it (its
+ * text, without tags): see src/mdpick.js. Null when nothing is selected.
+ *
+ * @param {string} src
+ * @param {string} text
+ * @param {number} start
+ * @param {number} end
+ */
+export const pick = (src, text, start, end) => pickSource(
+  src,
+  text,
+  start,
+  end,
+  (md) => decode(render(md).replace(/<[^>]*>/g, '')),
+);

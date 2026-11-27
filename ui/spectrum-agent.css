@@ -1,0 +1,907 @@
+/*
+ * A team's or a customer's agent (ui/agent.js), a section of its page in Teams and Customers
+ * (ui/admin.html), in Spectrum 2's look: after ui/spectrum.css and the page's own
+ * (ui/spectrum-admin.css, which has the tabs of the sections), and only in `.agent`. Only
+ * Spectrum 2 tokens (see ui/spectrum.css).
+ *
+ * Its views as Spectrum 2 components: a knowledge base's files are ListView rows (SideNav-like
+ * highlight selection), their labels Badges (S, subtle; outline when something is missing),
+ * the tool names TagGroups, the filters SearchFields, the switches Switches, the per-channel
+ * lists quiet Disclosures, the text field a TextArea in Source Code Pro (a code block when
+ * read-only), the notes InlineAlerts (subtle fill) and the confirmation an AlertDialog.
+ * https://s2.spectrum.adobe.com
+ */
+
+/* ==== Its layout ===============================================================================
+   Where everything is and how it moves: the panes, the sizes that set them, and the states the
+   script sets. Its look, in Spectrum 2's components, follows below. Scoped with :where(), so
+   that Spectrum 2's look of every page (ui/spectrum.css) restyles it as it does a page's. */
+:where(.agent) button:disabled { opacity: .45; cursor: default; }
+:where(.agent) button.primary { background: var(--accent); border-color: var(--accent); color: var(--spectrum-white); }
+:where(.agent) button.danger { color: var(--red); }
+:where(.agent) #editor { display: flex; flex-direction: column; min-width: 0; background: var(--card); }
+
+:where(.agent) h2:first-child { margin-top: 0; }
+:where(.agent) .row { display: flex; cursor: pointer;
+  overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+:where(.agent) .row:hover { background: var(--hover); }
+
+:where(.agent) .row .sub { overflow: hidden; text-overflow: ellipsis; }
+:where(.agent) .row.dir { color: var(--mute); cursor: default; font-size: var(--spectrum-font-size-100); }
+:where(.agent) .row.dir:hover { background: none; }
+
+
+
+
+:where(.agent) .tools { display: flex; flex-wrap: wrap; }
+
+:where(.agent) .bar { display: flex; align-items: center; flex-wrap: wrap; }
+:where(.agent) .bar .path { font: var(--spectrum-font-size-100) ui-monospace, SFMono-Regular, Menlo, monospace; flex: 1; min-width: calc(var(--spectrum-spacing-1000) + var(--spectrum-spacing-800)); }
+:where(.agent) .bar input.path { padding: calc(var(--spectrum-spacing-50) + var(--spectrum-border-width-100)) calc(var(--spectrum-spacing-100) - var(--spectrum-border-width-100)); }
+:where(.agent) .bar .heading { flex: 1; font-weight: 600; }
+:where(.agent) .bar .hash { font: var(--spectrum-font-size-75) ui-monospace, SFMono-Regular, Menlo, monospace; }
+
+/* Nothing to say (a concept that was just opened): no empty strip. */
+:where(.agent) .note:empty { display: none; }
+:where(.agent) .note.warn { color: var(--yellow); }
+:where(.agent) .note.err { color: var(--red); }
+:where(.agent) .note.ok { color: var(--green); }
+/* The text field, CodeMirror (src/ui-editor.js), fills what the bar and the note leave. */
+:where(.agent) .text { flex: 1; min-height: 0; display: flex; }
+:where(.agent) .foot { display: flex; gap: var(--spectrum-spacing-100); align-items: center; padding: var(--spectrum-spacing-100) var(--spectrum-spacing-200); border-top: var(--spectrum-border-width-100) solid var(--line); }
+:where(.agent) .foot input { flex: 1; }
+:where(.agent) .log { padding: var(--spectrum-spacing-75) var(--spectrum-spacing-200) var(--spectrum-spacing-200); }
+:where(.agent) .log .c { padding: calc(var(--spectrum-spacing-50) + var(--spectrum-spacing-75)) 0; border-bottom: var(--spectrum-border-width-100) solid var(--line); }
+:where(.agent) .log .c .h { font: var(--spectrum-font-size-75) ui-monospace, SFMono-Regular, Menlo, monospace; color: var(--faint); }
+:where(.agent) .log .c .m { margin-top: var(--spectrum-spacing-50); }
+dialog.ask { max-width: min(calc(var(--spectrum-spacing-100) * 65), 92vw); background: var(--card); color: var(--ink); border: var(--spectrum-border-width-100) solid var(--line);
+  border-radius: var(--spectrum-corner-radius-700); padding: var(--spectrum-spacing-300) calc(var(--spectrum-spacing-50) + var(--spectrum-spacing-300)); }
+dialog.ask::backdrop { background: rgb(var(--spectrum-black-rgb), var(--spectrum-overlay-opacity)); }
+dialog.ask p { margin: 0 0 calc(var(--spectrum-spacing-50) + var(--spectrum-spacing-75)); }
+dialog.ask .detail { color: var(--mute); font-size: var(--spectrum-font-size-100); }
+dialog.ask .apply { display: flex; justify-content: flex-end; gap: var(--spectrum-spacing-100); margin-top: calc(var(--spectrum-spacing-50) + var(--spectrum-spacing-200)); }
+:where(.agent) .note button { margin-left: calc(var(--spectrum-spacing-50) + var(--spectrum-spacing-75)); padding: var(--spectrum-border-width-100) var(--spectrum-spacing-100); font-size: var(--spectrum-font-size-100); }
+
+/* Thread agents per channel: one switch per channel. The page's section scrolls them. */
+:where(.agent) .channels { padding: var(--spectrum-spacing-75) var(--spectrum-spacing-200) var(--spectrum-spacing-200); }
+:where(.agent) .ch { display: flex; gap: var(--spectrum-spacing-200); align-items: center; padding: calc(var(--spectrum-spacing-50) + var(--spectrum-spacing-100)) var(--spectrum-spacing-50); border-bottom: var(--spectrum-border-width-100) solid var(--line); }
+:where(.agent) .ch .who { flex: 1; min-width: 0; }
+:where(.agent) .ch .nm { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+:where(.agent) .ch .nm .src { font-weight: 400; font-size: var(--spectrum-font-size-50); padding: 0 calc(var(--spectrum-spacing-50) + var(--spectrum-spacing-75)); margin-left: calc(var(--spectrum-spacing-50) + var(--spectrum-spacing-75)); border-radius: var(--spectrum-corner-radius-600);
+  border: var(--spectrum-border-width-100) solid var(--line); color: var(--mute); }
+:where(.agent) .ch .sub { color: var(--mute); font-size: var(--spectrum-font-size-75); }
+:where(.agent) .ch .sub.by { color: var(--faint); }
+:where(.agent) .ch .state { font-size: var(--spectrum-font-size-75); color: var(--mute); min-width: var(--spectrum-spacing-400); text-align: right; }
+:where(.agent) .ch .state.on { color: var(--green); font-weight: 600; }
+:where(.agent) .switch { position: relative; flex: none; width: calc(var(--spectrum-spacing-75) + var(--spectrum-spacing-500)); height: calc(var(--spectrum-spacing-75) + var(--spectrum-spacing-300)); padding: 0; border: 0; border-radius: var(--spectrum-corner-radius-700);
+  background: var(--line); }
+:where(.agent) .switch::after { content: ''; position: absolute; top: var(--spectrum-spacing-50); left: var(--spectrum-spacing-50); width: var(--spectrum-spacing-300); height: var(--spectrum-spacing-300); border-radius: 50%;
+  background: var(--spectrum-white); box-shadow: 0 var(--spectrum-border-width-100) var(--spectrum-spacing-50) var(--spectrum-transparent-black-400); transition: left var(--spectrum-animation-duration-200); }
+:where(.agent) .switch[aria-checked="true"] { background: var(--green); }
+:where(.agent) .switch[aria-checked="true"]::after { left: calc(var(--spectrum-spacing-50) + var(--spectrum-spacing-300)); }
+:where(.agent) .switch:focus-visible { outline: var(--spectrum-border-width-200) solid var(--accent); outline-offset: var(--spectrum-spacing-50); }
+/* MCP servers of the agents: one row per server, as the channels above, its form below. */
+:where(.agent) .ch .tags { display: flex; flex-wrap: wrap; gap: var(--spectrum-spacing-75); margin-top: calc(var(--spectrum-spacing-75) + var(--spectrum-border-width-100)); }
+:where(.agent) .ch .tags .src { padding: 0 calc(var(--spectrum-spacing-50) + var(--spectrum-spacing-75)); border-radius: var(--spectrum-corner-radius-600); border: var(--spectrum-border-width-100) solid var(--line); color: var(--mute);
+  font: var(--spectrum-font-size-75) ui-monospace, SFMono-Regular, Menlo, monospace; }
+:where(.agent) .ch .tags .src.off { opacity: .45; text-decoration: line-through; }
+:where(.agent) .ch .acts { display: flex; gap: calc(var(--spectrum-spacing-50) + var(--spectrum-spacing-75)); }
+:where(.agent) .ch .acts button { padding: var(--spectrum-border-width-100) var(--spectrum-spacing-100); font-size: var(--spectrum-font-size-75); }
+:where(.agent) .ch .nm .src.ok { color: var(--green); border-color: color-mix(in srgb, var(--green) 45%, transparent); }
+:where(.agent) .ch .nm .src.err, :where(.agent) .ch .sub.err { color: var(--red); border-color: color-mix(in srgb, var(--red) 45%, transparent); }
+:where(.agent) .ch .sub.err { overflow-wrap: anywhere; }
+:where(.agent) .mono { font: var(--spectrum-font-size-75) var(--s2-code); }
+:where(.agent) .mcpform { display: grid; grid-template-columns: calc(var(--spectrum-spacing-1000) + var(--spectrum-spacing-400)) 1fr; gap: var(--spectrum-spacing-100) var(--spectrum-spacing-200); align-items: center; margin: calc(var(--spectrum-spacing-50) + var(--spectrum-spacing-200)) var(--spectrum-spacing-50) 0; }
+:where(.agent) .mcpform h3 { grid-column: 1 / -1; margin: 0; font-size: var(--spectrum-font-size-75); font-weight: 600; color: var(--mute); }
+:where(.agent) .mcpform label { color: var(--mute); font-size: var(--spectrum-font-size-100); }
+:where(.agent) .mcpform .hint { grid-column: 2; color: var(--faint); font-size: var(--spectrum-font-size-75); margin-top: calc(-1 * var(--spectrum-spacing-75)); }
+:where(.agent) .mcpform .hint.wide { margin-top: 0; }
+:where(.agent) .mcpform .hint .mono { overflow-wrap: anywhere; font-size: var(--spectrum-font-size-50); }
+:where(.agent) .mcpform [hidden] { display: none; }
+:where(.agent) .mcpform .apply { grid-column: 2; display: flex; gap: var(--spectrum-spacing-100); }
+/* Global MCP servers: opspile's own, switched per team and per channel. */
+:where(.agent) .channels h3.group { margin: calc(var(--spectrum-spacing-50) + var(--spectrum-spacing-200)) var(--spectrum-spacing-50) var(--spectrum-spacing-50); font-size: var(--spectrum-font-size-75); font-weight: 600; color: var(--mute); }
+:where(.agent) .channels h3.group:first-child { margin-top: calc(var(--spectrum-spacing-50) + var(--spectrum-spacing-75)); }
+:where(.agent) .ch.global { flex-wrap: wrap; row-gap: 0; }
+/* What you are switching: its name and switch stay on top of its long list of channels, at
+   the top of the section that scrolls it. */
+:where(.agent) .ch.global .head { flex-basis: 100%; min-width: 0; display: flex; gap: var(--spectrum-spacing-200); align-items: center;
+  position: sticky; top: 0px; z-index: 1; padding: calc(var(--spectrum-spacing-50) + var(--spectrum-spacing-75)) 0; margin-top: calc(-1 * (var(--spectrum-spacing-50) + var(--spectrum-spacing-75))); background: var(--content);
+  container-type: scroll-state; }
+:where(.agent) .ch.global .head::after { content: ""; position: absolute; inset: auto 0 0; height: var(--spectrum-border-width-100); }
+@container scroll-state(stuck: top) { :where(.agent) .ch.global .head::after { background: var(--line); } }
+:where(.agent) .ch.global .head .nm { flex: 1; min-width: 0; }
+:where(.agent) .ch.global .per { flex-basis: 100%; margin: calc(var(--spectrum-spacing-50) + var(--spectrum-spacing-200)) 0 0; }
+:where(.agent) .ch.global .per summary { cursor: pointer; color: var(--mute); font-size: var(--spectrum-font-size-75); }
+:where(.agent) .ch.global .per .row2 { display: flex; gap: calc(var(--spectrum-spacing-50) + var(--spectrum-spacing-100)); align-items: center; padding: var(--spectrum-spacing-75) 0 var(--spectrum-spacing-75) calc(var(--spectrum-spacing-50) + var(--spectrum-spacing-200)); font-size: var(--spectrum-font-size-100); }
+:where(.agent) .ch.global .per .row2 span { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+:where(.agent) .ch.global .per select { font-size: var(--spectrum-font-size-75); }
+:where(.agent) .ch.global .per .na { color: var(--faint); font-style: normal; font-size: var(--spectrum-font-size-75); }
+:where(.agent) .ch.global .per .row2[hidden], :where(.agent) .ch.global .per .none[hidden] { display: none; }
+:where(.agent) .ch.global .per .find { display: block; width: calc(100% - calc(var(--spectrum-spacing-50) + var(--spectrum-spacing-200))); max-width: calc(var(--spectrum-spacing-100) * 40); margin: calc(var(--spectrum-spacing-50) + var(--spectrum-spacing-75)) 0 var(--spectrum-spacing-50) calc(var(--spectrum-spacing-50) + var(--spectrum-spacing-200)); font-size: var(--spectrum-font-size-75); }
+:where(.agent) .ch.global .per .none { color: var(--faint); font-size: var(--spectrum-font-size-75); padding: var(--spectrum-spacing-75) 0 var(--spectrum-spacing-75) calc(var(--spectrum-spacing-50) + var(--spectrum-spacing-200)); }
+/* A customer's: the per-channel switches are all it has, so they are shown, not folded. */
+:where(.agent) .ch.global .per.flat { margin-top: var(--spectrum-spacing-300); }
+:where(.agent) .ch.global .per.flat .row2, :where(.agent) .ch.global .per.flat .none { padding-left: 0; }
+:where(.agent) .ch.global .per.flat .find { margin-left: 0; width: 100%; }
+/* The computer's shell: a picker, and what the chosen one is. */
+:where(.agent) .ch.global .shell { flex-basis: 100%; min-width: 0; margin-top: var(--spectrum-spacing-300); }
+/* The computer's secrets: below its description, a row each, and the form to add one. */
+:where(.agent) .ch.global .secrets { flex-basis: 100%; min-width: 0; margin-top: var(--spectrum-spacing-300); }
+:where(.agent) .ch.global .secrets > .sub { color: var(--mute); font-size: var(--spectrum-font-size-75); margin-bottom: var(--spectrum-spacing-75); }
+:where(.agent) .ch.global .secrets .srow { display: flex; gap: var(--spectrum-spacing-200); align-items: center; min-height: calc(var(--spectrum-component-height-75) + var(--spectrum-spacing-75)); font-size: var(--spectrum-font-size-75); }
+:where(.agent) .ch.global .secrets .srow .what { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+:where(.agent) .ch.global .secrets .none { color: var(--faint); font-size: var(--spectrum-font-size-75); padding: var(--spectrum-spacing-75) 0; }
+:where(.agent) .ch.global .secrets .mcpform { margin-left: 0; margin-right: 0; }
+/* A team's thread agents by default, above its channels. */
+:where(.agent) .ch.default { background: var(--col); border: var(--spectrum-border-width-100) solid var(--line); border-radius: var(--spectrum-corner-radius-600); padding: calc(var(--spectrum-spacing-50) + var(--spectrum-spacing-100)) var(--spectrum-spacing-200); margin: var(--spectrum-spacing-100) 0 var(--spectrum-spacing-75); }
+/* Your own: whether your inbox shows the agent's thinking, everywhere and in each channel. */
+:where(.agent) .ch.mine { border-style: dashed; }
+:where(.agent) .ch .sub.mine { display: flex; flex-wrap: wrap; align-items: center; gap: calc(var(--spectrum-spacing-50) + var(--spectrum-spacing-75)); margin-top: var(--spectrum-spacing-75); }
+:where(.agent) .ch .sub.mine select { font-size: var(--spectrum-font-size-75); padding: var(--spectrum-border-width-100) calc(var(--spectrum-spacing-50) + var(--spectrum-spacing-75)); }
+/* Opened from a thread's agent in the inbox: its channel, for a moment. */
+:where(.agent) .ch { transition: background var(--spectrum-animation-duration-1000); }
+:where(.agent) .ch.found { background: var(--sel); }
+:where(.agent) .empty.ro { color: var(--faint); font-size: var(--spectrum-font-size-75); }
+:where(.agent) .ch.global .setup { flex-basis: 100%; display: flex; flex-wrap: wrap; gap: calc(var(--spectrum-spacing-50) + var(--spectrum-spacing-75)); align-items: center; font-size: var(--spectrum-font-size-100);
+  margin-top: var(--spectrum-spacing-300); }
+:where(.agent) .ch.global .setup input { width: calc(var(--spectrum-spacing-100) * 25); }
+:where(.agent) .ch.global .setup a.btn { border: var(--spectrum-border-width-100) solid var(--line); border-radius: var(--spectrum-corner-radius-400); padding: calc(var(--spectrum-spacing-50) + var(--spectrum-border-width-100)) calc(var(--spectrum-spacing-100) + var(--spectrum-border-width-100)); background: var(--card);
+  color: inherit; text-decoration: none; white-space: nowrap; }
+:where(.agent) .ch.global .setup a.btn.primary { background: var(--accent); border-color: var(--accent); color: var(--spectrum-white); }
+/* Extraction rules: one row per rule or technology, as the servers above; the admin team's folded. */
+:where(.agent) .ch.rule.off .nm, :where(.agent) .ch.rule.replaced .nm { opacity: .55; }
+:where(.agent) .ch.rule .sub.pat { overflow-wrap: anywhere; color: var(--mute); }
+:where(.agent) .ch .switch-gap { width: calc(var(--spectrum-spacing-75) + var(--spectrum-spacing-500)); flex: none; }
+:where(.agent) details.inherited { margin: calc(var(--spectrum-spacing-50) + var(--spectrum-spacing-75)) 0 var(--spectrum-spacing-50); }
+:where(.agent) details.inherited > summary { cursor: pointer; color: var(--mute); font-size: var(--spectrum-font-size-75); padding: var(--spectrum-spacing-75) var(--spectrum-spacing-50); }
+:where(.agent) details.inherited .ch { padding-left: var(--spectrum-spacing-200); }
+:where(.agent) .mcpform textarea { width: 100%; resize: vertical; color: inherit; background: var(--card); border: var(--spectrum-border-width-100) solid var(--line);
+  border-radius: var(--spectrum-corner-radius-400); padding: calc(var(--spectrum-spacing-50) + var(--spectrum-spacing-75)) var(--spectrum-spacing-100); }
+:where(.agent) .mcpform .hint .tags { display: flex; flex-wrap: wrap; gap: var(--spectrum-spacing-75); }
+:where(.agent) .mcpform .hint .tags .src { padding: 0 calc(var(--spectrum-spacing-50) + var(--spectrum-spacing-75)); border-radius: var(--spectrum-corner-radius-600); border: var(--spectrum-border-width-100) solid var(--line); color: var(--ink);
+  font: var(--spectrum-font-size-75) ui-monospace, SFMono-Regular, Menlo, monospace; }
+:where(.agent) .mcpform .hint .err { color: var(--red); }
+:where(.agent) kbd { padding: 0 var(--spectrum-spacing-75); }
+
+/* The sections: the thread agents, the tools and MCP servers and the extraction rules are one
+   column of the page's content area, which scrolls them; the knowledge base has its files
+   beside the editor, filling what the title and the tabs leave, each scrolling on its own; the
+   page scrolls only where that is less than a short editor (a phone on its side), not on a
+   laptop's screen. */
+:where(.agent) .note { white-space: normal; }
+:where(.agent) .fill { flex: 1; }
+.spectrum #detail:has(> .agent.kb) { display: flex; flex-direction: column; }
+.spectrum #detail > .agent.kb { flex: 1; min-height: calc(var(--spectrum-spacing-1000) * 3); max-width: none; display: grid;
+  grid-template-columns: calc(var(--spectrum-spacing-100) * 34) minmax(0, 1fr); grid-template-rows: minmax(0, 1fr); }
+:where(.agent.kb) #files { overflow: auto; min-height: 0; }
+:where(.agent.kb) #editor { min-height: 0; }
+
+/*
+ * Narrower screens. Under 700px (phones, a folded iPhone Duo) one column of a knowledge base
+ * at a time, as `.agent[data-pane]` says: its files, or the editor, with a button back to them.
+ */
+:where(.agent) .up { display: none; }
+@media (max-width: 699px) {
+  .spectrum #detail > .agent.kb { grid-template-columns: 100%; }
+  :where(.agent.kb[data-pane="files"]) #editor, :where(.agent.kb[data-pane="editor"]) #files { display: none; }
+  :where(.agent) .up { display: inline-flex; align-items: center; }
+  :where(.agent) .bar .path { min-width: 0; overflow-wrap: anywhere; }
+  :where(.agent) .foot input { min-width: 0; }
+}
+/* The parts the script writes: a list's empty note, the note leading the tools and the global
+   servers, and the fields of a form that need less than the whole width. */
+:where(.agent) .empty.pad { padding: var(--spectrum-spacing-100); }
+:where(.agent) .channels > .sub.intro { color: var(--mute); font-size: var(--spectrum-font-size-75);
+  margin: 0 var(--spectrum-spacing-50) var(--spectrum-spacing-75); }
+:where(.agent) .mcpform :is(input, select).short { max-width: calc(var(--spectrum-spacing-100) * 30); }
+:where(.agent) .mcpform :is(input, select).long { max-width: calc(var(--spectrum-spacing-100) * 45); }
+
+/* ==== Its look ================================================================================= */
+
+/* Workflow icons (@react-spectrum/s2, S2_Icon_*_20_N), as masks: they take currentColor. */
+:root.spectrum {
+  --kb-icon-chevron: url("data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyMCAyMCI+PHBhdGggZD0iTTcuNzUgMTYuNDY1Yy0uMTg3IDAtLjM3NC0uMDctLjUyLS4yMS0uMjk4LS4yODctLjMwOC0uNzYyLS4wMi0xLjA2bDQuOTk5LTUuMTk3LTQuOTg2LTUuMTg0Yy0uMjg4LS4yOTctLjI3OS0uNzcyLjAyLTEuMDYuMjk2LS4yODYuNzc0LS4yNzggMS4wNi4wMjFMMTMuNzkgOS40OGMuMjguMjkuMjguNzQ5IDAgMS4wMzlsLTUuNSA1LjcxNmMtLjE0Ni4xNTQtLjM0NC4yMy0uNTQuMjMiLz48L3N2Zz4=");
+  --kb-icon-notice: url("data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyMCAyMCI+PHBhdGggZD0iTTEwIDE1LjEyM2MtLjIzMS4wMDgtLjQ1Ni0uMDczLS42MjctLjIyOC0uMzMtLjM2NS0uMzMtLjkyIDAtMS4yODUuMTctLjE1OC4zOTUtLjI0Mi42MjYtLjIzNC4yMzctLjAxLjQ2Ni4wOC42MzMuMjQ3LjE2Mi4xNjguMjUuMzk0LjI0Mi42MjcuMDEyLjIzNS0uMDcuNDY1LS4yMjguNjM5LS4xNzQuMTY0LS40MDguMjUtLjY0Ny4yMzRNMTAgMTEuNzVjLS40MTQgMC0uNzUtLjMzNi0uNzUtLjc1VjdjMC0uNDE0LjMzNi0uNzUuNzUtLjc1cy43NS4zMzYuNzUuNzV2NGMwIC40MTQtLjMzNi43NS0uNzUuNzUiLz48cGF0aCBkPSJNMTYuNzMzIDE4SDMuMjY3Yy0uOCAwLTEuNTIzLS40MS0xLjkzMy0xLjA5OHMtLjQyNy0xLjUxOC0uMDQ2LTIuMjIyTDguMDIgMi4yMzJjLjM5NC0uNzI3IDEuMTUyLTEuMTggMS45NzktMS4xOHMxLjU4NS40NTMgMS45NzkgMS4xOGw2LjczMyAxMi40NDhjLjM4MS43MDQuMzY0IDEuNTM1LS4wNDYgMi4yMjJTMTcuNTM0IDE4IDE2LjczMyAxOE0xMCAyLjU1M2MtLjEzNCAwLS40NjguMDM4LS42Ni4zOTJMMi42MDcgMTUuMzkzYy0uMTgzLjMzOC0uMDUuNjMxLjAxNi43NC4wNjUuMTExLjI1OS4zNjcuNjQ0LjM2N2gxMy40NjZjLjM4NSAwIC41NzktLjI1Ni42NDQtLjM2NnMuMi0uNDAzLjAxNi0uNzQxTDEwLjY2IDIuOTQ1Yy0uMTkyLS4zNTQtLjUyNi0uMzkyLS42Ni0uMzkyIi8+PC9zdmc+");
+  --kb-icon-negative: url("data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyMCAyMCI+PHBhdGggZD0iTTEwIDE4Ljc5NWMtLjYwMSAwLTEuMTY2LS4yMzQtMS41OTEtLjY2bC02LjU0NS02LjU0NGMtLjg3Ni0uODc3LS44NzYtMi4zMDUgMC0zLjE4Mmw2LjU0NS02LjU0NWMuODQ5LS44NSAyLjMzMy0uODUgMy4xODIgMGw2LjU0NSA2LjU0NWMuODc2Ljg3Ny44NzYgMi4zMDUgMCAzLjE4MmwtNi41NDUgNi41NDVjLS40MjUuNDI1LS45OS42NTktMS41OTEuNjU5bTAtMTYuMDljLS4yIDAtLjM4OS4wNzgtLjUzLjIyTDIuOTI1IDkuNDdjLS4yOTIuMjkyLS4yOTIuNzY4IDAgMS4wNmw2LjU0NSA2LjU0NWMuMjgzLjI4My43NzguMjgzIDEuMDYgMGw2LjU0NS02LjU0NWMuMjkyLS4yOTIuMjkyLS43NjggMC0xLjA2TDEwLjUzIDIuOTI1Yy0uMTQxLS4xNDItLjMzLS4yMi0uNTMtLjIyIi8+PHBhdGggZD0iTTEwIDE0Ljk5OGMtLjIzMS4wMDgtLjQ1Ni0uMDczLS42MjctLjIyOC0uMzMtLjM2NS0uMzMtLjkyIDAtMS4yODUuMTctLjE1OC4zOTUtLjI0Mi42MjYtLjIzNC4yMzctLjAxLjQ2Ni4wOC42MzMuMjQ3LjE2Mi4xNjguMjUuMzk0LjI0Mi42MjcuMDEyLjIzNS0uMDcuNDY1LS4yMjguNjM5LS4xNzQuMTY0LS40MDguMjUtLjY0Ny4yMzRNMTAgMTEuNjI1Yy0uNDE0IDAtLjc1LS4zMzYtLjc1LS43NXYtNWMwLS40MTQuMzM2LS43NS43NS0uNzVzLjc1LjMzNi43NS43NXY1YzAgLjQxNC0uMzM2Ljc1LS43NS43NSIvPjwvc3ZnPg==");
+  --kb-icon-positive: url("data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyMCAyMCI+PHBhdGggZD0iTTEwIDE4Ljc1Yy00LjgyNSAwLTguNzUtMy45MjUtOC43NS04Ljc1UzUuMTc1IDEuMjUgMTAgMS4yNXM4Ljc1IDMuOTI1IDguNzUgOC43NS0zLjkyNSA4Ljc1LTguNzUgOC43NW0wLTE2Yy0zLjk5OCAwLTcuMjUgMy4yNTItNy4yNSA3LjI1czMuMjUyIDcuMjUgNy4yNSA3LjI1IDcuMjUtMy4yNTIgNy4yNS03LjI1UzEzLjk5OCAyLjc1IDEwIDIuNzUiLz48cGF0aCBkPSJNOS4yMjMgMTMuNWMtLjIxMiAwLS40MTUtLjA5LS41NTgtLjI0OGwtMi41MS0yLjc5MmMtLjI3OC0uMzA5LS4yNTMtLjc4Mi4wNTUtMS4wNnMuNzgxLS4yNTIgMS4wNi4wNTZsMS44OTMgMi4xMDcgMy40ODctNC43NTZjLjI0NC0uMzM0LjcxMS0uNDEgMS4wNDgtLjE2MS4zMzQuMjQ0LjQwNi43MTMuMTYxIDEuMDQ3bC00LjAzMiA1LjVjLS4xMzMuMTgzLS4zNDIuMjk1LS41NjcuMzA2eiIvPjwvc3ZnPg==");
+}
+
+/* ---- the panes ---------------------------------------------------------------------------
+   The knowledge base's files beside the editor, both in the content area (layers and spacing,
+   no lines; see "The app frame" below). */
+.spectrum .agent #files { padding: 0 var(--spectrum-spacing-300) var(--spectrum-spacing-300) 0; }
+
+/* Group headings of the files: sentence case, small and bold (a ListView section header). */
+.spectrum .agent h2 {
+  margin: var(--spectrum-spacing-300) var(--spectrum-spacing-100) var(--spectrum-spacing-75);
+  font-size: var(--spectrum-font-size-75);
+  font-weight: var(--spectrum-bold-font-weight);
+  line-height: var(--spectrum-line-height-100);
+  letter-spacing: normal;
+  text-transform: none;
+  color: var(--spectrum-neutral-subdued-content-color-default);
+}
+.spectrum .agent h2:first-child { margin-top: 0; }
+
+/* ListView rows: the files of a knowledge base. A quiet row, the content color faintly under
+   the pointer, the one open highlighted (selectionStyle="highlight": a current item, not a
+   bulk selection); a folder's files set in under it. */
+.spectrum .agent .row {
+  min-height: var(--s2-ctl);
+  align-items: center;
+  gap: var(--spectrum-spacing-100);
+  padding-block: 0;
+  padding-inline: var(--spectrum-spacing-100);
+  border-radius: var(--s2-radius);
+  color: var(--spectrum-neutral-content-color-default);
+  transition: background-color var(--s2-ease);
+}
+.spectrum .agent .row:hover { background: var(--s2-hover); }
+.spectrum .agent .row:active { background: var(--s2-down); }
+.spectrum .agent .row.on, .spectrum .agent .row.on:hover { background: var(--sel); }
+.spectrum .agent .row.on > span:first-child { font-weight: var(--spectrum-bold-font-weight); }
+.spectrum .agent .row.nested { padding-inline-start: calc(var(--spectrum-spacing-200) + var(--spectrum-spacing-50)); }
+.spectrum .agent .row .sub, .spectrum .agent .row .n {
+  color: var(--spectrum-neutral-subdued-content-color-default);
+  font-size: var(--spectrum-font-size-75);
+}
+.spectrum .agent .row.dir, .spectrum .agent .row.dir:hover, .spectrum .agent .row.dir:active {
+  min-height: var(--spectrum-component-height-75);
+  margin-top: var(--spectrum-spacing-75);
+  color: var(--spectrum-neutral-subdued-content-color-default);
+  font-size: var(--spectrum-font-size-75);
+  font-weight: var(--spectrum-medium-font-weight);
+  background: none;
+}
+
+/* Badge, size S: what a row is (generated, agent instructions) and its counts. Subtle fills,
+   neutral or positive (on); outline where it is missing (not written yet, off, unknown). */
+.spectrum .agent .row .tag, .spectrum .agent .ch .nm .src {
+  display: inline-block;
+  flex: none;
+  box-sizing: border-box;
+  height: var(--spectrum-component-height-75);
+  padding: 0 calc(var(--spectrum-component-edge-to-text-75) - var(--spectrum-border-width-200));
+  color: var(--spectrum-gray-1000);
+  background: var(--spectrum-neutral-subtle-background-color-default);
+  border: var(--spectrum-border-width-200) solid transparent;
+  border-radius: var(--spectrum-corner-radius-medium-size-small);
+  font-family: var(--s2-font);
+  font-size: var(--spectrum-font-size-75);
+  font-weight: var(--spectrum-regular-font-weight);
+  line-height: calc(var(--spectrum-component-height-75) - 2 * var(--spectrum-border-width-200));
+  vertical-align: middle;
+}
+.spectrum .agent .row .tag.agent, .spectrum .agent .ch .nm .src.ok {
+  color: var(--spectrum-gray-1000);
+  background: var(--spectrum-positive-subtle-background-color-default);
+  border-color: transparent;
+}
+.spectrum .agent .row .tag.missing {
+  border-style: solid;
+  border-color: var(--spectrum-neutral-visual-color);
+  background: var(--spectrum-background-layer-2-color);
+}
+.spectrum .agent .ch .nm .src.err {
+  color: var(--spectrum-gray-1000);
+  background: var(--spectrum-negative-subtle-background-color-default);
+  border-color: transparent;
+}
+.spectrum .agent .ch .nm .src { margin-left: var(--spectrum-spacing-100); }
+.spectrum .agent .ch .nm .src.mono { font-family: var(--s2-code); }
+
+/* ActionButtons, size M, wherever the page has a button without a part of its own; the
+   files' tools (New file, History, selected while the history is open). */
+:where(.spectrum .agent) button:where(:not(.switch)) {
+  min-height: var(--s2-ctl);
+  padding: 0 calc(var(--spectrum-component-edge-to-text-100) - var(--spectrum-border-width-100));
+}
+.spectrum .agent #files .tools { gap: var(--spectrum-spacing-100); margin: var(--spectrum-spacing-300) var(--spectrum-spacing-100) 0; }
+.spectrum .agent #files .tools #history.primary, .spectrum .agent #files .tools #history.primary:hover {
+  min-height: var(--s2-ctl);
+  padding: 0 calc(var(--spectrum-component-edge-to-text-100) - var(--spectrum-border-width-100));
+  color: var(--spectrum-gray-25);
+  background: var(--spectrum-neutral-background-color-selected-default);
+  border: var(--spectrum-border-width-100) solid transparent;
+  border-radius: var(--s2-radius);
+  font-weight: inherit;
+}
+.spectrum .agent #files .tools #history.primary:hover { background: var(--spectrum-neutral-background-color-selected-hover); }
+
+/* TextField and Picker, size M, wherever the page has a field without a part of its own. */
+:where(.spectrum .agent) input:where(:not([type="checkbox"], [type="radio"])), :where(.spectrum .agent) select {
+  min-height: var(--s2-ctl);
+  padding: 0 calc(var(--spectrum-component-edge-to-text-100) - var(--spectrum-border-width-200));
+}
+
+/* Empty states: an IllustratedMessage's heading where the pane has nothing else (pick a
+   knowledge base, loading, deleted), subdued text inside a list, help text when read-only. */
+.spectrum .agent .empty {
+  padding: var(--spectrum-spacing-400);
+  color: var(--spectrum-neutral-subdued-content-color-default);
+  font-size: var(--spectrum-font-size-100);
+}
+.spectrum .agent #editor > .empty:only-child {
+  margin: auto;
+  max-width: calc(var(--spectrum-spacing-1000) * 4);
+  text-align: center;
+  color: var(--spectrum-heading-color);
+  font-size: var(--spectrum-heading-size-s);
+  font-weight: var(--spectrum-bold-font-weight);
+  line-height: var(--spectrum-heading-line-height);
+}
+.spectrum .agent #editor > .empty:only-child a { font-size: var(--spectrum-font-size-100); font-weight: var(--spectrum-regular-font-weight); }
+.spectrum .agent .empty.ro {
+  color: var(--spectrum-neutral-subdued-content-color-default);
+  font-size: var(--spectrum-font-size-75);
+}
+.spectrum .agent .channels .empty { padding: var(--spectrum-spacing-300) 0; }
+
+/* ---- the editor ----------------------------------------------------------------------------
+   Its bar (the path or the title, the blob's hash), the note, the text field and its foot,
+   one column spaced by the container rather than by lines between them. */
+.spectrum .agent #editor .bar {
+  gap: var(--spectrum-spacing-200);
+  min-height: calc(var(--s2-ctl) + 2 * var(--spectrum-spacing-200));
+  padding: var(--spectrum-spacing-200) var(--spectrum-spacing-300);
+  border-bottom: 0;
+}
+.spectrum .agent #editor .bar .path {
+  font-family: var(--s2-code);
+  font-size: var(--spectrum-code-size-s);
+  font-weight: var(--spectrum-medium-font-weight);
+  color: var(--spectrum-neutral-content-color-default);
+}
+.spectrum .agent #editor .bar input.path {
+  padding: 0 calc(var(--spectrum-component-edge-to-text-100) - var(--spectrum-border-width-200));
+  font-weight: var(--spectrum-regular-font-weight);
+}
+.spectrum .agent #editor .bar .heading {
+  color: var(--spectrum-heading-color);
+  font-size: var(--spectrum-heading-size-s);
+  font-weight: var(--spectrum-bold-font-weight);
+  line-height: var(--spectrum-heading-line-height);
+}
+.spectrum .agent #editor .bar .hash {
+  font-family: var(--s2-code);
+  font-size: var(--spectrum-code-size-xs);
+  color: var(--spectrum-neutral-subdued-content-color-default);
+}
+
+/* The note: what the open view says, and how saving went. Help text while all is well (and
+   a success: with its checkmark at the end, so the text stays put as you type and it saves);
+   an InlineAlert, subtle fill, its icon at the end, for a warning or an error. */
+.spectrum .agent #editor .note {
+  margin: 0 var(--spectrum-spacing-300) var(--spectrum-spacing-200);
+  padding: 0;
+  color: var(--spectrum-neutral-subdued-content-color-default);
+  background: transparent;
+  border: 0;
+  border-radius: var(--spectrum-corner-radius-large-default);
+  font-size: var(--spectrum-body-size-s);
+  line-height: var(--spectrum-body-line-height);
+}
+.spectrum .agent #editor .note:is(.warn, .err) {
+  padding: var(--spectrum-spacing-200) var(--spectrum-spacing-300);
+  color: var(--spectrum-body-color);
+}
+.spectrum .agent #editor .note.ok { color: var(--spectrum-body-color); }
+.spectrum .agent #editor .note.warn { background: var(--spectrum-notice-subtle-background-color-default); }
+.spectrum .agent #editor .note.err { background: var(--spectrum-negative-subtle-background-color-default); }
+.spectrum .agent #editor .note:is(.warn, .err, .ok)::before {
+  content: "";
+  float: inline-end;
+  width: var(--spectrum-workflow-icon-size-100);
+  height: var(--spectrum-workflow-icon-size-100);
+  margin-inline-start: var(--spectrum-spacing-300);
+  mask: var(--kb-icon-notice) center / contain no-repeat;
+}
+/* Its icon in the alert's color (the subtle InlineAlert's notice icon is the negative red). */
+.spectrum .agent #editor .note.warn::before, .spectrum .agent #editor .note.err::before { background: var(--spectrum-negative-visual-color); }
+.spectrum .agent #editor .note.err::before { mask-image: var(--kb-icon-negative); }
+.spectrum .agent #editor .note.ok::before { background: var(--spectrum-positive-visual-color); mask-image: var(--kb-icon-positive); }
+/* Its actions (load their version, save mine over it): ActionButtons, size S. */
+.spectrum .agent #editor .note button {
+  min-height: var(--spectrum-component-height-75);
+  margin: var(--spectrum-spacing-75) 0 0 var(--spectrum-spacing-100);
+  padding: 0 calc(var(--spectrum-component-edge-to-text-75) - var(--spectrum-border-width-100));
+  font-size: var(--spectrum-font-size-75);
+}
+
+/* The text field (CodeMirror, src/ui-editor.js): a TextArea in the code font, its border
+   darker under the pointer and darkest while you type; read-only (generated, or not yours),
+   a code block: layer 1, rounded, no border. The syntax in Spectrum 2's content colors. */
+.spectrum .agent #editor .text {
+  --code: var(--spectrum-gray-25);
+  --green: var(--spectrum-green-900);
+  --purple: var(--spectrum-purple-900);
+  --yellow: var(--spectrum-orange-900);
+  --accent: var(--spectrum-accent-content-color-default);
+  --red: var(--spectrum-negative-content-color-default);
+  margin: 0 var(--spectrum-spacing-300);
+  overflow: hidden;
+  font-size: var(--spectrum-code-size-s);
+  background: var(--code);
+  border: var(--spectrum-border-width-200) solid var(--spectrum-gray-300);
+  border-radius: var(--s2-radius);
+  transition: border-color var(--s2-ease);
+}
+.spectrum .agent #editor .text:last-child { margin-bottom: var(--spectrum-spacing-300); }
+.spectrum .agent #editor .text:hover { border-color: var(--spectrum-gray-400); }
+.spectrum .agent #editor .text:focus-within { border-color: var(--spectrum-gray-800); }
+.spectrum .agent #editor .text:has(.cm-content[aria-readonly="true"]) {
+  --code: var(--spectrum-background-layer-1-color);
+  border-color: transparent;
+}
+.spectrum .agent #editor .text .cm-scroller { font-family: var(--s2-code); line-height: var(--spectrum-line-height-200); }
+.spectrum .agent #editor .text .cm-content { padding: var(--spectrum-spacing-200) 0; }
+.spectrum .agent #editor .text .cm-gutters { color: var(--spectrum-neutral-subdued-content-color-default); }
+/* The folded frontmatter, and any other fold: ActionButtons, size XS, in the line. */
+.spectrum .agent #editor .text .cm-frontmatter, .spectrum .agent #editor .text .cm-foldPlaceholder {
+  min-height: var(--spectrum-component-height-50);
+  margin: 0 0 0 var(--spectrum-spacing-100);
+  padding: 0 calc(var(--spectrum-component-edge-to-text-50) - var(--spectrum-border-width-100));
+  color: var(--spectrum-neutral-content-color-default);
+  background: var(--spectrum-gray-100);
+  border: var(--spectrum-border-width-100) solid transparent;
+  border-radius: var(--spectrum-corner-radius-medium-size-extra-small);
+  font-family: var(--s2-code);
+  font-size: var(--spectrum-font-size-75);
+  vertical-align: baseline;
+}
+.spectrum .agent #editor .text .cm-frontmatter:hover, .spectrum .agent #editor .text .cm-foldPlaceholder:hover {
+  color: var(--spectrum-neutral-content-color-hover);
+  background: var(--spectrum-gray-200);
+  border-color: transparent;
+}
+.spectrum .agent #editor .text .cm-frontmatter:active, .spectrum .agent #editor .text .cm-foldPlaceholder:active { background: var(--spectrum-gray-300); }
+
+/* The foot: Delete, a negative Button (ui/spectrum.css), at the end. */
+.spectrum .agent #editor .foot { padding: var(--spectrum-spacing-200) var(--spectrum-spacing-300); border-top: 0; }
+
+/* The history: a list of commits, divided, the hash and who in the code font's detail. */
+.spectrum .agent #editor .log { padding: 0 var(--spectrum-spacing-300) var(--spectrum-spacing-300); }
+.spectrum .agent #editor .log .c { padding: var(--spectrum-spacing-200) 0; border-bottom-color: var(--spectrum-gray-200); }
+.spectrum .agent #editor .log .c .h {
+  font-family: var(--s2-code);
+  font-size: var(--spectrum-code-size-xs);
+  color: var(--spectrum-neutral-subdued-content-color-default);
+}
+.spectrum .agent #editor .log .c .m { margin-top: var(--spectrum-spacing-50); }
+
+/* ---- the agents' views: thread agents, tools and MCP servers, extraction rules ------------
+   ListView rows, divided, each with its Switch at the end; group headings over them. */
+.spectrum .agent .channels { padding: var(--spectrum-spacing-75) var(--spectrum-spacing-300) var(--spectrum-spacing-300); }
+.spectrum .agent .channels h3.group, .spectrum .agent .channels h3.group:first-child {
+  margin: var(--spectrum-spacing-500) 0 var(--spectrum-spacing-100);
+  color: var(--spectrum-heading-color);
+  font-size: var(--spectrum-heading-size-xs);
+  font-weight: var(--spectrum-bold-font-weight);
+  line-height: var(--spectrum-heading-line-height);
+  letter-spacing: normal;
+  text-transform: none;
+}
+.spectrum .agent .channels h3.group:first-child { margin-top: var(--spectrum-spacing-200); }
+.spectrum .agent .ch {
+  gap: var(--spectrum-spacing-300);
+  padding: var(--spectrum-spacing-200) 0;
+  border-bottom: var(--spectrum-border-width-100) solid var(--spectrum-gray-200);
+}
+.spectrum .agent .ch .nm {
+  color: var(--spectrum-neutral-content-color-default);
+  font-weight: var(--spectrum-bold-font-weight);
+  line-height: var(--spectrum-component-height-75);
+}
+/* Its Badges are inline, so that a long one is cut short with an ellipsis, as the name is. */
+.spectrum .agent .ch .nm .src {
+  display: inline;
+  padding: var(--spectrum-spacing-50) calc(var(--spectrum-component-edge-to-text-75) - var(--spectrum-border-width-200));
+  vertical-align: var(--spectrum-border-width-100);
+}
+/* The code font is taller in its box: a little less around it, for the same height. */
+.spectrum .agent .ch .nm .src.mono { padding-block: calc(var(--spectrum-spacing-50) / 2); }
+/* Two tiers of text: the content, and the rest subdued (Spectrum 2's typography). */
+.spectrum .agent .ch .sub, .spectrum .agent .ch .sub.by {
+  color: var(--spectrum-neutral-subdued-content-color-default);
+  font-size: var(--spectrum-font-size-75);
+  line-height: var(--spectrum-line-height-200);
+}
+.spectrum .agent .ch .who .sub { overflow-wrap: anywhere; }
+.spectrum .agent .ch .sub.err, .spectrum .agent .mcpform .hint .err { color: var(--spectrum-negative-content-color-default); }
+.spectrum .agent .ch.rule .sub.pat { color: var(--spectrum-neutral-subdued-content-color-default); font-family: var(--s2-code); font-size: var(--spectrum-code-size-xs); }
+.spectrum .agent .ch.rule.off .nm, .spectrum .agent .ch.rule.replaced .nm { opacity: 1; color: var(--spectrum-neutral-subdued-content-color-default); }
+/* The Switch's label: On or Off, before it. */
+.spectrum .agent .ch .state { color: var(--spectrum-neutral-subdued-content-color-default); font-size: var(--spectrum-font-size-75); }
+.spectrum .agent .ch .state.on { color: var(--spectrum-neutral-content-color-default); font-weight: var(--spectrum-bold-font-weight); }
+.spectrum .agent .ch .switch-gap { width: var(--spectrum-switch-control-width-medium); }
+/* A row's actions (Check, Edit, Delete, Connect): ActionButtons, size S, together; deleting
+   asks first, in an AlertDialog whose Button is the negative one. */
+.spectrum .agent .ch .acts { gap: var(--spectrum-spacing-75); }
+.spectrum .agent .ch .acts button, .spectrum .agent .ch .acts button.danger {
+  min-height: var(--spectrum-component-height-75);
+  padding: 0 calc(var(--spectrum-component-edge-to-text-75) - var(--spectrum-border-width-100));
+  color: var(--spectrum-neutral-content-color-default);
+  background: var(--spectrum-gray-100);
+  border: var(--spectrum-border-width-100) solid transparent;
+  border-radius: var(--s2-radius);
+  font-size: var(--spectrum-font-size-75);
+  font-weight: var(--spectrum-regular-font-weight);
+}
+.spectrum .agent .ch .acts button:hover:not(:disabled) { color: var(--spectrum-neutral-content-color-hover); background: var(--spectrum-gray-200); }
+.spectrum .agent .ch .acts button:active:not(:disabled) { background: var(--spectrum-gray-300); }
+/* …except where it starts something (Connect): an accent Button, size S. */
+.spectrum .agent .ch .acts button.primary, .spectrum .agent .ch .acts button.primary:hover:not(:disabled) {
+  padding: 0 calc(var(--spectrum-component-pill-edge-to-text-75) - var(--spectrum-border-width-200));
+  color: var(--spectrum-white);
+  background: var(--spectrum-accent-background-color-default);
+  border: var(--spectrum-border-width-200) solid transparent;
+  border-radius: calc(var(--spectrum-component-height-75) / 2);
+  font-weight: var(--spectrum-bold-font-weight);
+}
+.spectrum .agent .ch .acts button.primary:hover:not(:disabled) { background: var(--spectrum-accent-background-color-hover); }
+
+/* Tags (a TagGroup): the tools of a server, what a test found. Gray, rounded, no border; a
+   tool the agents do not get is disabled. */
+.spectrum .agent .ch .tags { gap: var(--spectrum-spacing-75); margin-top: var(--spectrum-spacing-100); }
+.spectrum .agent .ch .tags .src, .spectrum .agent .mcpform .hint .tags .src {
+  display: inline-flex;
+  align-items: center;
+  min-height: var(--spectrum-component-height-75);
+  padding: 0 var(--spectrum-component-edge-to-text-75);
+  color: var(--spectrum-neutral-content-color-default);
+  background: var(--spectrum-gray-100);
+  border: 0;
+  border-radius: var(--spectrum-corner-radius-medium-size-small);
+  font-family: var(--s2-code);
+  font-size: var(--spectrum-code-size-xs);
+  line-height: var(--spectrum-line-height-100);
+}
+.spectrum .agent .ch .tags .src.off {
+  opacity: 1;
+  color: var(--spectrum-disabled-content-color);
+  background: var(--spectrum-disabled-background-color);
+}
+
+/* Cards: the team's default and your own setting, above the channels. Layer 1, rounded, no
+   border (an edge only in forced colors). */
+.spectrum .agent .ch.default {
+  gap: var(--spectrum-spacing-300);
+  margin: var(--spectrum-spacing-100) 0;
+  padding: var(--spectrum-spacing-300);
+  background: var(--spectrum-background-layer-1-color);
+  border: 0;
+  border-radius: var(--spectrum-corner-radius-large-default);
+}
+.spectrum .agent .ch.default + .ch.default { margin-top: var(--spectrum-spacing-200); }
+.spectrum .agent .ch .sub.mine { gap: var(--spectrum-spacing-100); margin-top: var(--spectrum-spacing-100); }
+.spectrum .agent .ch.found { background: var(--sel); }
+
+/* Pickers and SearchFields, size S, in the rows: a channel's own choice, its filter. */
+.spectrum .agent .ch .sub.mine select, .spectrum .agent .ch.global .per select {
+  min-height: var(--spectrum-component-height-75);
+  padding: 0 calc(var(--spectrum-component-edge-to-text-75) - var(--spectrum-border-width-200));
+  font-size: var(--spectrum-font-size-75);
+}
+.spectrum .agent .ch.global .per .find {
+  margin: var(--spectrum-spacing-100) 0 var(--spectrum-spacing-75) var(--spectrum-spacing-300);
+}
+.spectrum .agent .ch.global .per.flat .find { margin-left: 0; }
+
+/* A tool's and a global server's name and switch, on top while its list scrolls by. */
+.spectrum .agent .ch.global { row-gap: 0; }
+.spectrum .agent .ch.global .head { gap: var(--spectrum-spacing-300); }
+.spectrum .agent .ch.global .head::after { height: var(--spectrum-border-width-100); }
+@container scroll-state(stuck: top) { .spectrum .agent .ch.global .head::after { background: var(--spectrum-gray-200); } }
+
+/* Disclosure, quiet, size S: the per-channel switches, the admin team's rules. A chevron
+   that turns as it opens, a bold title, the content color faintly under the pointer. */
+.spectrum .agent .ch.global .per summary, .spectrum .agent details.inherited > summary {
+  display: flex;
+  align-items: center;
+  gap: var(--spectrum-spacing-100);
+  width: fit-content;
+  min-height: var(--spectrum-component-height-75);
+  margin-inline-start: calc(-1 * var(--spectrum-spacing-100));
+  padding: 0 var(--spectrum-spacing-100);
+  color: var(--spectrum-neutral-content-color-default);
+  border-radius: var(--s2-radius);
+  font-size: var(--spectrum-font-size-75);
+  font-weight: var(--spectrum-bold-font-weight);
+  list-style: none;
+  transition: background-color var(--s2-ease);
+}
+.spectrum .agent .ch.global .per summary::-webkit-details-marker, .spectrum .agent details.inherited > summary::-webkit-details-marker { display: none; }
+.spectrum .agent .ch.global .per summary::before, .spectrum .agent details.inherited > summary::before {
+  content: "";
+  flex: none;
+  width: var(--spectrum-workflow-icon-size-50);
+  height: var(--spectrum-workflow-icon-size-50);
+  background: currentColor;
+  mask: var(--kb-icon-chevron) center / contain no-repeat;
+  transition: rotate var(--s2-ease);
+}
+.spectrum .agent .ch.global .per[open] > summary::before, .spectrum .agent details.inherited[open] > summary::before { rotate: 90deg; }
+.spectrum .agent .ch.global .per summary:dir(rtl)::before, .spectrum .agent details.inherited > summary:dir(rtl)::before { scale: -1 1; }
+.spectrum .agent .ch.global .per summary:hover, .spectrum .agent details.inherited > summary:hover { background: var(--s2-hover); }
+.spectrum .agent .ch.global .per summary:active, .spectrum .agent details.inherited > summary:active { background: var(--s2-down); }
+.spectrum .agent .ch.global .per { margin-top: var(--spectrum-spacing-200); }
+.spectrum .agent details.inherited { margin: var(--spectrum-spacing-100) 0 var(--spectrum-spacing-75); }
+.spectrum .agent details.inherited .ch { padding-left: var(--spectrum-spacing-300); }
+/* Its rows: a channel and its Picker. */
+.spectrum .agent .ch.global .per .row2 {
+  gap: var(--spectrum-spacing-200);
+  min-height: calc(var(--spectrum-component-height-75) + var(--spectrum-spacing-75));
+  padding: var(--spectrum-spacing-50) 0 var(--spectrum-spacing-50) var(--spectrum-spacing-300);
+  font-size: var(--spectrum-font-size-75);
+}
+.spectrum .agent .ch.global .per.flat .row2, .spectrum .agent .ch.global .per.flat .none { padding-left: 0; }
+.spectrum .agent .ch.global .per .na, .spectrum .agent .ch.global .per .none {
+  color: var(--spectrum-neutral-subdued-content-color-default);
+  font-size: var(--spectrum-font-size-75);
+}
+/* Buttons, size S, in those rows (allow, revoke an installation). */
+.spectrum .agent .ch.global .per .row2 button {
+  min-height: var(--spectrum-component-height-75);
+  padding: 0 calc(var(--spectrum-component-pill-edge-to-text-75) - var(--spectrum-border-width-200));
+  border-radius: calc(var(--spectrum-component-height-75) / 2);
+  font-size: var(--spectrum-font-size-75);
+}
+
+/* The GitHub App's setup: its fields, and its links as Buttons (secondary; accent when it is
+   the next step), size S. */
+.spectrum .agent .ch.global .setup { gap: var(--spectrum-spacing-100); margin-top: var(--spectrum-spacing-300); font-size: var(--spectrum-font-size-75); }
+.spectrum .agent .ch.global .setup a.btn {
+  display: inline-flex;
+  align-items: center;
+  min-height: var(--spectrum-component-height-75);
+  padding: 0 calc(var(--spectrum-component-pill-edge-to-text-75) - var(--spectrum-border-width-200));
+  color: var(--spectrum-neutral-content-color-default);
+  background: var(--spectrum-gray-100);
+  border: var(--spectrum-border-width-200) solid transparent;
+  border-radius: calc(var(--spectrum-component-height-75) / 2);
+  font-size: var(--spectrum-font-size-75);
+  font-weight: var(--spectrum-bold-font-weight);
+  transition: background-color var(--s2-ease);
+}
+.spectrum .agent .ch.global .setup a.btn:hover { color: var(--spectrum-neutral-content-color-hover); background: var(--spectrum-gray-200); }
+.spectrum .agent .ch.global .setup a.btn.primary { color: var(--spectrum-white); background: var(--spectrum-accent-background-color-default); }
+.spectrum .agent .ch.global .setup a.btn.primary:hover { color: var(--spectrum-white); background: var(--spectrum-accent-background-color-hover); }
+
+/* The forms (an MCP server, a rule, a technology): side labels (FieldLabel), TextFields,
+   Pickers and a TextArea, help text under them, and a ButtonGroup: the accent Button, then
+   secondary ones (outline). */
+.spectrum .agent .mcpform {
+  /* The page's columns (labels at 120), with fields that shrink rather than widen the list. */
+  grid-template-columns: calc(var(--spectrum-spacing-1000) + var(--spectrum-spacing-400)) minmax(0, 1fr);
+  gap: var(--spectrum-spacing-200) var(--spectrum-spacing-300);
+  margin: var(--spectrum-spacing-400) 0 0;
+  padding: var(--spectrum-spacing-300);
+  background: var(--spectrum-background-layer-1-color);
+  border-radius: var(--spectrum-corner-radius-large-default);
+}
+.spectrum .agent .mcpform h3 {
+  color: var(--spectrum-heading-color);
+  font-size: var(--spectrum-heading-size-xxs);
+  font-weight: var(--spectrum-bold-font-weight);
+  letter-spacing: normal;
+  text-transform: none;
+}
+.spectrum .agent .mcpform label {
+  color: var(--spectrum-neutral-subdued-content-color-default);
+  font-size: var(--spectrum-font-size-75);
+}
+.spectrum .agent .mcpform :is(input, select, textarea) { min-width: 0; max-width: 100%; }
+.spectrum .agent .mcpform .hint {
+  margin-top: calc(-1 * var(--spectrum-spacing-75));
+  color: var(--spectrum-neutral-subdued-content-color-default);
+  font-size: var(--spectrum-font-size-75);
+}
+.spectrum .agent .mcpform .hint.wide { margin-top: 0; }
+.spectrum .agent .mcpform .hint .mono { font-size: var(--spectrum-code-size-xs); }
+.spectrum .agent .mcpform .hint .tags { gap: var(--spectrum-spacing-75); }
+.spectrum .agent .mcpform .mono, .spectrum .agent .mcpform input.mono { font-family: var(--s2-code); font-size: var(--spectrum-code-size-xs); }
+.spectrum .agent .mcpform textarea {
+  padding: var(--spectrum-component-top-to-text-100) calc(var(--spectrum-component-edge-to-text-100) - var(--spectrum-border-width-200));
+  color: var(--spectrum-neutral-content-color-default);
+  background: var(--spectrum-gray-25);
+  border: var(--spectrum-border-width-200) solid var(--spectrum-gray-300);
+  border-radius: var(--s2-radius);
+  line-height: var(--spectrum-line-height-200);
+}
+.spectrum .agent .mcpform textarea:hover { border-color: var(--spectrum-gray-400); }
+.spectrum .agent .mcpform textarea:focus { border-color: var(--spectrum-gray-800); }
+.spectrum .agent .mcpform .apply { gap: var(--spectrum-spacing-200); margin-top: var(--spectrum-spacing-100); }
+.spectrum .agent .mcpform .apply button:not(.primary, .danger) {
+  min-height: var(--s2-ctl);
+  padding: 0 calc(var(--spectrum-component-pill-edge-to-text-100) - var(--spectrum-border-width-200));
+  color: var(--spectrum-neutral-content-color-default);
+  background: transparent;
+  border: var(--spectrum-border-width-200) solid var(--spectrum-gray-300);
+  border-radius: calc(var(--s2-ctl) / 2);
+  font-weight: var(--spectrum-bold-font-weight);
+}
+.spectrum .agent .mcpform .apply button:not(.primary, .danger):hover:not(:disabled) { background: var(--spectrum-gray-100); }
+.spectrum .agent .mcpform .apply button:not(.primary, .danger):active:not(:disabled) { background: var(--spectrum-gray-200); }
+
+/* Switch (`.switch`, a button with role=switch; only this page has them): a track with a
+   handle. */
+.spectrum .agent .switch {
+  width: var(--spectrum-switch-control-width-medium);
+  height: var(--spectrum-switch-control-height-medium);
+  padding: 0;
+  background: var(--spectrum-gray-25);
+  border: var(--spectrum-border-width-200) solid var(--spectrum-gray-600);
+  border-radius: calc(var(--spectrum-switch-control-height-medium) / 2);
+}
+.spectrum .agent .switch:hover:not(:disabled) { background: var(--spectrum-gray-25); border-color: var(--spectrum-gray-700); }
+.spectrum .agent .switch::after {
+  background: var(--spectrum-gray-600);
+  transition: transform var(--s2-ease), background-color var(--s2-ease);
+}
+.spectrum .agent .switch[aria-checked="true"] {
+  background: var(--spectrum-accent-background-color-default);
+  border-color: var(--spectrum-accent-background-color-default);
+}
+.spectrum .agent .switch[aria-checked="true"]:hover:not(:disabled) {
+  background: var(--spectrum-accent-background-color-hover);
+  border-color: var(--spectrum-accent-background-color-hover);
+}
+.spectrum .agent .switch[aria-checked="true"]::after { background: var(--spectrum-gray-25); }
+
+/* ---- the Switch -----------------------------------------------------------------------------
+   Above, its track; here its handle, as React Spectrum's: the track's inner
+   height less a border on each side, a step larger once on, at the end of the track (scaled
+   by perspective, so it moves on the compositor). Disabled where you only look. */
+.spectrum .agent .switch {
+  --track-h: var(--spectrum-switch-control-height-medium);
+  --track-w: var(--spectrum-switch-control-width-medium);
+  --edge: var(--spectrum-border-width-200);
+  box-sizing: border-box;
+}
+.spectrum .agent .switch::after {
+  top: 0;
+  left: 0;
+  width: calc(var(--track-h) - 2 * var(--edge));
+  height: calc(var(--track-h) - 2 * var(--edge));
+  box-shadow: none;
+  transform: perspective(calc(var(--track-h) - 4 * var(--edge))) translateZ(calc(-2 * var(--edge)));
+}
+.spectrum .agent .switch[aria-checked="true"]::after {
+  left: 0;
+  transform: translateX(calc(var(--track-w) - var(--track-h)))
+    perspective(calc(2 * (var(--track-h) - 3 * var(--edge)))) translateZ(calc(-2 * var(--edge)));
+}
+.spectrum .agent .switch:dir(rtl)::after { left: auto; right: 0; }
+.spectrum .agent .switch[aria-checked="true"]:dir(rtl)::after {
+  left: auto;
+  transform: translateX(calc(var(--track-h) - var(--track-w)))
+    perspective(calc(2 * (var(--track-h) - 3 * var(--edge)))) translateZ(calc(-2 * var(--edge)));
+}
+.spectrum .agent .switch:active:not(:disabled) { border-color: var(--spectrum-gray-800); }
+.spectrum .agent .switch:focus-visible { outline: var(--s2-focus); outline-offset: var(--spectrum-focus-indicator-gap); }
+.spectrum .agent .switch:disabled, .spectrum .agent .switch:disabled:hover {
+  cursor: default;
+  background: var(--spectrum-gray-25);
+  border-color: var(--spectrum-gray-400);
+}
+.spectrum .agent .switch:disabled::after { background: var(--spectrum-gray-400); }
+.spectrum .agent .switch[aria-checked="true"]:disabled, .spectrum .agent .switch[aria-checked="true"]:disabled:hover {
+  background: var(--spectrum-gray-400);
+  border-color: transparent;
+}
+.spectrum .agent .switch[aria-checked="true"]:disabled::after { background: var(--spectrum-gray-25); }
+
+/* ---- the confirmation: an AlertDialog ------------------------------------------------------
+   Size M, padded, its question as the heading; Cancel a secondary Button (outline), the
+   action the accent one, or the negative one where it deletes, disconnects, revokes or
+   discards. */
+.spectrum dialog.ask {
+  width: min(calc(var(--spectrum-spacing-1000) * 5), calc(100vw - 2 * var(--spectrum-spacing-300)));
+  max-width: none;
+  padding: var(--spectrum-spacing-500);
+  border: 0;
+  border-radius: var(--spectrum-corner-radius-extra-large-default);
+}
+/* Its opacity is ui/spectrum.css's, which fades it in and out with the dialog. */
+.spectrum dialog.ask::backdrop { background: var(--spectrum-overlay-color); }
+.spectrum dialog.ask p { margin: 0 0 var(--spectrum-spacing-300); }
+.spectrum dialog.ask p:first-child {
+  color: var(--spectrum-heading-color);
+  font-size: var(--spectrum-heading-size-s);
+  line-height: var(--spectrum-heading-line-height);
+}
+.spectrum dialog.ask .detail {
+  color: var(--spectrum-body-color);
+  font-size: var(--spectrum-body-size-s);
+  line-height: var(--spectrum-body-line-height);
+}
+.spectrum dialog.ask .apply { gap: var(--spectrum-spacing-200); margin-top: var(--spectrum-spacing-500); }
+.spectrum dialog.ask .apply button:not(.primary) {
+  min-height: var(--s2-ctl);
+  padding: 0 calc(var(--spectrum-component-pill-edge-to-text-100) - var(--spectrum-border-width-200));
+  color: var(--spectrum-neutral-content-color-default);
+  background: transparent;
+  border: var(--spectrum-border-width-200) solid var(--spectrum-gray-300);
+  border-radius: calc(var(--s2-ctl) / 2);
+  font-weight: var(--spectrum-bold-font-weight);
+}
+.spectrum dialog.ask .apply button:not(.primary):hover { background: var(--spectrum-gray-100); }
+.spectrum dialog.ask .apply button:not(.primary):active { background: var(--spectrum-gray-200); }
+.spectrum dialog.ask:is([aria-label^="Delete"], [aria-label^="Disconnect"], [aria-label^="Revoke"], [aria-label^="Your last changes"]) .apply .primary {
+  background: var(--spectrum-negative-background-color-default);
+}
+.spectrum dialog.ask:is([aria-label^="Delete"], [aria-label^="Disconnect"], [aria-label^="Revoke"], [aria-label^="Your last changes"]) .apply .primary:hover {
+  background: var(--spectrum-negative-background-color-hover);
+}
+.spectrum dialog.ask:is([aria-label^="Delete"], [aria-label^="Disconnect"], [aria-label^="Revoke"], [aria-label^="Your last changes"]) .apply .primary:active {
+  background: var(--spectrum-negative-background-color-down);
+}
+
+/* ---- phones: one pane at a time, each with a way back ---------------------------------------
+   Back: a quiet ActionButton with its chevron. */
+.spectrum .agent .up {
+  gap: var(--spectrum-text-to-visual-100);
+  min-height: var(--s2-ctl);
+  padding: 0 var(--spectrum-component-edge-to-text-100) 0 var(--spectrum-component-edge-to-visual-100);
+  color: var(--spectrum-neutral-content-color-default);
+  background: transparent;
+  border: 0;
+  border-radius: var(--s2-radius);
+  font-weight: var(--spectrum-medium-font-weight);
+}
+.spectrum .agent .up:hover:not(:disabled) { color: var(--spectrum-neutral-content-color-hover); background: var(--spectrum-gray-100); }
+.spectrum .agent .up:active:not(:disabled) { background: var(--spectrum-gray-200); }
+.spectrum .agent .up svg { width: var(--spectrum-workflow-icon-size-75); height: var(--spectrum-workflow-icon-size-75); }
+@media (max-width: 699px) {
+  .spectrum .agent #files > .up { margin: 0 0 var(--spectrum-spacing-100) calc(-1 * var(--spectrum-spacing-100)); }
+  .spectrum .agent #editor .bar { padding: var(--spectrum-spacing-100) var(--spectrum-spacing-200); }
+  .spectrum .agent #editor .note { margin: 0 var(--spectrum-spacing-200) var(--spectrum-spacing-200); }
+  .spectrum .agent #editor .text { margin: 0 var(--spectrum-spacing-200); }
+  .spectrum .agent #editor .text:last-child { margin-bottom: var(--spectrum-spacing-200); }
+  .spectrum .agent #editor .foot { padding: var(--spectrum-spacing-200); }
+  .spectrum .agent .channels { padding-left: var(--spectrum-spacing-200); padding-right: var(--spectrum-spacing-200); }
+}
+
+/* Windows High Contrast: the cards and the alerts get an edge, as Spectrum's do. */
+@media (forced-colors: active) {
+  .spectrum .agent .ch.default, .spectrum .agent .mcpform, .spectrum .agent #editor .note:is(.warn, .err) {
+    border: var(--spectrum-border-width-100) solid ButtonBorder;
+  }
+  .spectrum .agent #editor .note::before { background: CanvasText; }
+}
+
+
+/* ==== In the content area ======================================================================
+   The page's content area (ui/spectrum-admin.css) holds the sections: no layer of their own,
+   and in a knowledge base a divider between its files and the one that is open. The views
+   without files keep to the content area's edges, as its cards do. */
+.spectrum .agent #files, .spectrum .agent #editor { background: transparent; }
+@media (min-width: 700px) {
+  .spectrum .agent.kb #editor { border-left: var(--spectrum-border-width-100) solid var(--line); }
+}
+.spectrum .agent:not(.kb) #editor .bar { min-height: 0; padding: 0 0 var(--spectrum-spacing-200); }
+.spectrum .agent:not(.kb) #editor .note { margin-inline: 0; }
+.spectrum .agent:not(.kb) .channels { padding-inline: 0; }
+/* Help text inside the agent keeps to its own widths, not the page's. */
+.spectrum .agent .hint { max-width: none; }
+
+/* Fields say what they are for with a label (ui/spectrum.css), never a placeholder. */
+.spectrum .agent .ch.global .per .find > input { min-height: var(--spectrum-component-height-75); font-size: var(--spectrum-font-size-75); }
+.spectrum .agent .ch.global .setup { align-items: flex-end; }
+.spectrum .agent .ch.global .setup > .what { flex-basis: 100%; }
+.spectrum .agent .ch.global .setup .fld > input { width: calc(var(--spectrum-spacing-100) * 25); }
+.spectrum .agent #editor .bar .newpath { display: flex; flex: 1; align-items: center; gap: var(--spectrum-spacing-100); min-width: 0; color: var(--spectrum-neutral-subdued-content-color-default); font-size: var(--spectrum-font-size-75); }
+.spectrum .agent #editor .bar .newpath + .hint { flex-basis: 100%; margin: 0; color: var(--spectrum-neutral-subdued-content-color-default); font-size: var(--spectrum-font-size-75); }
+
+/* A diagram (`.dot`): its text beside the drawing of it, which takes the larger part; under each
+   other where the editor is narrow. The drawing scrolls when it is larger than its side. While
+   Graphviz cannot draw the text, the last drawing stays, faded, with the reason under it. */
+.agent .dotpane { flex: 1; min-height: 0; display: grid; grid-template-columns: minmax(0, 2fr) minmax(0, 3fr); gap: var(--spectrum-spacing-200); margin: 0 var(--spectrum-spacing-300) var(--spectrum-spacing-300); }
+.spectrum .agent #editor .dotpane .text { margin: 0; }
+.agent .dotview { min-height: 0; overflow: auto; padding: var(--spectrum-spacing-200); background: var(--card); border: var(--spectrum-border-width-100) solid var(--line); border-radius: var(--s2-radius); }
+.agent .dotview .fmc { margin: 0; }
+.agent .dotview.stale .fmc { opacity: 0.4; }
+.agent .dotnote { margin-top: var(--spectrum-spacing-100); color: var(--mute); font-family: var(--s2-font); font-size: var(--spectrum-font-size-75); }
+.agent .dotnote.err { color: var(--spectrum-negative-content-color-default); }
+@media (max-width: 900px) { .agent .dotpane { grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(0, 1fr) minmax(0, 1fr); } }

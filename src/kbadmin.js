@@ -13,7 +13,7 @@
 import {
   agentChannels, agentStates, setAgent, setTeamDefault, teamDefault,
 } from './agent/enabled.js';
-import { writeKnowledge } from './agent/kbwrite.js';
+import { isCanonicalPath, pathOwner, writeKnowledge } from './agent/kbwrite.js';
 import {
   isEntry, scalar, splitFrontmatter, SYSTEM_PROMPT,
 } from './agent/okf.js';
@@ -22,22 +22,26 @@ import {
 } from './agent/repos.js';
 import { json } from './http.js';
 import { mcpAdmin } from './mcpadmin.js';
-import { access, mayEdit, mayRead } from './kbaccess.js';
-import { isAdmin, managesTeam } from './review.js';
+import {
+  access, mayEdit, mayRead, mayWrite,
+} from './kbaccess.js';
+import { isAdmin, managesTeam } from './roles.js';
 import { toolAdmin } from './tooladmin.js';
 import { extractionAdmin } from './extractadmin.js';
+import { decideKbChatBash, kbChatView, talkInKbChat } from './agent/stub.js';
 import { repoName } from './kb.js';
 import { parseStack, STACK_PATH, stackView } from './stack.js';
+import { resolveTech, techMoves } from './catalog.js';
 
 /**
- * The knowledge-base editor's API (`/inbox/kb`). The admin team and team managers list
- * the knowledge bases, list and read their files, and change them as the signed-in person
- * (team managers: those of their teams and of the customers their teams own); the members of
- * a team read its knowledge base and those of the customers it owns, and see their agents,
- * without changing them (src/kbaccess.js). Writes go through the same path as the agents'
- * (OKF checks, indexes and log by code, retry on a concurrent push), are committed with the
- * person as author and stamped `human:<email>`, and may also change `systemprompt.md`, which
- * agents cannot.
+ * The agents' API (their sections of the Teams and Customers pages, ui/agent.js). The admin
+ * team and team managers list the knowledge bases, list and read their files, and change them
+ * as the signed-in person (team managers: those of their teams and of the customers their
+ * teams own); the members of a team read its knowledge base and those of the customers it
+ * owns, and see their agents, without changing them (src/kbaccess.js). Writes go through the
+ * same path as the agents' (OKF checks, indexes and log by code, retry on a concurrent push),
+ * are committed with the person as author and stamped `human:<email>`, and may also change
+ * `systemprompt.md`, which agents cannot.
  */
 
 const MAX_MESSAGE = 200;
@@ -153,8 +157,9 @@ async function toolCounts(env) {
 
 /**
  * GET /api/kb: every knowledge base `me` may read, teams first, with the team's or customer's
- * name, its entries (null until counted), how many channels with agents and tools it has, and
- * whether `me` may change it (`may`).
+ * name (a customer's display name, else its slug), its entries (null until counted), how many
+ * channels with agents and tools it has, whether `me` may change it (`may`: its agents, tools,
+ * servers and instructions) and whether they may write its files (`write`).
  */
 async function listBases(env, me) {
   const [agents, tools, may, { results }] = await Promise.all([
@@ -162,8 +167,11 @@ async function listBases(env, me) {
     toolCounts(env),
     access(env, me),
     env.DB.prepare(`SELECT k.repo, k.kind, k.slug, k.created_at, k.entries,
-        t.name AS team_name
+        t.name AS team_name, o.name AS org_name
       FROM knowledge_bases k LEFT JOIN teams t ON k.kind = 'team' AND t.slug = k.slug
+      LEFT JOIN orgs o ON k.kind = 'org' AND o.slug = k.slug
+      -- A merged customer's is the one it was merged into now (src/orgmerge.js).
+      WHERE NOT (k.kind = 'org' AND k.slug IN (SELECT slug FROM org_merges))
       ORDER BY CASE k.kind WHEN 'team' THEN 0 ELSE 1 END, k.slug`).all(),
   ]);
   return json({
@@ -172,12 +180,14 @@ async function listBases(env, me) {
       repo: r.repo,
       kind: r.kind,
       slug: r.slug,
-      name: r.team_name || r.slug,
+      name: r.team_name || r.org_name || r.slug,
       created_at: r.created_at,
       entries: r.entries ?? null,
       agents: agents.size(`${r.kind}:${r.slug}`),
       tools: tools.size(`${r.kind}:${r.slug}`),
       may: may.edit(r),
+      // Its files (but systemprompt.md): everyone on the team (src/kbaccess.js `mayWrite`).
+      write: may.write(r),
     })),
   });
 }
@@ -290,8 +300,16 @@ async function change(env, me, body, remove) {
   if (res.unchanged) {
     return json({ ok: true, unchanged: true });
   }
-  const now = remove ? null : await readText(env, body.repo, path).catch(() => null);
-  return json({ ok: true, commit: res.commit, hash: now && !now.error ? now.hash : null });
+  const now = remove ? null
+    : await readText(env, body.repo, path, { full: true }).catch(() => null);
+  const saved = now && !now.error ? now : null;
+  // A stack drawing's Tech set from the catalog (src/stacktech.js): what was saved is not what
+  // was typed, so the editor is told, with the saved text.
+  const filled = res.filled?.length
+    ? { filled: res.filled, content: saved ? saved.text : null } : {};
+  return json({
+    ok: true, commit: res.commit, hash: saved ? saved.hash : null, ...filled,
+  });
 }
 
 // ---- thread agents ----------------------------------------------------------------------
@@ -320,17 +338,18 @@ async function channels(env, me, base) {
   // A channel being re-filed has threads in two places for a while: its latest place counts.
   const seen = new Set();
   const rows = (results || []).filter((r) => !seen.has(r.channel_id) && seen.add(r.channel_id));
-  const states = await agentStates(env, rows.map((r) => r.channel_id), {
-    // Alert channels have no agents: their team's default does not turn them on.
-    teams: new Map(rows.filter((r) => r.kind === 'channel').map((r) => [r.channel_id, r.team])),
-  });
+  const [states, byDefault] = await Promise.all([
+    agentStates(env, rows.map((r) => r.channel_id), {
+      // Alert channels have no agents: their team's default does not turn them on.
+      teams: new Map(rows.filter((r) => r.kind === 'channel').map((r) => [r.channel_id, r.team])),
+    }),
+    base.kind === 'team' ? teamDefault(env, base.slug) : null,
+  ]);
   return json({
     repo: base.repo,
     configured: agentsConfigured(env),
     // A team's knowledge base: whether the channels nobody switched have agents.
-    teamDefault: base.kind === 'team' ? {
-      ...await teamDefault(env, base.slug), may: managesTeam(me, base.slug),
-    } : null,
+    teamDefault: base.kind === 'team' ? { ...byDefault, may: managesTeam(me, base.slug) } : null,
     channels: rows.map((r) => ({
       source: r.source,
       channelId: r.channel_id,
@@ -391,16 +410,17 @@ async function switchAgent(env, me, body) {
  * GET /api/kb/stack?org=: the customer's stack drawing (`stack.md` of its knowledge base,
  * src/stack.js) as the inbox draws it, `{ org, repo, path, hash, drawing, by, at, may }`;
  * `drawing` is null while it has none, `error` says why one cannot be drawn. For whoever may
- * read the knowledge base; anyone else, or a customer without one, gets a 404.
+ * read the knowledge base; anyone else, or a customer without one, gets a 404. `?team=` is a
+ * team's, where someone drew one in its knowledge base (its overview shows it, ui/admin.js).
  */
-async function stack(env, me, org) {
-  const repo = repoName('org', String(org || ''));
+async function stack(env, me, org, kind = 'org') {
+  const repo = repoName(kind, String(org || ''));
   const base = repo && await knownRepo(env, repo);
   if (!base || !await mayRead(env, me, base)) {
     return json({ error: 'no such knowledge base' }, 404);
   }
   const out = {
-    org: base.slug, repo, path: STACK_PATH, may: await mayEdit(env, me, base),
+    [kind === 'team' ? 'team' : 'org']: base.slug, repo, path: STACK_PATH, may: await mayEdit(env, me, base),
   };
   const file = env.ARTIFACTS ? await readText(env, repo, STACK_PATH, { full: true })
     .catch(() => ({ error: 'unreadable' })) : { error: 'knowledge bases are not configured' };
@@ -408,6 +428,11 @@ async function stack(env, me, org) {
     return json({ ...out, drawing: null });
   }
   const parsed = parseStack(file.text);
+  if (!parsed.error) {
+    // A part named by an id from before the catalog is the technology that id moved to.
+    const moves = await techMoves(env);
+    parsed.parts = parsed.parts.map((x) => ({ ...x, tech: resolveTech(x.tech, moves) }));
+  }
   // `generated: { by: …, at: … }`, stamped by every write (src/agent/okf.js stampGenerated).
   const fm = splitFrontmatter(file.text);
   const stamp = /\{\s*by:\s*([^,}]+),\s*at:\s*([^}\s]+)\s*\}/.exec((fm && scalar(fm.yaml, 'generated')) || '');
@@ -444,7 +469,29 @@ export async function kbAdmin(request, env, url, me) {
     return extraction;
   }
   if (url.pathname === '/api/kb/stack' && request.method === 'GET') {
-    return stack(env, me, url.searchParams.get('org'));
+    const team = url.searchParams.get('team');
+    return team ? stack(env, me, team, 'team') : stack(env, me, url.searchParams.get('org'));
+  }
+  // The knowledge base's sidebar: whoever looks at it talks to its knowledge-base agent, which
+  // changes it only for who may write it (src/kbchat.js).
+  if ((url.pathname === '/api/kb/chat' && ['GET', 'POST'].includes(request.method))
+    || (url.pathname === '/api/kb/chat/bash' && request.method === 'POST')) {
+    const body = request.method === 'GET' ? {} : await request.json().catch(() => ({}));
+    const repo = request.method === 'GET' ? url.searchParams.get('repo') : body.repo;
+    const base = await knownRepo(env, repo);
+    if (!base || !await mayRead(env, me, base)) {
+      return json({ error: 'no such knowledge base' }, 404);
+    }
+    const write = await mayWrite(env, me, base);
+    if (url.pathname === '/api/kb/chat/bash') {
+      return write ? decideKbChatBash(env, me, base, body) : json({
+        error: 'only the people on its team run commands on its agent\'s computer',
+      }, 403);
+    }
+    if (request.method === 'GET') {
+      return kbChatView(env, me, base, { chat: url.searchParams.get('chat'), write });
+    }
+    return talkInKbChat(env, me, base, body, { write });
   }
   if (url.pathname === '/api/kb/channels' && request.method === 'GET') {
     const base = await knownRepo(env, url.searchParams.get('repo'));
@@ -463,9 +510,17 @@ export async function kbAdmin(request, env, url, me) {
   if (!base || !await mayRead(env, me, base)) {
     return json({ error: 'no such knowledge base' }, 404);
   }
-  if (request.method !== 'GET' && !await mayEdit(env, me, base)) {
+  // Its files are everyone's on the team (src/kbaccess.js `mayWrite`), but its instructions and
+  // areas (`pathOwner`); a path is taken only as it is, so `./systemprompt.md` is not another file.
+  const path = String(body.path || '').replace(/^\/+/, '');
+  if (url.pathname === '/api/kb/file' && request.method !== 'GET' && !isCanonicalPath(path)) {
+    return json({ error: 'give the file\'s path as it is, without ./, ../ or //' }, 400);
+  }
+  const content = url.pathname === '/api/kb/file' && pathOwner(path) === 'member';
+  if (request.method !== 'GET' && !await (content ? mayWrite : mayEdit)(env, me, base)) {
     return json({
-      error: 'the admin team and the managers of the teams it belongs to change it',
+      error: content ? 'the people on its team change it'
+        : 'the admin team and the managers of the teams it belongs to change it',
     }, 403);
   }
   if (url.pathname === '/api/kb/files' && request.method === 'GET') {

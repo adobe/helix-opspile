@@ -32,9 +32,10 @@ import { teamsOf } from './shares.js';
  * replies when it is decided is not folded, and one that gets them after it was folded is split
  * back out (`dethread`), for good, unless the inbox replied for the group in its platform thread
  * (`routed_at`), or it is a reply that landed top-level (REPLY): then it stays in the group for
- * good. A root that announces a thread (🧵, `:thread:`) stays on its own, too. A root that says
- * nothing but @-mentions (the bot, a colleague) continues its author's root before it, minutes
- * later, as a burst (`mentionsOnly`, GREETING_MS).
+ * good. A root that announces a thread (🧵, `:thread:`) stays on its own, too, and so does an item
+ * of a numbered series ("2/14 …", `numbersItem`). A root that says nothing but @-mentions (the
+ * bot, a colleague) continues its author's root before it, minutes later, as a burst
+ * (`mentionsOnly`, GREETING_MS).
  *
  * People continue a chat with more top-level messages where the chat is top-level messages.
  * Where its people reply in platform threads, a new top-level message is nearly always a topic
@@ -259,6 +260,28 @@ export const quotes = (body) => String(body || '').split('\n').some((l) => QUOTE
  * replies there, so it is a topic of its own, as nearly all of them are answered in theirs.
  */
 export const announcesThread = (body) => /🧵|:thread:/u.test(String(body || ''));
+/** Longer lists than that are not posted item by item. */
+const MAX_SERIES = 30;
+/**
+ * An item number of a series at the start of a root: "1/14", "(2/3)", "**3/14 …**", not a date
+ * ("1/14/2027"), a ratio ("3/40", "50/50") or a time ("24/7").
+ */
+const SERIES_ITEM = /^[\s*_~#>([]*(\d{1,2})\s*\/\s*(\d{1,2})(?![\d/%])/u;
+/**
+ * Whether a root numbers itself as an item of a series ("2/14 Forms: …"): its author posted a
+ * list of questions one by one, seconds apart, so that each is answered in its own platform
+ * thread. Each item is a topic of its own, never a burst of the one before it, nor Clef's to fold:
+ * an RFP's fourteen questions, posted in under three minutes, were one entry, whose replies the
+ * inbox would have sent to the last item's thread (src/post.js `target`).
+ */
+export function numbersItem(body) {
+  const m = SERIES_ITEM.exec(String(body || ''));
+  if (!m) {
+    return false;
+  }
+  const [n, of] = [Number(m[1]), Number(m[2])];
+  return of >= 2 && of <= MAX_SERIES && n >= 1 && n <= of;
+}
 const SALUTATION = /^(?:hi+|hel+o+|hey|heya|hiya|howdy|greetings|dear|hallo|moin|servus|hola|bonjour|bonsoir|salut|ciao|buongiorno|ol[aá]|good|guten|morning|afternoon|evening|day|morgen|tag)$/;
 const ADDRESSEE = /^(?:all|everyone|everybody|team|folks|guys|people|there|again|y'?all|you|both|zusammen|alle|miteinander|tous|à|a|le|la|l'équipe|équipe|and|und|et)$/;
 /**
@@ -319,9 +342,12 @@ export function mentionsOnly(body) {
 /**
  * Whether `next`, its author's root right after `prev` (nobody else's root between them),
  * continues it as a burst: within BURST_MS, or GREETING_MS when `prev` only greets or `next` only
- * mentions (`mentionsOnly`).
+ * mentions (`mentionsOnly`). An item of a numbered series continues nothing (`numbersItem`).
  */
 const continues = (prev, prevBody, next, nextBody) => {
+  if (numbersItem(nextBody)) {
+    return false;
+  }
   const gap = Date.parse(next.root_at) - Date.parse(prev.root_at);
   return gap <= BURST_MS || (gap <= GREETING_MS && (greets(prevBody) || mentionsOnly(nextBody)));
 };
@@ -383,6 +409,17 @@ async function answered(env, thread, before = null) {
     .bind(thread.thread, thread.root_id, before).first());
 }
 
+/** The kinds of `threads` (keys) that D1 has, by key. */
+async function kindsOf(env, threads) {
+  const keys = [...new Set(threads.filter(Boolean))];
+  if (!keys.length) {
+    return new Map();
+  }
+  const { results } = await env.DB.prepare(`SELECT thread, kind FROM threads
+    WHERE thread IN (SELECT value FROM json_each(?))`).bind(JSON.stringify(keys)).all();
+  return new Map((results || []).map((r) => [r.thread, r.kind]));
+}
+
 /**
  * The conversations a new root in a conversation channel may continue: the channel's latest
  * ones (by their messages before the root) and the groups of the similar earlier roots, each
@@ -393,7 +430,7 @@ async function conversations(env, thread, similar) {
   const { results: recent } = await env.DB.prepare(`SELECT COALESCE(t.logical_thread, t.thread) AS grp,
       MAX(m.at) AS latest FROM messages m JOIN threads t ON t.thread = m.thread
     WHERE m.source = ? AND m.tenant = ? AND m.channel_id = ? AND m.at < ? AND m.at >= ?
-      AND m.author_key IS NOT NULL AND m.deleted = 0 AND t.thread != ?
+      AND m.author_key IS NOT NULL AND m.deleted = 0 AND t.thread != ? AND t.kind = 'channel'
     GROUP BY grp ORDER BY latest DESC LIMIT ?`)
     .bind(
       thread.source,
@@ -408,9 +445,10 @@ async function conversations(env, thread, similar) {
     .slice(0, RECENT_CONVERSATIONS);
   for (const m of similar) {
     // eslint-disable-next-line no-await-in-loop
-    const row = await env.DB.prepare('SELECT thread, logical_thread FROM threads WHERE thread = ?')
+    const row = await env.DB.prepare('SELECT thread, logical_thread, kind FROM threads WHERE thread = ?')
       .bind(m.metadata.thread).first();
-    const g = row && groupOf(row);
+    // An alert bot's alerts in the channel are no conversation (src/alertbots.js).
+    const g = row && row.kind === 'channel' && groupOf(row);
     if (g && g !== thread.thread && !groups.includes(g)) {
       groups.push(g);
     }
@@ -700,9 +738,11 @@ export async function rethread(env, key, { force = false } = {}) {
   // An exact repeat: the earliest thread in the channel and window with the same skeleton.
   // Only alerts: in conversations, the same words ("thanks!") are often a different talk.
   const conversation = thread.kind === 'channel';
+  // A channel may hold conversations and an alert bot's alerts both (src/alertbots.js): an alert
+  // joins alerts only.
   const twin = !conversation && await env.DB.prepare(`SELECT thread, logical_thread FROM threads
     WHERE source = ? AND tenant = ? AND channel_id = ? AND skeleton_hash = ? AND thread != ?
-      AND root_at >= ? AND root_at <= ? ORDER BY root_at LIMIT 1`)
+      AND root_at >= ? AND root_at <= ? AND kind = ? ORDER BY root_at LIMIT 1`)
     .bind(
       thread.source,
       thread.tenant,
@@ -711,6 +751,7 @@ export async function rethread(env, key, { force = false } = {}) {
       key,
       new Date((at - WINDOW_DAYS * 86400) * 1000).toISOString(),
       thread.root_at,
+      thread.kind,
     ).first();
 
   // A burst: the channel's previous root is by the same person, minutes earlier. People
@@ -749,9 +790,15 @@ export async function rethread(env, key, { force = false } = {}) {
     id: await vectorId(key), values, metadata: { channel: channelKey(thread), thread: key, at },
   }]);
 
+  // The kinds of the threads found: a conversation joins conversations only, an alert alerts only,
+  // where a channel has both (src/alertbots.js).
+  const kinds = await kindsOf(env, (found.matches || [])
+    .map((m) => m.metadata && m.metadata.thread));
+  const sameKind = (m) => !kinds.has(m.metadata.thread)
+    || kinds.get(m.metadata.thread) === thread.kind;
   // Earlier roots in the window, most similar first.
   const earlier = (found.matches || [])
-    .filter((m) => m.metadata && m.metadata.thread !== key && m.metadata.at < at
+    .filter((m) => m.metadata && m.metadata.thread !== key && sameKind(m) && m.metadata.at < at
       && m.metadata.at >= at - WINDOW_DAYS * 86400
       && m.score >= (conversation ? MIN_CANDIDATE_CONVERSATION : MIN_CANDIDATE))
     .sort((a, b) => b.score - a.score);
@@ -760,7 +807,8 @@ export async function rethread(env, key, { force = false } = {}) {
   let asked = null;
   const quoting = quotes(root.parsed.body);
   const announcing = conversation && !quoting && announcesThread(root.parsed.body);
-  const asking = Boolean(conversation && !quoting && !announcing && !burst);
+  const numbering = conversation && !quoting && !announcing && numbersItem(root.parsed.body);
+  const asking = Boolean(conversation && !quoting && !announcing && !numbering && !burst);
   // The channel's latest conversations and the similar ones, read as a transcript.
   const convs = asking ? await conversations(env, thread, earlier.slice(0, 4)) : [];
   // A reply that landed top-level: it @-mentions somebody who spoke in one of them, minutes
@@ -776,8 +824,8 @@ export async function rethread(env, key, { force = false } = {}) {
   // in its own platform thread is a conversation of its own, unless it is such a reply.
   const own = asking && await answered(env, thread);
   const replied = own && !addressed;
-  if (quoting || announcing || replied) {
-    // On its own: see quotes(), announcesThread() and answered().
+  if (quoting || announcing || numbering || replied) {
+    // On its own: see quotes(), announcesThread(), numbersItem() and answered().
   } else if (burst) {
     match = { thread: burst.thread, via: 'burst', p: 1 };
   } else if (conversation) {
@@ -838,7 +886,7 @@ export async function rethread(env, key, { force = false } = {}) {
   const group = logical || key;
   const joined = [key];
   for (const m of conversation ? [] : found.matches || []) {
-    if (m.metadata && m.metadata.thread !== key && m.metadata.at > at
+    if (m.metadata && m.metadata.thread !== key && sameKind(m) && m.metadata.at > at
       && m.metadata.at <= at + WINDOW_DAYS * 86400 && m.score >= AUTO_MATCH) {
       // eslint-disable-next-line no-await-in-loop
       const later = await env.DB.prepare('SELECT logical_thread FROM threads WHERE thread = ?')
@@ -856,7 +904,7 @@ export async function rethread(env, key, { force = false } = {}) {
   const { results: laterTwins } = conversation ? { results: [] } : await env.DB.prepare(`SELECT t.thread, t.logical_thread,
       a.root_at AS anchor_at FROM threads t LEFT JOIN threads a ON a.thread = t.logical_thread
     WHERE t.source = ? AND t.tenant = ? AND t.channel_id = ? AND t.skeleton_hash = ? AND t.thread != ?
-      AND t.root_at > ? AND t.root_at <= ?`)
+      AND t.root_at > ? AND t.root_at <= ? AND t.kind = ?`)
     .bind(
       thread.source,
       thread.tenant,
@@ -865,6 +913,7 @@ export async function rethread(env, key, { force = false } = {}) {
       key,
       thread.root_at,
       new Date((at + WINDOW_DAYS * 86400) * 1000).toISOString(),
+      thread.kind,
     ).all();
   for (const t of laterTwins || []) {
     if (!t.logical_thread || joined.includes(t.logical_thread) || t.anchor_at > thread.root_at) {
@@ -936,6 +985,7 @@ export async function rethread(env, key, { force = false } = {}) {
     p: match ? match.p : null,
     ...(quoting ? { reason: 'quotes a message' } : {}),
     ...(announcing ? { reason: 'starts a thread' } : {}),
+    ...(numbering ? { reason: 'numbers an item' } : {}),
     ...(replied ? { reason: 'has replies of its own' } : {}),
     // What Clef thought of the best candidate when it said no (for tuning MIN_CLEF), and whether
     // that one was held in threads (MIN_CLEF_THREADED).

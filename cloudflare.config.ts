@@ -72,6 +72,10 @@ const SLACK_VARS = ['SLACK_JOIN_TEAMS'] as const;
 // header's Stats entry shows only with both, and only to members of those teams.
 const STATS_VARS = ['KLICKHAUS_URL', 'KLICKHAUS_TEAMS'] as const;
 
+// D1_READ_REPLICAS, optional: set (to 1) once the database's read replication is on; the rooms'
+// events then carry the primary's bookmark (src/d1session.js).
+const D1_VARS = ['D1_READ_REPLICAS'] as const;
+
 // Discord, optional: DISCORD_GUILDS (comma-separated server ids) turns the poller on, with the
 // secret DISCORD_BOT_TOKEN. DISCORD_STAFF_ROLES: role ids whose members count as staff;
 // DISCORD_HISTORY_DAYS: how far back the first poll reads (default 30); DISCORD_POLL_SECONDS:
@@ -90,9 +94,17 @@ const CLICKHOUSE_VARS = ['CLICKHOUSE_URL', 'CLICKHOUSE_DATABASE', 'CLICKHOUSE_US
 // TEAMS_APP_ID: the opspile Teams app's id in the org catalog, which turns the Teams bot on
 // (agents' post_message in Teams threads; src/teamsbot.js). TEAMS_BOT_SERVICE_URL: the Bot
 // Connector to post through, default the public cloud's.
+// WEB_SEARCH_PROVIDER (webiq, ceramic, linkup or exa; default webiq where the secret
+// WEBIQ_API_KEY is set, else ceramic) and WEB_SEARCH_GATEWAY (default AGENT_GATEWAY, for all but
+// webiq): the agents' web_search (src/agent/websearch.js).
+// BROWSER_RUN_ACCOUNT (default: the Worker's account): where the computers' browser runs, with
+// BROWSER_RUN_TOKEN (src/agent/browser.js).
+// FEEDBACK_REPO (`owner/name`), with the secret FEEDBACK_GITHUB_TOKEN: the repository the
+// agents' send_feedback files its issues in (src/agent/feedback.js); off without both.
 const AGENT_VARS = [
   'AGENT_MODEL', 'AGENT_CHANNELS', 'AGENT_GATEWAY', 'AGENT_REGION', 'AI_GATEWAY_ACCOUNT',
   'AGENT_ANTHROPIC_BETA', 'AGENT_BASE_URL', 'TEAMS_APP_ID', 'TEAMS_BOT_SERVICE_URL',
+  'WEB_SEARCH_PROVIDER', 'WEB_SEARCH_GATEWAY', 'FEEDBACK_REPO', 'BROWSER_RUN_ACCOUNT',
 ] as const;
 
 // Membership requests, optional (the agents' request_membership tool, src/agent/membership.js):
@@ -103,14 +115,35 @@ const AGENT_VARS = [
 // MEMBERSHIP_SLACK_BOT (the relay's bot user id, which the post mentions).
 const MEMBERSHIP_VARS = ['MEMBERSHIP_SLACK_CHANNEL', 'MEMBERSHIP_SLACK_BOT'] as const;
 
+// The global fluffyjaws MCP server, optional (src/agent/fluffyjaws.js): FLUFFYJAWS_ISSUER, its
+// Okta authorization server; FLUFFYJAWS_CLIENT_ID, opspile's public Okta client there, which a
+// member of the admin team signs in with; or FLUFFYJAWS_SERVICE_CLIENT_ID and the secret
+// FLUFFYJAWS_SERVICE_SECRET, a FluffyJaws service app, which wins.
+const FLUFFYJAWS_VARS = [
+  'FLUFFYJAWS_ISSUER', 'FLUFFYJAWS_CLIENT_ID', 'FLUFFYJAWS_SERVICE_CLIENT_ID',
+] as const;
+
+// The membership bindings, and SLACK_MCP: the `SlackMcp` entrypoint of the slack-automation
+// relay (SLACK_AUTOMATION_WORKER), the global slack_channels MCP server (src/agent/slackmcp.js),
+// off for every team and channel until the admin team turns it on.
 function membershipBindings() {
-  const bound = (binding: string, worker: string | undefined) => (worker
-    ? { [binding]: bindings.worker({ worker, exportName: 'MembershipRequests' }) }
-    : {});
+  const bound = (binding: string, worker: string | undefined, exportName = 'MembershipRequests') => (
+    worker ? { [binding]: bindings.worker({ worker, exportName }) } : {});
   return {
     ...bound('TEAMS_ADMIN', process.env.TEAMS_ADMIN_WORKER),
     ...bound('SLACK_AUTOMATION', process.env.SLACK_AUTOMATION_WORKER),
+    ...bound('SLACK_MCP', process.env.SLACK_AUTOMATION_WORKER, 'SlackMcp'),
   };
+}
+
+// The customer portal, optional (src/portalsource.js): a service binding to its Worker
+// (portal/cloudflare.config.ts, src/portal/worker.js), of the same account, named by
+// PORTAL_WORKER (helix-opspile-portal, its `PortalPlatform` entrypoint).
+// With it, the inbox posts, reacts and opens channels in the portal; the portal's events reach
+// the inbox through the `PortalSource` entrypoint of src/index.js, bound or not.
+function portalBinding() {
+  const worker = process.env.PORTAL_WORKER;
+  return worker ? { PORTAL: bindings.worker({ worker, exportName: 'PortalPlatform' }) } : {};
 }
 
 const SECRETS = [
@@ -120,7 +153,7 @@ const SECRETS = [
   // Thread agents: the Amazon Bedrock API key, and (AI_GATEWAY_TOKEN_REQUIRED=1) a token for
   // an authenticated AI Gateway. Required only where agents are on.
   ...(process.env.AGENT_MODEL ? ['BEDROCK_API_KEY'] : []),
-  // The global browser MCP server (Cloudflare's hosted Browser Run one): an account API token
+  // The computers' browser (src/agent/browser.js, Browser Run over CDP): an account API token
   // with Browser Run Write only. Required only where agents are on.
   ...(process.env.AGENT_MODEL ? ['BROWSER_RUN_TOKEN'] : []),
   ...(process.env.AGENT_MODEL && process.env.AI_GATEWAY_TOKEN_REQUIRED ? ['AI_GATEWAY_TOKEN'] : []),
@@ -128,6 +161,15 @@ const SECRETS = [
   // when they are not in it (src/invite.js). Optional; SLACK_ADMIN_TOKEN_REQUIRED=1 at deploy
   // has `cf` check it exists.
   ...(process.env.SLACK_ADMIN_TOKEN_REQUIRED ? ['SLACK_ADMIN_TOKEN'] : []),
+  // The agents' web_search on Microsoft Web IQ (src/agent/websearch.js). Optional: a repository
+  // secret, which the deploy uploads with the version (.github/workflows/ci.yml); declared
+  // where it is set at deploy, or WEB_SEARCH_PROVIDER=webiq has `cf` check it exists.
+  ...(process.env.WEBIQ_API_KEY || process.env.WEB_SEARCH_PROVIDER === 'webiq'
+    ? ['WEBIQ_API_KEY'] : []),
+  // The agents' feedback (send_feedback): a fine-grained token with Issues: read and write on
+  // FEEDBACK_REPO. A repository secret, uploaded with the version like WEBIQ_API_KEY; declared
+  // where FEEDBACK_REPO is set.
+  ...(process.env.FEEDBACK_REPO ? ['FEEDBACK_GITHUB_TOKEN'] : []),
   // Access sync: required only where it is configured.
   ...(process.env.ACCESS_APP_ID ? ['ACCESS_API_TOKEN'] : []),
   // Discord: the bot's token where the poller is on, the app's secret where people connect.
@@ -135,6 +177,8 @@ const SECRETS = [
   ...(process.env.DISCORD_CLIENT_ID ? ['DISCORD_CLIENT_SECRET'] : []),
   // The klickhaus export's ClickHouse password, where it is on.
   ...(process.env.CLICKHOUSE_URL ? ['CLICKHOUSE_PASSWORD'] : []),
+  // The FluffyJaws service app's client secret, where one is configured.
+  ...(process.env.FLUFFYJAWS_SERVICE_CLIENT_ID ? ['FLUFFYJAWS_SERVICE_SECRET'] : []),
 ];
 
 /** Per-environment resource names; `cf deploy` creates them if they are missing. */
@@ -151,7 +195,8 @@ function resources(mode: string | undefined) {
     IMAGES: bindings.r2({ name: `helix-opspile-images${suffix}` }),
     NORMALIZE: bindings.queue({ name: `helix-opspile-normalize${suffix}` }),
     DB: bindings.d1({ name: `helix-opspile${suffix}` }),
-    // Workers AI: Clef (thread labels) and Clairic (facts).
+    // Workers AI: Clef (thread labels) and Clairic (facts), and the agents' web_search (Web
+    // Search API, through AI Gateway).
     AI: bindings.ai(),
     // Root messages, for re-threading. Created by hand (768 dimensions, cosine, metadata
     // indexes on `channel` and `at`); see README.
@@ -211,10 +256,14 @@ function vars(deployed: boolean) {
     ...process.env,
     AI_GATEWAY_ACCOUNT: process.env.AI_GATEWAY_ACCOUNT
       || (process.env.AGENT_MODEL ? process.env.CLOUDFLARE_ACCOUNT_ID : undefined),
+    // The computers' browser (src/agent/browser.js) runs in the Worker's account too.
+    BROWSER_RUN_ACCOUNT: process.env.BROWSER_RUN_ACCOUNT
+      || (process.env.AGENT_MODEL ? process.env.CLOUDFLARE_ACCOUNT_ID : undefined),
   };
   return Object.fromEntries(
     [...VARS, ...AGENT_VARS, ...ACCESS_SYNC_VARS, ...SIGNIN_VARS, ...MOVE_VARS, ...SLACK_VARS,
-      ...DISCORD_VARS, ...CLICKHOUSE_VARS, ...STATS_VARS, ...MEMBERSHIP_VARS]
+      ...DISCORD_VARS, ...CLICKHOUSE_VARS, ...STATS_VARS, ...MEMBERSHIP_VARS, ...FLUFFYJAWS_VARS,
+      ...D1_VARS]
       .filter((name) => values[name])
       .map((name) => [name, bindings.text(values[name] as string)]),
   );
@@ -251,12 +300,15 @@ export default defineConfig(({ mode }) => {
         BrowserBox: workerExports.durableObject({ state: 'deleted' }),
       },
       triggers: deployed
-        ? [triggers.scheduled({ schedule: '*/20 * * * *' }), ...consumers(mode)]
+        // Every five minutes too, for the GitHub items thread agents watch alone (src/index.js).
+        ? [triggers.scheduled({ schedule: '*/20 * * * *' }), triggers.scheduled({ schedule: '*/5 * * * *' }),
+          ...consumers(mode)]
         : [],
       env: {
         ...vars(deployed),
         ...resources(mode),
         ...membershipBindings(),
+        ...portalBinding(),
         COGS_RESOURCES: bindings.text(cogsResources(mode, name)),
         // One Durable Object per ops team: live read state (#7).
         ROOMS: bindings.durableObject({ worker: name, exportName: 'TeamRoom' }),
@@ -266,6 +318,12 @@ export default defineConfig(({ mode }) => {
         DISCORD: bindings.durableObject({ worker: name, exportName: 'DiscordPoller' }),
         // Dynamic Workers: the shells of the agents' computers (the `computer` tool).
         LOADER: bindings.workerLoader(),
+        // The renderer Worker (graphviz/cloudflare.config.ts, src/graphviz/worker.js): Graphviz
+        // on the server, for the diagrams of the knowledge bases (src/diagrams.js). Deployed
+        // first; without it (cf dev), those do without.
+        ...(deployed ? {
+          GRAPHVIZ: bindings.worker({ worker: `helix-opspile-graphviz${mode === 'prod' ? '' : `-${mode}`}`, exportName: 'Graphviz' }),
+        } : {}),
         ...Object.fromEntries(SECRETS.map((name) => [name, bindings.secret()])),
       },
     },

@@ -18,7 +18,9 @@ import { render } from '../src/channels.js';
 import { headerValue, mcp, PROTOCOL } from '../src/mcp.js';
 import { TOOLS } from '../src/mcp-tools.js';
 import { seal } from '../src/post.js';
+import { storeConcepts } from '../src/kbindex.js';
 import { d1 } from './d1.js';
+import { fakeRepo } from './fakes.js';
 
 // Made-up keys, ids and people only.
 const KEY = Buffer.alloc(32, 7).toString('base64url');
@@ -297,6 +299,29 @@ describe('mcp tools', () => {
     assert.match(team.body.result.content[0].text, /Your teams: helix/);
   });
 
+  it('search_threads finds knowledge-base entries too, and get_knowledge reads them', async () => {
+    const e = env();
+    const text = '---\ntype: Playbook\ntitle: Site down checklist\n---\n\nCheck the origin first.\n';
+    e.DB.sqlite.exec(`INSERT INTO knowledge_bases (repo, kind, slug, remote, created_at) VALUES
+      ('kb-team-helix', 'team', 'helix', 'r', '2026-10-21T00:00:00Z'),
+      ('kb-org-acme', 'org', 'acme', 'r', '2026-10-21T00:00:00Z')`);
+    await storeConcepts(e, 'kb-team-helix', [{ path: 'playbooks/site-down.md', hash: 'h1', text }]);
+    await storeConcepts(e, 'kb-org-acme', [{ path: 'sites/www.md', hash: 'h2', text: '---\ntype: Site\ntitle: www\n---\n\nDown on Mondays.\n' }]);
+    e.ARTIFACTS = { get: async () => fakeRepo({ 'playbooks/site-down.md': text }) };
+    const r = structured(await callTool(e, 'search_threads', { query: 'down' }));
+    const where = (k) => [k.repo, k.path, k.knowledge_base, k.team || k.customer, k.matched];
+    assert.deepEqual(r.knowledge.map(where), [
+      ['kb-team-helix', 'playbooks/site-down.md', 'Helix', 'helix', ['title']],
+      ['kb-org-acme', 'sites/www.md', 'acme', 'acme', ['text']],
+    ]);
+    const read = structured(await callTool(e, 'get_knowledge', { repo: 'kb-team-helix', path: 'playbooks/site-down.md' }));
+    assert.deepEqual(read, { repo: 'kb-team-helix', path: 'playbooks/site-down.md', text });
+    const missing = await callTool(e, 'get_knowledge', { repo: 'kb-team-helix', path: 'nope.md' });
+    assert.match(missing.body.result.content[0].text, /no such file/);
+    const other = await callTool(e, 'get_knowledge', { repo: 'kb-org-umbrella', path: 'a.md' });
+    assert.equal(other.body.result.isError, true);
+  });
+
   it('list_threads leaves out what `exclude` names, and explains bad values there too', async () => {
     const n = async (args) => structured(await callTool(env(), 'list_threads', args)).matched;
     assert.equal(await n({ exclude: { platform: ['discord'] } }), 1);
@@ -310,21 +335,20 @@ describe('mcp tools', () => {
     assert.match(typo.body.result.content[0].text, /No threads from customer acne to exclude/);
   });
 
-  it('list_threads filters by topic and by the channel\'s tech stack', async () => {
+  it('list_threads filters by topic and by what the thread shows', async () => {
     const e = env();
     e.DB.sqlite.prepare(`INSERT INTO labels (thread, kind, kind_p, labeled_through, model,
       labeled_at, topics) VALUES (?, 'incident', 0.9, '2026-10-21T10:05:00Z', 'clef', '2026-10-21T10:06:00Z',
       '{"cdn":0.93,"performance":0.81}')`).run(SLACK);
-    e.DB.sqlite.prepare(`INSERT INTO channel_tech (source, tenant, channel_id, tech, p, thread, updated_at)
-      VALUES ('slack', 'E1', 'C1', 'akamai', 0.95, ?, '2026-10-21T10:06:00Z'),
-        ('slack', 'E1', 'C1', 'fastly', 0.4, ?, '2026-10-21T10:06:00Z')`).run(SLACK, SLACK);
+    e.DB.sqlite.prepare(`INSERT INTO thread_tech (thread, tech, p)
+      VALUES (?, 'akamai', 0.95), (?, 'fastly', 0.4)`).run(SLACK, SLACK);
     const r = structured(await callTool(e, 'list_threads', {}));
     assert.deepEqual([r.threads[0].topics, r.threads[0].tech], [['cdn', 'performance'], ['akamai']]);
     const n = async (args) => structured(await callTool(e, 'list_threads', args)).matched;
     assert.equal(await n({ topic: ['cdn', 'seo'] }), 1);
     assert.equal(await n({ topic: ['seo'] }), 0);
     assert.equal(await n({ tech: ['akamai'] }), 1);
-    // Below the threshold, a technology is not the channel's.
+    // Below the threshold, the thread does not show it.
     assert.equal(await n({ tech: ['fastly'] }), 0);
     assert.equal(await n({ exclude: { topic: ['performance'] } }), 0);
     const bad = await callTool(e, 'list_threads', { topic: ['weather'] });
@@ -335,12 +359,12 @@ describe('mcp tools', () => {
     const e = env();
     const list = structured(await callTool(e, 'list_extraction_rules', { team: 'helix' }));
     assert.deepEqual(list.rules, []);
-    assert.ok(list.inherited.rules.some((r) => r.field === 'site'));
+    assert.ok(list.inherited.rules.some((r) => r.field === 'site' && r.label === 'Site'));
     const other = await callTool(e, 'list_extraction_rules', { team: 'edge' });
     assert.match(other.body.result.content[0].text, /Not one of your teams: edge/);
 
     const rule = {
-      name: 'Outage words', field: 'symptom', pattern: '\\b(down|broken)\\b', value: '$1',
+      name: 'Outage words', field: 'symptom', label: 'Symptom', pattern: '\\b(down|broken)\\b', value: '$1',
     };
     const tested = structured(await callTool(e, 'test_extraction_rule', { rule, thread: SLACK }));
     assert.deepEqual(tested.facts, [{ field: 'symptom', value: 'down' }]);
@@ -349,7 +373,7 @@ describe('mcp tools', () => {
     assert.match(refused.body.result.content[0].text, /managers of helix/);
     const boss = { ...ME, teams: [{ slug: 'helix', name: 'Helix', role: 'manager' }] };
     const saved = await send(e, req('tools/call', { name: 'save_extraction_rule', arguments: { team: 'helix', ...rule } }), boss);
-    assert.equal(saved.body.result.structuredContent.rule.team, 'helix');
+    assert.deepEqual(['team', 'label'].map((k) => saved.body.result.structuredContent.rule[k]), ['helix', 'Symptom']);
     const tech = await send(e, req('tools/call', {
       name: 'save_tech',
       arguments: {

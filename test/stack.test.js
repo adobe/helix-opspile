@@ -12,9 +12,12 @@
 
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
-import { checkChanges } from '../src/agent/kbwrite.js';
+import { checkChanges, writeKnowledge } from '../src/agent/kbwrite.js';
 import { checkConcept } from '../src/agent/okf.js';
-import { api, orgStacks } from '../src/api.js';
+import { api } from '../src/api.js';
+import {
+  orgStacksOf, stackParts, storeOrgStack, syncOrgStacks,
+} from '../src/orgstacks.js';
 import { checkTech, saveTech } from '../src/extract.js';
 import { vocab } from '../src/label.js';
 import {
@@ -22,6 +25,7 @@ import {
 } from '../src/stack.js';
 import { stackNote } from '../src/agent/tools.js';
 import { d1 } from './d1.js';
+import { gitServer, hasGit } from './git-server.js';
 import { fakeRepo } from './fakes.js';
 import { SCRIPTS } from './ui.js';
 
@@ -176,27 +180,26 @@ ACME sells on Edge Delivery behind Akamai. Orders go to their ERP.
 });
 
 describe('a customer\'s tech stack', () => {
-  it('is what its channels show, each technology at the highest probability of any', () => {
-    assert.deepEqual(orgStacks([
-      {
-        thread: 'a', org: 'acme', tech: 'eds', p: 0.95,
-      },
-      {
-        thread: 'b', org: 'acme', tech: 'eds', p: 1,
-      },
-      {
-        thread: 'b', org: 'acme', tech: 'akamai', p: 0.8123,
-      },
-      {
-        thread: 'c', org: 'globex', tech: 'da', p: 0.9,
-      },
-      {
-        thread: 'd', org: null, tech: 'da', p: 0.9,
-      },
-    ]), {
-      acme: [{ tech: 'eds', p: 1 }, { tech: 'akamai', p: 0.812 }],
-      globex: [{ tech: 'da', p: 0.9 }],
-    });
+  it('is what its stack drawing draws, kept for the inbox: its parts but people', async () => {
+    assert.deepEqual(stackParts(stackFile(DRAWING)).map((x) => [x.layer, x.name, x.tech]), [
+      ['edge', 'Akamai', 'akamai'], ['site', 'Edge Delivery', 'eds'], ['content', 'Document Authoring', 'da'],
+      ['code', 'Order sync', null], ['commerce', 'Their ERP', 'erp'],
+    ]);
+    assert.deepEqual(stackParts('no tables'), []);
+    assert.deepEqual(stackParts(null), []);
+    const DB = d1();
+    DB.sqlite.exec(`INSERT INTO knowledge_bases (repo, kind, slug, remote, created_at) VALUES
+      ('kb-org-acme', 'org', 'acme', 'r', 'x'), ('kb-org-globex', 'org', 'globex', 'r', 'x'),
+      ('kb-org-new', 'org', 'new', 'r', 'x')`);
+    const repos = { 'kb-org-acme': { 'stack.md': stackFile(DRAWING) }, 'kb-org-globex': { 'sites/a.md': 'x' }, 'kb-org-new': {} };
+    const env = { DB, ARTIFACTS: { get: async (name) => fakeRepo(repos[name]) } };
+    assert.deepEqual(await syncOrgStacks(env), { stored: 3, failed: 0 });
+    assert.deepEqual(await syncOrgStacks(env), { stored: 0, failed: 0 });
+    const stacks = await orgStacksOf(env, ['acme', 'globex', 'nobody']);
+    assert.deepEqual(Object.keys(stacks), ['acme']);
+    assert.equal(stacks.acme[0].name, 'Akamai');
+    await storeOrgStack(env, 'acme', null);
+    assert.deepEqual(await orgStacksOf(env, ['acme']), {});
   });
 
   it('has each technology in a layer, the team\'s own or else the admin team\'s', async () => {
@@ -266,8 +269,11 @@ describe('GET /api/kb/stack', () => {
     const broken = await (await call(env, ADMIN, '/api/kb/stack?org=initech')).json();
     assert.equal(broken.drawing, null);
     assert.match(broken.error, /"## Parts" heading/);
-    // Nobody else's, and no customer without a knowledge base.
-    assert.equal((await call(env, OUTSIDER, '/api/kb/stack?org=acme')).status, 404);
+    // Everyone on a team's, which they do not change; nobody else's, and no customer without a
+    // knowledge base.
+    const theirs = await (await call(env, OUTSIDER, '/api/kb/stack?org=acme')).json();
+    assert.deepEqual([theirs.repo, theirs.may], ['kb-org-acme', false]);
+    assert.equal((await call(env, { ...OUTSIDER, teams: [] }, '/api/kb/stack?org=acme')).status, 404);
     assert.equal((await call(env, ADMIN, '/api/kb/stack?org=nope')).status, 404);
     assert.equal((await call(env, ADMIN, '/api/kb/stack?org=_unassigned')).status, 404);
   });
@@ -301,20 +307,54 @@ describe('ui/stack.js', () => {
       detected: [{ tech: 'akamai', name: 'Akamai', p: 0.9 }, { tech: 'da', name: 'Document <i>Authoring</i>', p: 0.8 }],
     });
     assert.doesNotMatch(html, /<b>CDN|<img|<i>/);
-    assert.match(html, /<div class="stk-part stk-seen" tabindex="0" data-part="0" title="A &lt;b&gt;CDN&lt;\/b&gt;\nAkamai: 90% sure from their threads"><b>A &lt;b&gt;CDN&lt;\/b&gt;<\/b>/);
-    assert.match(html, /<div class="stk-more"><span class="stk-mh">Also in their threads<\/span><span class="stk-chip" title="80% sure from their threads">Document &lt;i&gt;Authoring&lt;\/i&gt;<\/span><\/div>/);
+    assert.match(html, /<div class="stk-part stk-seen" tabindex="0" data-part="0" title="A &lt;b&gt;CDN&lt;\/b&gt;\nAkamai: 90% confidence"><b>A &lt;b&gt;CDN&lt;\/b&gt;<\/b>/);
+    assert.match(html, /<div class="stk-more"><span class="stk-mh">Also in their threads<\/span><span class="stk-chip" title="80% confidence">Document &lt;i&gt;Authoring&lt;\/i&gt;<\/span><\/div>/);
   });
 });
 
 describe('what an agent is told about the stack drawing', () => {
   it('names its parts by layer and the base to draw it again from, or that there is none', () => {
-    const seen = [{ tech: 'akamai', name: 'Akamai', p: 0.97 }, { tech: 'fastly', name: 'Fastly', p: 0.84 }];
+    const seen = [{ tech: 'akamai', name: 'Akamai', n: 12 }, { tech: 'fastly', name: 'Fastly', n: 1 }];
     assert.equal(stackNote({ error: 'no such file: stack.md' }, seen), 'kb-org has no stack.md yet.\n'
-      + 'Clef saw in this channel, and the drawing has no part for: Akamai (akamai, 97%), Fastly (fastly, 84%). Clef can be wrong: draw a part only for what the thread or the knowledge base shows.');
+      + 'Clef saw in the customer\'s threads of the last 90 days, and the drawing has no part for: Akamai (akamai, 12 threads), Fastly (fastly, 1 thread). Clef can be wrong: draw a part only for what the thread or the knowledge base shows.');
     const note = stackNote({ hash: 'h1', text: stackFile(DRAWING) }, seen);
     assert.match(note, /^kb-org's stack\.md \(hash h1, the base for draw_stack\): 5 parts, 2 flows\.\n- Edge: Akamai \(akamai\)\n- Site: Edge Delivery \(eds\)\n/);
     assert.match(note, /- Code: Order sync\n/);
-    assert.match(note, /has no part for: Fastly \(fastly, 84%\)\./);
+    assert.match(note, /has no part for: Fastly \(fastly, 1 thread\)\./);
+    // What the drawing has and no recent thread showed: Edge Delivery here.
+    assert.match(note, /none of the customer's threads of the last 90 days showed it: eds, da, erp\./);
+    assert.doesNotMatch(stackNote({ hash: 'h1', text: stackFile(DRAWING) }, []), /showed it/);
     assert.match(stackNote({ hash: 'h2', text: '---\ntype: Stack Drawing\n---\n\nNo tables.\n' }), /cannot be drawn: .*Draw it again\./);
+  });
+});
+
+describe('a write of a customer\'s stack drawing', { skip: !hasGit() && 'git is not installed' }, () => {
+  it('keeps its parts for the list by customer, and leaves no stale row when that fails', async () => {
+    const srv = await gitServer();
+    const { error } = console;
+    try {
+      srv.create('kb-org-acme');
+      const DB = d1();
+      const env = { DB, ARTIFACTS: srv.artifacts };
+      const opts = {
+        message: 'm', by: 'opspile-agent/m', at: '2026-11-20T10:00:00.000Z', logEntry: 'e',
+      };
+      await writeKnowledge(env, 'kb-org-acme', [{ path: 'stack.md', content: stackFile(DRAWING) }], opts);
+      assert.equal((await orgStacksOf(env, ['acme'])).acme.length, 5);
+      // The row's write fails: the row goes, so the cron reads the file again.
+      const prepare = DB.prepare.bind(DB);
+      const down = async () => {
+        throw new Error('D1 down');
+      };
+      DB.prepare = (sql) => (/INSERT INTO org_stacks/.test(sql) ? { bind: () => ({ run: down }) } : prepare(sql));
+      console.error = () => {};
+      const again = stackFile({ ...DRAWING, summary: 'Changed.' });
+      await writeKnowledge(env, 'kb-org-acme', [{ path: 'stack.md', content: again, base: null }], opts).catch(() => null);
+      DB.prepare = prepare;
+      assert.deepEqual(DB.rows("SELECT org FROM org_stacks WHERE org = 'acme'"), []);
+    } finally {
+      console.error = error;
+      await srv.close();
+    }
   });
 });

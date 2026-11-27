@@ -1,0 +1,87 @@
+<!doctype html>
+<!-- Dev only (npm run ui:dev, GET /__dev/notify): tries every way the inbox notifies, one button each. -->
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Notification test</title>
+<style>
+  body { font: 15px/1.5 system-ui, sans-serif; max-width: 760px; margin: 32px auto; padding: 0 16px; }
+  button { font: inherit; font-weight: 600; padding: 10px 18px; border-radius: 18px; margin: 4px 0; cursor: pointer; }
+  .row { margin: 18px 0; }
+  .row p { margin: 4px 0 0; opacity: .7; }
+  pre { background: rgba(127, 127, 127, .12); padding: 12px; border-radius: 8px; white-space: pre-wrap; font-size: 13px; }
+</style>
+<h1>Notification test</h1>
+<pre id="state">…</pre>
+<div class="row"><button id="ask">0. Ask this browser to allow notifications</button></div>
+<div class="row"><button id="plain">1. Plain notification (new Notification)</button>
+  <p>The page's own notification, no service worker.</p></div>
+<div class="row"><button id="sw">2. Service-worker notification (what the inbox does)</button>
+  <p>registration.showNotification, the same options as ui/inbox.js showNote.</p></div>
+<div class="row"><button id="sw5">3. Same as 2, in 5 seconds</button>
+  <p>Switch to another app or tab right after clicking.</p></div>
+<div class="row"><button id="full">4. Full path: someone @-mentions you in the inbox, in 5 seconds</button>
+  <p>Opens the inbox in a new tab (keep it open), then the fake backend posts a mention there and the
+  inbox's own code notifies. Switch to another app after clicking. The sender is random: about half have a
+  (made-up) face, the rest show their initials. Press it a few times.<br>For the sound: click once anywhere in
+  the inbox tab first (browsers only let a page play sound after a click in it); the menu's "Play a sound"
+  turns it on and off.</p></div>
+<div class="row"><button id="help">5. The troubleshooter</button>
+  <p>Opens the inbox at /inbox?notify=help: the dialog the user menu's "Send a test notification" opens.
+  "Forget the welcome" lets the inbox send its "Notifications are on" again on the next load.</p>
+  <button id="forget">Forget the welcome</button></div>
+<h2>Log</h2>
+<pre id="log"></pre>
+<script type="module">
+const $ = (id) => document.getElementById(id);
+const log = (...a) => { $('log').textContent = `${new Date().toLocaleTimeString()} ${a.join(' ')}\n${$('log').textContent}`; };
+let n = 0;
+async function state() {
+  const reg = await navigator.serviceWorker?.getRegistration();
+  const shown = reg ? await reg.getNotifications() : [];
+  $('state').textContent = [
+    `secure context: ${isSecureContext}`,
+    `Notification.permission: ${'Notification' in window ? Notification.permission : 'unsupported'}`,
+    `service worker: ${reg ? `${reg.active?.state || 'not active'} (scope ${reg.scope})` : 'none'}`,
+    `controlled by it: ${Boolean(navigator.serviceWorker?.controller)}`,
+    `notifications Chrome says are on screen: ${shown.length}`,
+    `welcomed (opspile.notify.welcomed): ${localStorage.getItem('opspile.notify.welcomed') || 'never'}`,
+  ].join('\n');
+  return reg;
+}
+const opts = (what) => ({
+  body: `${what} · test ${++n} at ${new Date().toLocaleTimeString()}`,
+  tag: `opspile:test:${Date.now()}`, icon: '/icon-192.png', badge: '/icon-192.png', data: { url: '/inbox?notify=seen' },
+});
+async function viaSw(what) {
+  try {
+    const reg = await navigator.serviceWorker.ready;
+    await reg.showNotification('Enterprise Support test', opts(what));
+    log(`${what}: showNotification resolved (Chrome handed it to the OS)`);
+  } catch (e) { log(`${what}: showNotification failed: ${e.message}`); }
+  state();
+}
+$('ask').onclick = async () => { log(`permission: ${await Notification.requestPermission()}`); state(); };
+$('plain').onclick = () => {
+  try {
+    const note = new Notification('Enterprise Support test', opts('plain'));
+    note.onshow = () => log('plain: shown (onshow fired)');
+    note.onerror = () => log('plain: onerror fired');
+    note.onclick = () => { log('plain: clicked'); note.close(); };
+  } catch (e) { log(`plain: failed: ${e.message}`); }
+};
+$('sw').onclick = () => viaSw('service worker');
+$('sw5').onclick = () => { log('service worker: in 5 s…'); setTimeout(() => viaSw('service worker, delayed'), 5000); };
+$('full').onclick = () => {
+  window.open('/inbox', 'opspile-inbox');
+  log('full path: inbox opened, mention in 5 s…');
+  setTimeout(async () => {
+    const res = await fetch('/__dev/simulate?mention=1', { method: 'POST' });
+    log(`full path: mention posted (${res.status}); the inbox tab notifies now`);
+    setTimeout(state, 2000);
+  }, 5000);
+};
+$('help').onclick = () => window.open('/inbox?notify=help', 'opspile-inbox');
+$('forget').onclick = () => { localStorage.removeItem('opspile.notify.welcomed'); log('welcome forgotten'); state(); };
+navigator.serviceWorker?.register('/sw.js').then(state, (e) => log(`sw register failed: ${e.message}`));
+state();
+</script>

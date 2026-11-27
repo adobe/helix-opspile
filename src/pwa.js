@@ -23,10 +23,15 @@ export const MANIFEST = {
   id: '/inbox',
   name: 'Enterprise Support',
   short_name: 'Support',
-  description: 'The ops inbox for Slack and Microsoft Teams',
+  description: 'The ops inbox for Slack, Microsoft Teams, Discord and the customer portal',
   start_url: '/inbox',
   scope: '/',
   display: 'standalone',
+  // Links to the inbox open in the app, where it is installed (Chromium on the desktop), in its
+  // window if one is open: that window takes the address (ui/app.js, Launch), and the inbox
+  // opens its thread there, at the message a message's link is for.
+  handle_links: 'preferred',
+  launch_handler: { client_mode: ['focus-existing', 'auto'] },
   // Spectrum 2's base background, dark (rgb 17, 17, 17), behind the app while it starts.
   background_color: '#111111',
   theme_color: ICON_EDGE,
@@ -43,8 +48,8 @@ export const MANIFEST = {
   ],
   shortcuts: [
     { name: 'Inbox', url: '/inbox', icons: [{ src: '/icon-192.png', sizes: '192x192' }] },
-    { name: 'Knowledge bases', url: '/inbox/kb', icons: [{ src: '/icon-192.png', sizes: '192x192' }] },
-    { name: 'Admin', url: '/inbox/admin', icons: [{ src: '/icon-192.png', sizes: '192x192' }] },
+    { name: 'Teams', url: '/inbox/admin?tab=teams', icons: [{ src: '/icon-192.png', sizes: '192x192' }] },
+    { name: 'Customers', url: '/inbox/admin?tab=orgs', icons: [{ src: '/icon-192.png', sizes: '192x192' }] },
   ],
 };
 
@@ -52,7 +57,7 @@ export const MANIFEST = {
 // (base background, neutral content, gray-100 and gray-300 for the button), in its typeface
 // where the browser has it already.
 const OFFLINE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1"><title>Enterprise Support · offline</title>
+<meta name="viewport" content="width=device-width, initial-scale=1"><title>Enterprise Support – Offline</title>
 <style>:root{color-scheme:light dark}body{font:14px/1.5 adobe-clean-spectrum-vf,adobe-clean,system-ui,sans-serif;
 background:#111111;color:#dbdbdb;display:grid;place-items:center;min-height:100vh;margin:0}
 main{text-align:center;padding:24px}h1{font-size:22px;font-weight:800}
@@ -66,7 +71,9 @@ button{border-color:#dadada;background:#e9e9e9}}</style></head><body><main><h1>Y
 /**
  * The service worker's source. Page loads go to the network; only a failed one is answered.
  * The inbox shows its notifications through it (ui/inbox.js); a click on one brings an open
- * inbox forward and has it open the thread (`opspile:open`), or opens the thread's inbox.
+ * inbox forward and has it open the thread (`opspile:open`, with the views that can show it: the
+ * inbox keeps the view on screen if it is one of them), or opens the address the notification
+ * was shown with (the view that inbox was on, when it could show the thread, else the closest).
  */
 export const SERVICE_WORKER = `// opspile service worker: no cache, only an offline page, and notification clicks.
 const OFFLINE = ${JSON.stringify(OFFLINE)};
@@ -80,7 +87,8 @@ self.addEventListener('fetch', (e) => {
 });
 self.addEventListener('notificationclick', (e) => {
   e.notification.close();
-  const url = new URL((e.notification.data && e.notification.data.url) || '/inbox', self.location.origin);
+  const data = e.notification.data || {};
+  const url = new URL(data.url || '/inbox', self.location.origin);
   if (url.origin !== self.location.origin) return;
   e.waitUntil((async () => {
     const all = await self.clients.matchAll({ type: 'window', includeUncontrolled: true });
@@ -88,7 +96,7 @@ self.addEventListener('notificationclick', (e) => {
     const win = inboxes.find((c) => c.focused) || inboxes[0];
     if (win) {
       await win.focus();
-      win.postMessage({ type: 'opspile:open', url: url.href });
+      win.postMessage({ type: 'opspile:open', url: url.href, views: data.views });
       return;
     }
     await self.clients.openWindow(url.href);

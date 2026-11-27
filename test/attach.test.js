@@ -103,7 +103,7 @@ describe('attachment rules', () => {
     assert.equal(checkFiles(ok, [file('a.png', 'image/png'), file('log.txt', 'text/plain')]), null);
     assert.match(checkFiles(ok, [big(21 * MB)]), /big\.png is 21 MB: files here take up to 20 MB/);
     assert.match(checkFiles(ok, Array(11).fill(file('a.png', 'image/png'))), /up to 10 files/);
-    assert.match(checkFiles(ok, [big(15 * MB), big(15 * MB)]), /30 MB together: up to 25 MB/);
+    assert.match(checkFiles(ok, [big(15 * MB), big(15 * MB)]), /30 MB\. The limit is 25 MB/);
     assert.match(checkFiles(ok, [file('empty.txt', 'text/plain', new Uint8Array(0))]), /empty/);
   });
 

@@ -1,9 +1,10 @@
 # helix-opspile architecture
 
 opspile is a unified inbox for an ops team. It ingests every channel the team works in on
-**Slack**, **Microsoft Teams** and **Discord**, keeps the threads in **Cloudflare R2**, and tracks read/unread
-state per person and per team, so that you can see which threads somebody else has already
-seen and you have not.
+**Slack**, **Microsoft Teams** and **Discord**, and those of its own **customer portal** (for
+customers who can use none of the three with Adobe), keeps the threads in **Cloudflare R2**, and
+tracks read/unread state per person and per team, so that you can see which threads somebody
+else has already seen and you have not.
 
 It follows the spirit of [klickhaus](https://github.com/adobe/klickhaus): a small static UI in
 plain JavaScript, fed by separate ingestion services, with the data store doing the heavy
@@ -20,6 +21,7 @@ flowchart LR
   S[Slack Events API] --> R
   T[Microsoft Graph<br/>change notifications] --> R
   D[Discord REST API<br/>polled every minute] --> R
+  P[Customer portal<br/>its own Worker, its events] --> R
   B[Backfill from history APIs] --> R
   R[(1. raw events<br/>R2, append-only)] --> C
   C[(2. channel folders<br/>R2, one file per message)] --> I
@@ -57,6 +59,10 @@ are removed before an event is stored.
   event id, so a notification is keyed by its own hash (`notification-<sha256>.json`), and a
   fetched message by its version (`<lastModified ms>-<messageId>.json`). The notification's
   `resource` names the message; the message's metadata names the notification.
+  A deleted channel message cannot be fetched (Graph answers 404), so its `deleted`
+  notification is all pile 1 has of the deletion: the normalizer files it as the message's
+  tombstone (`normalizeTeams`), timed when the notification was received (the object's
+  `receivedAt`), and skips every other notification, whose message it files from the fetched copy.
   The files of a Teams message are kept here too, as bytes: the images pasted into it (hosted
   contents, fetched with the app's Graph token) and the files attached to it (SharePoint or
   OneDrive links, fetched through Graph's `/shares` with `Files.Read.All`), under
@@ -74,8 +80,19 @@ are removed before an event is stored.
   belongs to, who reacted (messages carry counts only) and since when the poller has seen each
   reaction, and when it found a message gone. Keys are `<message id>-<hash of the envelope>`
   and `<message id>-delete`, so the same state read twice shares a key.
+- **The customer portal** (see [Customer portal](#customer-portal)) is a Worker of this
+  repository, so its events say what the normalizer needs: `{ portal, seq, at, type, domain,
+  channel, author, message | reaction | lobby }` (`src/portal/events.js`), a message as it is now
+  (`rev` counts its edits and its deletion), with its files, whom it mentions, its channel's
+  name and its author's name, mail address and picture. They are stored as they arrive, under `portal/<domain>/<channel, or
+  _lobby>/<yyyy>/<mm>/<dd>/<event ms>-<portal>-<seq>.json`: `seq` is the event's number in the
+  portal's outbox, so one delivered twice is one object, and `domain`, the customer's mail
+  domain, is the tenant.
 - Backfill pages from the history APIs land here too, marked `via: backfill` (Discord's:
-  `via: history`).
+  `via: history`; the portal's, which tells of a thread again when asked: `via: resend`).
+  The history import's land here as `via: import` (Slack's under `<ts>-import.json`), which the
+  normalizer reads from the object's metadata, so a replay files them the same way (see
+  "History import").
 
 ### 2. Channel folders
 
@@ -84,13 +101,20 @@ channels/<org>/<team>/<source>-<channelId>/<rootId>/<messageId>.md
 ```
 
 Every channel belongs to one **org** (a customer, a partner or a vendor) and one **team** (the
-ops team that owns it). The mapping is a small rules engine over rows in D1: each rule matches the
+ops team that owns it). A customer portal channel may be **individual** (see "Individual
+channels" under "Customer portal"): each of its customers is their own, under the one org. The mapping is a small rules engine over rows in D1: each rule matches the
 channel id, the channel name, the Teams team name or a Slack Connect team id with a regular
 expression, and sets the team, the org or the kind (`channel`, `alert`, `ignore`); the lowest
 priority wins. Naming conventions (`aem-<customer>` exists on both platforms) are rules, and
 so are the overrides for vendor channels, alert channels and irregular names. Channels that
 no rule matches are filed under `_unassigned`. A **manual assignment** of one channel is a
-rule too: its `channel_id`, priority 10.
+rule too: its `channel_id`, priority 10. A **follow rule** (target `follow`) files nothing: it
+shares every channel it matches with its team (see "Shared channels"). Two teams' rules that
+match the same channel are a **rule conflict** (`src/ruleconflicts.js`), which the admin team
+settles in its inbox, where it is a thread ("Requests as threads"): either team files the channels both match, the other rule's pattern
+leaves the winner's out (`^(?!winner)loser`), and the other team may follow them (a follow rule
+of `^(?=winner)loser`); or the conflict is kept as meant. Manual assignments are never in a
+conflict: they settle one for a channel, so a channel one of them decides is in none.
 
 **Shared channels.** A channel can be in several teams' inboxes, but it is filed under one team,
 its first: the rules pick it, and its folders, thread rows (`threads.team`), knowledge base and
@@ -99,20 +123,105 @@ team): the channel's threads are in their inboxes, and their members read, reply
 and draft there; read state in a thread is that of the team it is looked at from. Adding a team
 to a channel moves the channel only for its first team, when the admin team (or nobody) holds
 it; added to a channel another team holds, the new team shares it and nothing moves. Handing a
-channel back to the admin team is always a move. The shares are configuration, like the rules,
-so a replay of pile 1 keeps them.
+channel back to the admin team is always a move. Which team a shared channel is filed under can
+be swapped (`POST /api/admin/swap`, **Make primary** on the sharing team's page, for the admin team
+and whoever manages both teams): the channel moves to the team it was shared with, by hand, and its
+former team shares it. The shares are configuration, like the rules, so a replay of pile 1 keeps
+them. A follow rule's shares are rows here too (`added_by` `rule:<id>`, `src/followrules.js`):
+written after every rule change and on the cron, taken away once the rule no longer matches, and
+not removed by hand.
+
+**Following.** One concept, everywhere (`src/following.js`, `ui/follow.js`): who (you, or a team
+you may act for: one you manage, any team but the holding ones for the admin team), what (follow, or
+mute) and what of: a product (`tech`), a topic (`area`), a customer (`org`), a person (`person`; a
+customer's person, who is none of D1, by their platform account, `account`) or a thread (`thread`).
+A team follows products, topics and customers, never a person or a thread; a mute is always your
+own, and only of a customer. Wherever one of these is shown (a thread's header, its tech stack and
+topics, a person's and a customer's card, a team's overview, a customer's page and its topics and
+people, the Topics page, the suggestions) it has the same Follow
+button, Follow / Following, for you; for whoever may follow for a team its chevron opens who follows
+it, you and each of those teams, to check or uncheck. Only teams you are on show as following it,
+in the chevron's count and its list (the admin team finds the others by name); on a team's page the
+chevron is you and that team only, and its count is what says the team follows it. A customer has a
+Mute beside it. Following a customer and muting it are one or the other: following it lifts the
+mute, muting it ends the follow.
+A mute lifts itself once you act on the customer: a message of yours in any of its threads after it
+(`mutedOrgs` in `src/standing.js`); nobody else's message, a mention of you, or what you follow does
+not bring it back. `GET /api/follows` (and `/api/me`'s `follows`) is one state for every page, with
+the names of what is in it; `PUT /api/follows` takes every change, `team` for a team's. Your menu's
+Following lists what you follow and mute, on every page.
+
+**Following technologies.** A team follows technologies of the tech stack (`team_follows`, migration
+0072; its managers and the admin team pick them on its page, `PUT /api/admin/follows`), and so does a
+person (`person_follows`; from a thread's tech stack dropdown, or the Following section of their menu,
+`PUT /api/follows`). A thread that shows one is in the team's inbox, or the person's personal view,
+whichever team its channel is filed under, and they work it there as a shared channel's: read,
+reply, react, resolve, draft, search, live updates, notifications, the MCP server. What a thread
+shows is its own label's (`labels.tech`: what Clef is sure of, and what the rules detected), not its
+channel's or its customer's, so a team that follows Experience Workspace gets the threads about it,
+not every thread of a customer that uses it; and an inbox entry shows what any of its members does.
+Conversations only: an alert channel's threads are followed by none. Anyone who may sign in
+follows, on an ops team or not: someone who signed in from `SIGNIN_DOMAINS` on no team follows as a
+team's member does, and their follows are how threads come into their personal view. What a follow
+opens is only ever worked out for someone signed in; the portal's "how many listen"
+(`entryFollowers`) leaves out those who may no longer sign in. A follow lets one reply where the
+platform decides who posts, as themselves on Slack and Teams (the platform refuses one who is not in
+the channel); not in the customer portal, nor as the app, which take the inbox's word: there a
+person's follow alone is not enough (`mayPost`, `mayReply` in `src/shares.js`; `can_post` on
+`GET /api/thread`). Nothing is filed anew: the
+channel stays under its team, with its shares, and a following team cannot start a thread in it.
+`src/follows.js` has the SQL; `thread_tech` has what each thread shows by index, so that `team = ?
+OR <shared channel> OR <followed>` stays a search by index (`teamsOf`, `mayWork`, `roomsOf`, the
+inbox's `inInbox`). A thread's agent writes the knowledge bases of the teams that follow it, as those
+of its channel's shares (`accessibleRepos`, `via: 'follow'`).
+A person also follows a **customer**, a **person** or an **area** (`person_follows_by`, migration
+0087; `PUT /api/follows { kind, target }`): the customer's conversations (and the public threads
+its people posted in, "Public channels"), the threads the person
+posted in, and those Clef puts in the area (`thread_areas`, by index, written with the label, as
+`thread_tech` is) are in their personal view the same way, and in `followersOf` for live updates
+and notifications. And (migration 0107) an **account**, a customer's person known by their identity
+key only (`messages.author_key`, by `messages_author`; the first of the accounts the Topics page
+counts as one), whose threads they posted in come the same way; and a **thread** itself (its key,
+its entry's members by it), a conversation they may work already (`mayWork`, asked by
+`PUT /api/follows`): following it keeps it in their personal view, and never opens one to them. A team follows an **area** too (`team_follows_by`, migration 0105): the threads
+Clef puts in it are in the team's inbox as those that show a technology it follows are
+(`followedByTeam`, `followingTeams`; the relabel's room event names the areas it joined or left,
+`teamsFollowing`). A team follows a customer too (its managers and the admin team, with Follow's
+chevron or `PUT /api/admin/org-follows`): a follow rule of field `org` (migration 0098),
+which matches the org the other rules file a channel under, and the org's that were merged into it,
+so every channel of the customer is shared with the team, now and later, as any follow rule's
+channels are. The public threads the customer's people posted in are in the team's inbox too, as
+those that show a technology it follows are (`followedByTeam`, `entryFollows`' `{ team, org }`). On the customer's page everyone on a team follows or mutes it themselves, a manager gives a
+channel of their team back to the admin team (`POST /api/admin/release`) or takes it out of their
+team's inbox where it is shared by hand, and asks for one of another team's (a request with `move`).
+
+**What to follow, suggested** (`GET /api/follows/suggest`, `src/followsuggest.js`): products
+(technologies), topics (areas) and customers, for everyone signed in. Without a query, what the
+channels of their personal view were about in the last 180 days (`thread_tech`, `thread_areas` and
+the customers of those channels' conversations), then the products and topics of the most
+conversations of every team in the last 30 days, with the 30 days before to say what is rising,
+less what they follow already; customers only from their own channels. With `q`, every product,
+topic and customer whose name has its words. Names and counts only, never a thread; the trending
+counts are the same for everyone, and an isolate keeps them an hour. The inbox shows them in place of
+an empty personal view (where someone on no team starts), and in a dialog from the Following
+section of the menu on every page (`ui/followsuggest.js`), each with its Follow button.
 
 An org is a slug. What it is called, its icon (a domain, whose favicon is shown, or an image
-URL) and whether it is a customer, a partner or a vendor are a row in `orgs`; an org without
-one is a customer shown by its slug and the favicon of its usual mail domain. The inbox and
-the agents show the name and the type.
+URL) and whether it is a customer, a partner, a vendor, Adobe's own (`internal`) or public
+(`public`, "Public channels") are a row in `orgs`; an org without one is a customer shown by its
+slug and the favicon of its usual mail domain. The inbox and the agents show the name and the
+type.
 
 The org list in the admin pages shows each org with the icon the inbox resolves for it (its
 own, else the favicon of its usual mail domain: the most common one among the people outside
 Adobe who post in its threads, free mail and tenant domains left out), and an empty square
-where there is none, so the orgs without an icon stand out (and can be listed alone). Favicons
-come through `/api/admin/favicon`, which answers 404 where Google's favicon service has only
-its globe. An org's page suggests icons (`src/favicons.js`): the favicons of the websites its
+where there is none, so the orgs without an icon stand out (and can be listed alone). Favicons,
+in the admin pages and the inbox, come through `/api/favicon` (`faviconProxy`), at one address per
+domain on the inbox's origin: Google's favicon service answers with a redirect to one of several
+hosts, a different one each time, which a browser does not keep. The Worker follows it, keeps the
+image in the data center's cache for a week and the browser keeps it as long; it answers 404
+where Google has only its globe (for an hour), and 502 where Google did not answer (for a
+minute). An org's page suggests icons (`src/favicons.js`): the favicons of the websites its
 mail domains, slug and name suggest (`<slug>.com`, `www.<slug>.com`, `<name>.com`, …) and the
 icons those sites name (`<link rel="icon">`, `apple-touch-icon`), each image with what Clef
 thinks of it: whether the site is the org's own (not a namesake's, an agency's or a parked
@@ -121,6 +230,405 @@ rather than a stock icon. Picking one makes it the org's icon. Sites are asked w
 user agent (many answer a bot's with an error page); an `.ico` of bitmaps, which Clef cannot
 read, is decoded into a PNG for it (`src/ico.js`), and an SVG icon is offered without Clef's
 verdict.
+
+**Review.** What waits in Customers and in Teams is one row at the top of the sidebar, **Review**
+(`ui/review.js`), with one count: in Customers the unassigned channels, the likely duplicates and
+the partners to review; in Teams the unassigned channels and the suggested teams. Its page has a
+tab for each queue, each with its count and its address (`?tab=orgs&view=unassigned`,
+`view=duplicates`, `view=partners`, `view=domains`; `?tab=teams&view=unassigned`,
+`view=suggested`; `view=review` opens the first with something in it), and a queue's rows open
+their pages (a pair of duplicates, a partner and a customer, a suggested team), whose back button
+returns to the queue. The addresses the queues had as rows of the list (`org=_unassigned`,
+`team=_unassigned`, `org=domains:`) open their tabs. The row is drawn from the sidebar's first
+paint, before the duplicates and the partners are found (Clef is asked about them as they load),
+with its count once every queue is counted, so nothing is added above the rows of a list once it
+is drawn. The admin team has it always; a member of an ops team, whose only queue is the
+duplicates of the customers their teams own, only when some wait at the first paint, as far as
+what is kept says (`review` of `GET /api/admin/orgs`, `likelyPairCount` in `src/orgmerge.js`:
+Clef's likely pairs nobody dismissed, and those asked to be merged); it does not come or go until
+the page loads again. The merges asked for and the partners to decide are also requests in the
+admin team's inbox ("Requests as threads"): the queues are where their evidence is compared.
+
+**Unassigned channels.** A channel no rule files under an org (its name is not
+`<product>-<org>`, nobody assigned it) is in the org `_unassigned`, which Customers' review lists
+under Unassigned channels, with how many channels it has (`unassigned` of `GET /api/admin/orgs`;
+the ignored ones are not counted). Its tab (`GET /api/admin/org?slug=_unassigned`) lists them, each with the orgs
+it may belong to (`src/orgassign.js`): a Slack Connect team or Teams team it shares with the
+channels of an org and few others (the inbox's own Enterprise Grid is in every Connect channel), the
+usual mail domain of an org that the people outside Adobe in it or posting there write from, and an
+org's slug or name as a word of its name, or a few words together (`home-depot`), the products the
+org rules name in their `^(?:aem|…)-` and words such as `adobe` or `alerts` aside. Where none fits,
+it suggests a new org: its people's mail domain, else the first word of its name. Picking one, any
+other org, or a new one named in the same list (made with its type first, `POST /api/admin/orgs`)
+assigns the channel there by hand (`POST /api/admin/assign`, target `org`).
+
+**Duplicate customers.** An org is a slug the rules give a channel (`aem-<slug>`,
+`<product>-<slug>`, a manual assignment), so one company can end up under two: a channel named
+`workfront-acmeco` and one named `aem-acme`. The Duplicates of Customers' review list the pairs of
+orgs that may be one (`GET /api/admin/org-duplicates`, `src/orgmerge.js`), likeliest first, the
+less likely ones folded. A pair is
+a candidate when its signals add up: names (the same in letters and digits, one the start of the
+other, spelled alike, a word in common), the same icon (or one's icon the other's mail domain), the
+same usual mail domain of their people, channels with the same Slack Connect team, Teams team or
+portal domain, and people outside Adobe in channels of both (`channel_members`, counting only those in
+the channels of a few orgs: staff, bots and agencies are everywhere). A domain or a Slack Connect team
+more orgs share is a partner's, and weighs less. Clef is then asked about each candidate, shown both
+orgs (names, type, icon, channels and their topics, mail domains) and the signals, and told that an
+agency's people or Slack Connect team in both is no sign: "should A and B be one organization: do
+both names refer to the same company?" Its answers are kept in `org_pairs` with a fingerprint of what
+it was shown, and asked again once that changes, two dozen a load; the page loads the list again while
+Clef gets further. The orgs' facts are kept in the isolate for five minutes.
+
+The admin team merges a pair from its page (`POST /api/admin/org-merge`, tried first with `dryRun`).
+The merge is a row of `org_merges` (migration 0091) that `loadRules` hands every caller of the rules
+as a rule of target `merge`, applied after the others (`mergedOrg` in `src/rules.js`): what the rules
+file under the merged slug, now or later, by a template or by hand, is filed under the one kept, and
+its channels move as for a rule change (only the merged org's: a channel filed otherwise for another
+reason stays where it is). The org kept keeps its name, icon and type, and the merged one's fill in
+where it has none; the merged org's `orgs` row goes (the merge keeps it), its agents' MCP servers,
+secrets and repositories, the people who follow it, its stack drawing and its portal lobbies go to
+the org kept (one of the same name there stays the kept org's), and the entries of its knowledge base
+that the kept org's has not are copied over as the person merging (a path both have stays in the
+merged org's, for a dream or a person to reconcile). The merged org leaves the lists (orgs, knowledge
+bases); its knowledge base stays in Artifacts. Undoing a merge (on the kept org's page) moves its
+channels back and gives it its row again; what moved with it stays. Anyone on a team who sees one of
+the two (the customers its teams own) sees the pair too and asks the admin team for the merge (`POST
+/api/admin/org-merge-requests`), which waits in the admin team's inbox, a thread there ("Requests as
+threads"), until the admin team merges or declines it; the admin team can also say two orgs are not the same, which takes the pair off everyone else's
+list until somebody asks for its merge.
+
+**Partners.** An org of type `partner` is an agency or system integrator that builds, runs or
+supports the sites and projects of several customers, in its own channels and in theirs. Which
+customers each works for is a table, `org_partners` (migration 0110, `src/orgpartners.js`), found as
+duplicate customers are: candidates from signals, then Clef. A pair of a customer and a partner is
+a candidate when its signals add up (`CANDIDATE`, 2) and are more than a `kb` or a `place` signal
+alone (Clef found most such pairs unlikely):
+
+- `posters`: people from the partner's mail domains posted in the customer's threads (1 to 3, by
+  threads and people). The domains come from one place, `partnerMailDomains`: src/partners.js
+  `partnerDomains` ("Partner domains"), by the partner org each is of, so the admin team's
+  overrides and exclusions change the pairs too; a subdomain counts as its parent, unless it is
+  listed itself (an excluded one is nobody's). Without them (no look for them succeeded yet in the
+  isolate), a load or cron run changes nothing in `org_partners` and the list says so (`skipped`);
+- `guests`: people from the customer's usual mail domain (the most common of its posters' that is no
+  other org's partner domain: an integrator's people may outnumber the customer's in its channel)
+  posted in the partner's threads (1 or 2);
+- `members`: people from the partner's mail domains are in the customer's channels
+  (`channel_members`, 1 to 2);
+- `owners`: the facts of both name the same GitHub or aem.live owner (`site`, `repo`, and a `url`
+  `<branch>--<repo>--<owner>.aem.live`, `github.com/<owner>`, the admin API's), one the threads of
+  at most two orgs that are not partners name: Adobe's own and demo owners are in many (1.5, 2.5
+  for an owner only this customer has);
+- `kb`: entries of the partner's knowledge base (`kb_concepts`) name the customer (its display
+  name, or its slug of more than one word, in an entry's path, title or aliases), one of its owners
+  (there, or as an owner in the text), or are about it (`sites/<slug>-….md`; 2, 3 for an entry
+  about it);
+- `place`: channels of both with the same Slack Connect or Teams team, one at most six orgs have
+  (1 or 2);
+- `channel`: a channel named for both, `<partner>-<customer>` (3).
+
+Clef is asked about each candidate nobody decided, shown both orgs (names, type, channels, usual
+mail domains), the signals with their counts as one, a few or many, so a new thread does not
+make it ask again, and the customer's other partners the admin team confirmed, each with how many
+of its people post in the customer's threads (one person of a second agency beside the partner
+that builds the site does other work, or none; Clef's likely ones are left out, or their verdicts
+would move each other's): "does partner P work for customer C?" Its answer is kept with a fingerprint of
+what it was shown and asked again once that changes, two dozen per load of the admin team's list and
+per cron run, so the table fills in without anybody looking. Every load and run writes the
+candidates' signals where they changed, every pair's span (`first_at`, `last_at`, migration 0112:
+the first and last post of the partner's people in the customer's threads, as far back as the
+inbox reads), and deletes the rows of pairs that are no candidate any more and that nobody decided.
+
+A partner works for a customer for a while: a pair has the admin team's dates too, `since` (given
+on confirming; else the first post is shown) and `until`, which makes it a former partner,
+confirmed and ended (`ended_by`, `ended_at`). Confirming a former partner makes it one again;
+dismissing a pair clears its dates, as it never was one.
+
+The admin team decides the pairs in its inbox, where each request to is a thread
+(`request:partner:<id>`, `org_partner_requests`, src/partnerrequests.js): that a partner works for a
+customer (`link`, since when), or no longer does (`end`, until when). Its actions are Confirm (with
+since), Not partners (dismiss) and Decline for a `link`; End (with until), Not partners (a
+confirmation that was a mistake) and Still a partner (decline) for an `end`; each runs the route the pair's page had (`POST
+/api/admin/org-partners/confirm`, `/dismiss`, `/end`, each with `undo`), which closes the pair's
+open requests it settles: a confirmation the `link` ones, an end the `end` ones, a dismissal all.
+The thread shows the pair as it is now, its span, and the customer's other partners. Three ask:
+
+- the admin team, on a pair's page in Customers (from the Likely partners of its review, `GET
+  /api/admin/org-partners`, which shows both orgs, a customer's mail domains its own and none of a
+  partner's, the evidence, Clef's verdict, the pair's dates and requests), and anyone on an ops team
+  through `POST /api/admin/org-partner-requests`, whose answers to them leave the admin team's
+  evidence out (the signals' text, which names domains, site owners and knowledge-base entries);
+- an agent (`request_partner_link`): a thread's, on its own when the thread says a partner started
+  or stopped working for the customer, or for the person in its sidebar who tells it; a
+  knowledge base's, for the person in its conversation. The request names the thread. Unlike a
+  channel's move or a team's member, it needs no person to ask: nothing changes until the admin
+  team decides;
+- Clef, from every load and cron run (`partnerWants`): a likely pair nobody decided (`link`); a
+  confirmed one whose people posted nothing in the customer's threads for `LAPSED_DAYS` (90), while
+  the customer's threads went on for `GOING_ON_DAYS` (30) after their last post (`end`, until it);
+  and an ended one whose people post `AGAIN_DAYS` (14) after its end (`link` again). Each carries
+  the fingerprint of what it was found on: declined, it is not asked again until that changes, and
+  Clef takes back its own that wait once the pair is no longer what it asked about.
+
+A confirmed pair stays whatever the signals say later; a dismissed one is never shown as partners. A merge copies the merged org's
+decisions to the org kept, where it has none of its own (`merged_from`), and undoing it takes the
+copies back: the rows it added go, a row the kept org had keeps its signals and Clef's verdict.
+
+Everyone at Adobe reads an org's confirmed and likely pairs (Clef's probability at least `LIKELY`,
+0.5, not dismissed): `partnersOf(env, customer)` and `customersOf(env, partner)` in
+src/orgpartners.js, and `GET /api/customers/partners?org=` with both, `{ org, partners, customers }`.
+Each is `{ slug, name, type, icon, confirmed, current, since, until, last, p, score, signals }`, the
+partners of now first, then the likely ones, then the former ones (`until`; a customer's page and a
+partner's tag them Former and list them last), `signals` the count of each kind
+(`{ posters: 12, owners: 1 }`): names and numbers, no message text, domain or owner. Merged orgs are
+left out. Who is a partner's person is apart from this: their mail domain is one of `partnerDomains`
+(src/partners.js, "Partner domains" under "People").
+
+A partner's **page** in Customers is its customer overview with its own numbers first
+(`partnerNumbers`, src/partners.js, in its `partner`; ui/customer.js), everyone's at Adobe:
+
+- its **customers**: those it works for, confirmed and likely (`customersOf`, with what links
+  them), then those whose threads of the window its people posted in, nothing linking them yet
+  (from two threads with its people or two of its people, `UNLINKED_MIN`: one stray post lists
+  nobody);
+  each with how many of the customer's threads its people are in, how many of its own threads the
+  customer's people are in (the people outside Adobe of its threads who post in the customer's
+  too), and how many of those wait on Adobe;
+- its **people**: the accounts of its mail domains (`partnerDomains`; a person's accounts, and
+  those of one mail address, as one), wherever they posted in the window: in its own channels and
+  in customers', how much, and for whom;
+- what **waits on Adobe** in its channels and in the customers' threads its people are in (who a
+  thread waits on as the inbox says it, `waitingOn`; a resolved one does not), and how soon Adobe
+  **answers**: the median wait for Adobe's first post, in its threads started outside Adobe, and
+  in customers' threads its people started (and every wait: its numbers draw both on one scale).
+
+Its numbers split what its people said into its own channels and each customer's, and its people's
+cards end with the customers they post for, as a team member's do; those who post only in
+customers' channels are listed after the cards. Its page says its name where it would say "its".
+
+Counts are everyone's; a thread's title and link only for whoever works it (`forViewer`, as a
+vendor's, "Vendors"). In its overview its own people are "their people", not a partner's. A
+customer's page lists its **partners** (`partners`): those that work for it (`partnersOf`) and
+those whose people posted in its threads of the window (as many, `UNLINKED_MIN`), each a link to
+the partner's page, with what links them (the signals' counts, in words), how many of its threads
+their people are in and whether it is confirmed or likely. Those nothing links yet come last: they
+are the evidence the review works from, and for the admin team each links to its pair's page (of
+the review's Likely partners: to review, then those Clef is sure of, the less likely and the
+decided ones, folded), which shows the evidence of any two orgs (`?pair=`) and confirms or dismisses them,
+making their row where `org_partners` has none. The overviews are kept five minutes per isolate; a decision on a pair
+(`POST /api/admin/org-partners/confirm`, `/dismiss`, `/end`) forgets both orgs' in the isolate that made it
+(`forgetOrgProfiles`, src/orgprofile.js), and the other isolates show it within those five minutes,
+as they do any change of a kept overview.
+
+**Thread links.** A partner's people report in the partner's own channel what the customer's
+channels are working on too (a repository moved, a site serving stale code), and nothing tied the
+two. A minute after each labelling of a thread (the normalizer queues `{ link: thread }` for a
+`labeled` result, not for an imported thread, once its vector is written too), the link job
+(`linkThread`, `src/threadlinks.js`) works out, for the thread's inbox entry:
+
+- **which customer a partner's thread is about** (`thread_orgs`, migration 0111, role `about`):
+  among the customers the partner works for (`customersOf`, above), what each part of the thread
+  says (`aboutScores`): its facts (a `site`, `repo` or `url` whose GitHub or aem.live owner only
+  that customer's threads name, 0.9, or it and one other org's, 0.75; a URL on the customer's own
+  domain, that of its icon, 0.85, or on one named for it, 0.7), its channel's name (0.8) and its
+  title (0.7) or messages (0.6) naming the customer (its display name, or its slug of more than one
+  word). Clef is asked about up to twelve of them at once, a `noul` each ("is this thread about
+  the customer C, in work that P does for it?"), shown the thread as labelling shows it and told
+  the channel is a partner's; its answer stands for the text's (it reads the text), and the facts
+  and the channel's name stand beside it: `p` = 1 − Π(1 − pᵢ) (`aboutOf`). A customer of `p` 0.5
+  or more (`ABOUT_MIN`) is kept, with `p` and `via` (what said so: `facts`, `channel`, `text`,
+  `clef`). Where Clef is all that says so, its answer must also beat its answer for every other
+  customer by 0.25 (`CLEF_MARGIN`): a thread about several customers, or none, gets close answers
+  for each;
+- **the partners in a customer's thread** (role `partner`, `p` 1, `via` `posters`): the partner
+  orgs whose people posted in it, by their mail domain (`partnerDomains`, "Partner domains");
+- **who is in a public thread** (roles `partner` and `customer`, `p` 1, `via` `posters`; "Public
+  channels"): the partners and the customers whose people posted in it, by their mail domain, and
+  nothing more: a public thread is related to no other (no `thread_links`), and no agent is told;
+- **possibly the same issue** (`thread_links`): the threads of the linked orgs' channels active
+  in the last 14 days (`RELATED_DAYS`) whose thread vectors (`CONTENT`, `type: thread`, by `org`)
+  are at least 0.75 alike (`RELATED_MIN`, cosine), by inbox entry. The linked orgs are, for a
+  partner's thread, the customers it is about, else every customer the partner works for; for a
+  customer's, its partners and those whose people post in it. A customer's thread leaves out a
+  partner's thread about another customer. The query asks for all the metadata: an indexed string
+  comes back cut to 64 bytes, and a Teams thread's key is longer. The scores are Vectorize's
+  approximate ones, as the search's. Clef is asked about three new candidates a job
+  (`RELATED_ASK`), one question a call, shown both threads (their channels, titles, facts, and the
+  first and three latest messages people wrote, of 20 letters or more beside links): "would
+  someone working thread A want to know about thread B, because both deal with the same problem
+  or the same change?" A link is shown where both threads' facts name the same GitHub or aem.live
+  owner that the threads of at most two orgs that are not partners name (`owner`: the customer's
+  own repositories, a repository move), where Clef said 0.5 or more (`RELATED_P`), or, without
+  Clef, where the vectors are 0.86 alike (`RELATED_SURE`); `via` says which. A link is kept once
+  found, with its score, and not asked about again.
+
+The inbox shows them: a row's tag, "About ACME" on a partner's thread, "With Agency Co" on a
+customer's (`linked` on `GET /api/inbox`'s entries; in the list by customer the partners are no
+tag but their logos, small on the customer's heading's, of those at work in the threads it shows),
+and in the open thread a dropdown of its
+header with both and the threads possibly about the same issue (`linked` and `related` on `GET
+/api/thread`), each with how sure the inbox is. A related thread the viewer may not see (`canSee`:
+not their teams', nor their personal view's) is named by its customer, team and channel only,
+never its title or link. Whoever may work the thread says a link is wrong there (`POST
+/api/thread/about/dismiss`, `/related/dismiss`, with `undo`): a dismissed row stays, and the job
+leaves it so. The MCP server's `get_thread` has them (`about_customers`, `with_partners`,
+`with_customers` for a public thread's,
+`possibly_same_issue`, a title only where the person may see that thread), and its
+`search_threads`, `/api/search` (`org=`) and a knowledge-base chat's `search_threads` take a
+customer filter that includes its partners' threads about it (`aboutThreads`).
+
+A thread agent is told of them in its first input (after the messages), and in an input of its
+own when its thread gets a customer it is about or a link (`relatedUpdate`, `src/agent/related.js`,
+for the agents of both threads); `related_threads` (always on) finds the linked orgs' threads like
+its own, or like a `query`, of the last `days`. A linked thread is named, with its title and key,
+only where the agent may read it with its tools (`readable`, as for a watched thread: its channel,
+`org_threads` within its own org, `any_thread`); of the others it is told how many there are. The
+prompt keeps what a linked org's thread says out of its channel unless someone asks in the sidebar.
+
+`npm run partners:threads` (README, "Measure the thread links") counts on production, read-only,
+how many partner threads get a customer and how surely.
+
+**Public channels.** An org of type `public` (migration 0113) is where people of many orgs meet,
+and of none: a community's Discord server, an event's or a course's Slack channel. One org,
+`public`, has them all; the rules file a channel there (the Discord servers by a rule, an event's
+channel by hand). Its threads are worked as any customer's: who asks is the one the team
+answers, and Adobe's people answer for Adobe, staff by their mail domain, their Discord role or
+their connected account, whether on an ops team or not. But a public org is no side of anything:
+
+- it is not a customer: not in a partner's candidates (`org_partners`) nor its customers, not in
+  the partner domains' "a customer's own domain" (`derive` reads customers' and partners'
+  threads only), never a duplicate (`candidates`, src/orgmerge.js), and not among a team's or a
+  person's customers on its overview; its Customers page is its own, with no partners;
+- Clef is told the thread is a public channel's, whose people are of many orgs or of none, and
+  calls them community members (`stateOf`, src/label.js); a thread agent is told everything it
+  posts there is public, and never to name a customer or partner of Adobe's there, nor anything
+  from another channel, a ticket or a customer's knowledge base (`PUBLIC_GUIDE`, src/agent/tools.js);
+- its people are told apart by their mail domain, where the platform has it (Slack, Teams; the
+  Discord servers share none): a partner's (`partnerDomains`) are the partner's, a customer's own
+  (`customerDomains`, src/partners.js) are the customer's, and the others are the community. A
+  customer's own domains are, of each customer, the one most of its people write from in its
+  own threads that is no partner's (a partner's people may be all who post in a customer's
+  channel), and the org part of its icon's; a domain the top one of two customers is the one's
+  with more of its people there. They are found with the partner domains, from the same rows,
+  and kept as long ("Partner domains"); free mail, tenant and staff domains are nobody's;
+- the link job ("Thread links") writes, for each public thread, the partners and customers whose
+  people posted in it (`thread_orgs`, roles `partner` and `customer`), which the inbox shows as
+  "With …" on its row and in its header, dismissed as the others are, and the profile cards
+  ("People") name the customer of each of its people, or say Community;
+- a public thread with a customer's people is where the customer's threads go: in the personal
+  view of whoever follows the customer and the inbox of a team that does (`followedByPerson`,
+  `followedByTeam`, src/follows.js, and so `followersOf`, `followingTeams` and `teamsOf`: live
+  updates, notifications, working it as a followed thread), in the search's customer filter
+  (`aboutThreads`), and on the customer's page, which lists the public channels its people posted
+  in, with how many threads (`public`, src/orgprofile.js; ui/customer.js "In public channels");
+- an agent of a public thread is told whose people post in it, for the team (`relatedNote`), and
+  `get_thread` says it (`with_customers`).
+
+After making an org public, `node scripts/replay.mjs --link --org <slug>` links its threads at
+once; the link job links each again at its next labelling anyway.
+
+**Adobe's bots.** Staff are told apart by mail domain, and a bot has none, so a bot of Adobe's
+(an agent that provisions access, say) would show on the customer's side of a thread. Every bot
+opspile knows that posted, or that somebody said whose it is (`identities` of kind `bot`: written
+when one posts or is mentioned, a Slack bot or Teams app the first time it posts, `botIdentity` in
+`src/lookup.js`; `src/ourbots.js`), is a thread of the admin team's inbox ("Requests as threads"),
+which says how much it posted and where, and quotes its latest three messages, each with a link to
+its thread; there the admin team says which are Adobe's and which are external (`identities.ours`:
+1, 0, or NULL while nobody said; with who said it and when). A bot that posted and that nobody said
+either of waits there, open, and counts on Inbox in the header until an admin answers it
+(`unreviewedCount`); the others are resolved threads, where what was said can be changed. There is
+no page of bots. An Adobe bot is staff (`toAuthor`): the inbox shows it on Adobe's side, as a colleague, its
+messages in D1 follow at once (`messages.staff`), and so do the ones written before in the thread
+view (`accountAuthor` in `src/api.js`, since their frontmatter says what was so then). Looking the
+account up again keeps the say. Its messages stay a bot's: they are not counted (a bot does not
+answer the customer, `last_staff`), and the agents fence them as every bot's
+(`untrusted` in `src/agent/deliver.js`, which trusts staff people only).
+
+**Adobe's accounts that say nothing of whose they are.** Some accounts are staff by themselves
+(`identities.staff`), but nothing their platform says tells who uses one:
+
+- the Teams tenant that hosts the teams has admin accounts of its own (`owner_` and initials,
+  "People", below): their name is the initials, their mail address the tenant's own;
+- a Discord account with one of the `DISCORD_STAFF_ROLES` that its person did not connect in the
+  inbox: Discord shares no mail address, so the inbox knows it only by its name (often initials),
+  `ask_teammate` finds nobody by it, and its work counts towards nobody's profile, expertise or
+  expert finder. Only one that wrote a message waits.
+
+Each is a thread of the admin team's inbox too, with the bots, under **Staff accounts**
+(`GET /api/admin/accounts`, `src/accountlinks.js`), and the admin team gives each the mail address
+of the Adobe person whose it is (`PUT /api/admin/accounts`): the account is linked to that person
+(`identities.person`, with `linked_by` and `linked_at`, migration 0097), and so shows with their
+name and picture, on their profile card, and counts as one of their accounts ("One account a
+person"). A Discord account is one user in every guild the inbox reads: the link is of each of its
+rows that is staff by itself and that nobody connected, though only the rows that wrote are
+threads. Its messages in D1 follow at once (`relabelAccount`: `messages.person`, `staff`,
+`author`, and the threads' `last_staff` and `last_author`), and so do the ones written before in
+the thread view (`accountAuthor`). Only an account that is staff by itself and that no mail
+address links (or, on Discord, that its person did not connect) is linked, and only to a staff
+person, so no customer's account becomes Adobe's. Looking the account up again keeps the link;
+its person disconnecting Discord does not take it back, and giving no address does.
+
+The thread says who it may be (`linkCandidates`): a staff person whose Contact in a knowledge base
+(`kb_concepts`, found by its file name or title, as the profile cards find people) lists one of the
+account's names among its `aliases`, who has its name, or whose name it is the initials of (`AB`,
+`a.b.`: every word's first letter, or the first and the last name's). A thread agent may propose
+one too (`request_account_link`, `account_proposals`, migration 0116), from what its thread or
+its sidebar says, on its own or for the person there: a note in the account's thread, by the
+agent, with the thread's link. Each is an action of the thread, a proposal first, which asks before
+it links; a suggestion or a proposal never links by itself, and nothing is inferred from a mail
+address or a merge key (`identities.merge_email`: it links no person of D1 and makes nobody
+staff). Linking answers the account's proposals; declining one (`POST
+/api/admin/accounts/decline`) keeps it, so neither an agent nor the suggestions name that person
+for the account again. The thread view
+names every account that is staff by itself (these, and a Discord account with a staff role) as
+`toAuthor` does now, whatever its frontmatter says: its person's name while it has one (linked
+here, or connected by them on Discord), else its own, so what it wrote while linked goes by the
+account's name again once the link is taken back.
+
+**A customer's people with two accounts.** The customers' people are no person of D1, so the
+customers' overviews and the topic map count them by account. The accounts of one mail address
+are one person there (on Slack Connect, a guest account in Adobe's workspace and the one of their
+own workspace that takes over), and so are the embedded portal accounts of one address their
+identity provider verified (two IMS profiles of one end user: `identities.merge_email`, migration
+0114, [One person, several profiles](PORTAL-INTEGRATION.md#one-person-several-profiles)), which is
+a merge key only: it is not their `email`, links them to no person of D1 and makes nobody staff
+by its domain. Two accounts outside Adobe of different mail addresses, named the
+same (without accents, case or punctuation), of which both posted, may be one person too: a new
+job, the agency's address and the customer's, a second address. A name alone merges nobody, so
+each such pair is a thread of the admin team's inbox ("Requests as threads", below; kind
+`person`, `src/accountpairs.js`), which says one person or two people (`PUT
+/api/admin/account-pairs`, `account_pairs`, migration 0106); what it said stays, also once the
+names differ again. One person's accounts count as one, as those of one mail address do, with the
+name of the first account (`sameAccounts`).
+
+**Alert bots.** A bot may also only post alerts (`identities.alerts`, migration 0090, set in its
+thread of the admin team's inbox, whatever its side): a thread it starts is an alert (`threads.kind =
+'alert'`), also in a channel the rules make a conversation, so a channel can hold people's
+conversations and a monitoring bot's alerts both (`src/alertbots.js`). Only the root decides: a
+person's reply to an alert leaves it an alert, and the bot's reply in a person's thread leaves that
+a conversation. The message index writes the kind (`threadKind` in the normalizer: the root's
+author, the message itself or the root D1 has; a reply that arrives before its root is filed as a
+conversation until the root comes), and everything after it goes by the thread's kind, not the
+channel's: no agent, no Clef label (an alert's title instead), no vectors or full-text items. A
+re-filing (`src/refile.js`) writes it again from the rules and the alert bots, and `plan` counts a
+thread filed so as filed where the rules say; so a change of the flag re-files the channels the bot
+started threads in, which makes their threads alerts, or conversations again, and takes away or
+makes again what goes by the kind. Re-threading keeps the two apart in such a channel: an alert
+joins alerts only, a conversation conversations only.
+
+A bot's page also gives it the name and picture the inbox shows (`identities.display_name` and
+`display_avatar`, an https image URL; NULL shows the platform's), for bots the platform says
+little of: Teams gives an app's messages no picture, and names a bot by its registration, not
+by its app. Without an admin's, a Teams bot's picture is its app's icon: the cron's list of each
+Teams team's installed apps (`syncInstalledBots` in `src/bots.js`) points `identities.avatar`
+at `/api/bots/icon` for the app definition installed (a new version is a new URL), which
+fetches the definition's `colorIcon` from Graph beta (`AppCatalog.Read.All`) when an image asks,
+and caches it a day; without the permission the inbox shows the initials. The name goes on its messages in D1 at once (`messages.author`, and a thread's
+`last_author` that was the bot's), on those written before in the thread view (`accountAuthor`),
+and in the frontmatter of the ones it writes from then on (`toAuthor`, `resolveAuthor`); the
+picture is read from the account (the thread view, profile cards, the bots a reply can
+mention). A Slack bot's own picture is the one its messages come with (`bot_profile.icons`),
+kept on its account when it has none (`botIdentity`).
 
 **Administration.** The admin team manages all of this at `/inbox/admin`: ops teams and
 their members (found by name or email among the people and platform accounts opspile knows;
@@ -139,6 +647,24 @@ and whether it is a conversation, an alert feed or not worth following. Clef is 
 name, its Teams team, its topic, its customer, how busy it is, the Adobe people who post in it
 and are in it with their ops teams, the technologies seen, and its recent threads' titles; it
 looks again when the channel has new activity, the ops teams change, or the label is a week old.
+
+**The team wizard** (`src/teamwizard.js`) goes the other way: from the admin team's channels to
+teams that do not exist yet. Channels are named by convention (`<product>-<customer>`), so a
+prefix that three or more of the admin team's channels share (up to the first or second `-` or
+`_` of a Slack or Discord channel's name, or of a Teams team's name, which is what is named so
+on Teams) is often a product without a rule. The review of Teams has each such group under
+**Suggested teams**, as they come up; its page lists its channels, the rules that would file them
+(channel name starts with the prefix, and the Teams team's name for its Teams channels), what a
+dry run of them moves, and the Adobe people present in them (members, posting or reacting; staff
+with a mail address), those in the most first. Checked are the ones in at least half of the
+group's channels and there more than twice as often as in the admin team's channels at large,
+so that an admin in all of them does not count. When most of those are on one ops team already,
+the page offers to give that team the rules instead. **Create** makes the team (with what new
+teams start with), adds the checked people as members, and saves the rules, which re-file the
+channels as any rule change does (`POST /api/admin/team-wizard`, `dryRun` for the preview). A
+group that is no team is dismissed (`team_prefix_dismissals`, migration 0088), with its channel
+count, and suggested again once more channels start with it.
+
 Every rule change applies at once (the page names the channels it
 moved; the API still answers `dryRun` with what a change would move), and the page sends its
 changes one after the other, so many can be made in a row. Applied, each moved channel is **re-filed** by a `refile` job on the
@@ -149,8 +675,8 @@ bases. A job starts from where each thread is filed in D1, and also moves what i
 when the job was queued (a message filed meanwhile points the row at the new place), so several
 changes to a channel in a row end up where the last one says. A large channel moves a few hundred files per job.
 
-**Team managers.** A member of a team can be its **manager**: they get the admin pages and
-the knowledge-base editor for that team only, where they add and remove members, promote
+**Team managers.** A member of a team can be its **manager**: they get the team's own section
+of its page in Teams, and its agent's, for that team only, where they add and remove members, promote
 them to manager or demote them, and edit the team's knowledge base (its `systemprompt.md`
 too). Teams, rules, assignments, orgs and the customers' knowledge bases stay with the admin
 team. A team can be **self-managed**: every member is a manager, and so is everyone who joins.
@@ -158,13 +684,28 @@ Turning that off keeps the roles as they are; from then on new members join as m
 managers can be demoted. The role is `team_members.role`, the flag `teams.self_managed`;
 only the admin team sets the flag.
 
+**Suggested members.** A team's page (but the admin team's) suggests the Adobe people who are likely
+on the team and are not (`GET /api/admin/member-suggestions`, `src/membersuggest.js`), for its
+managers and the admin team to add with one click (the same `POST /api/admin/members` as the field
+above it). The team's channels are the ones it holds and the ones shared with it. Three signals,
+each scaled to its best person and weighed: the team's threads they posted or reacted in over the
+last six months (a reaction half a thread), the team's channels they are in (`channel_members`:
+Slack's members of the channel, the Teams team's), both tf-idf style (the log of the count, times
+the square root of the share of everything they worked, or are listed in, that is the team's, so an
+admin active everywhere counts for little), and the topics of the newest topic map that are mostly
+the team's (at least two of its threads and a quarter of the topic's), with who worked their threads
+anywhere: the people `list_experts` and `list_topics` name for them. Staff with a mail address only,
+as a member is. Each comes with why, in numbers and topic names. **Dismiss** leaves someone out for
+the team (`member_suggestion_dismissals`, migration 0095), and so does taking someone off it, until
+**Suggest again**.
+
 **Channel requests.** A team manager does not assign channels, but asks for them: their team's
 page has the same channel search the admin team adds channels with (every channel, by name,
 Teams team, customer or id), and picking one sends a request, "add this channel to this team",
 with an optional note (`channel_requests`, migration 0028; one open request per channel and
-team). The admin team sees the open ones under **Requests** in the admin pages, their number on
-Requests in every page's header. Opening one runs the manual assignment as a dry run
-and says what confirming would do: re-file the channel under the team (and which threads move),
+team). The admin team sees each in its inbox, a thread ("Requests as threads"), the number of the
+open ones on Inbox in every page's header. **Confirm** there runs the manual assignment as a dry
+run first and says what it would do: re-file the channel under the team (and which threads move),
 or share it with the team when another team holds it. **Confirm** then makes that assignment,
 exactly as adding the channel on the team's page does, and records who confirmed it and what it
 did; **Decline** takes an optional reason. The manager sees each request on their team's page:
@@ -173,6 +714,87 @@ open one back). An admin who adds a requested channel to the team directly answe
 with it, and so does a rule that moves the channel there. Confirming closes the request first, so
 one declined or withdrawn meanwhile moves nothing, and a failed assignment opens it again. Nothing
 is sent by mail or chat.
+
+A thread's agent files requests too, from its sidebar (`src/agent/channelrequest.js`): asked there
+why the thread is in this team's inbox, it answers from `channel_assignment` (the rule that filed
+the channel, with its note, and the rules that would without it), finds the team it belongs to
+with `list_teams`, and `request_channel_reassignment` asks for it, for the person who wrote the
+sidebar message, with their reason. Such a request asks for a **move** (`move`, migration 0071):
+confirmed, the channel is filed under the team even when another team holds it, instead of being
+shared with it (with `share`, the agent asks for the usual request instead). It names the thread
+whose sidebar it came from (`thread`), which the request's thread links to. The agent files one only
+while it answers a sidebar message, never on the thread's messages, which customers write.
+
+**Membership requests.** The agent asks for people as well: asked in its sidebar to add someone to
+an ops team (the person who wrote, or a colleague they name), it finds the team with `list_teams`,
+and `request_team_membership` files a request (`member_requests`, migration 0096,
+`src/memberrequests.js`, `src/agent/memberrequest.js`) for the person who wrote the sidebar
+message, with their reason and the person: their mail address as written, or the one person the
+inbox knows by exactly that name, the author when neither is given. Only staff addresses
+(`STAFF_DOMAINS`) are asked for, nobody already on the team, and one request per team and address
+is open at a time. An admin decides it in the admin team's inbox, or one of that team's managers on the
+team's page (**People asked for**): **Confirm** adds the person as adding them on the team's page
+does (a member, a manager in a self-managed team; the sign-in allow list follows), **Decline** takes
+an optional reason. Confirming closes the request first, and a failed addition opens it again; adding
+the person on the team's page answers their open requests. As with channel requests, the agent
+files one only while it answers a sidebar message, never on the thread's messages. It is not
+`request_membership`, which asks a platform's admin bot to add people to the channel itself.
+
+**Questions.** The agent asks people too, for what it cannot find: when neither the knowledge
+bases nor the thread say something only a colleague knows (above all, how a staff-only change that
+someone made by hand in the thread is done, and kb-team has no runbook for it), `ask_teammate` asks
+one colleague up to three short questions, each with the agent's best guess and the other likely
+answers as choices, for a runbook, a reply or a fact (`questions`, migration 0104, `src/questions.js`,
+`src/agent/question.js`). Only staff on one of the teams whose inbox has the thread are asked (they
+can open it), never the person the agent is answering in the sidebar, one open question per person and
+thread and two per thread at a time; one waits three days. Unlike the requests above, it is theirs,
+not the admin team's: a thread of their inbox ("Requests as threads", kind `question`, **Questions
+for you**), in their personal view and in the inbox of the first of the thread's teams they are on,
+with the agent's purple badge (as its unseen answers in a sidebar have) until they answer, and a
+purple number of its own beside **Inbox** in the header, which opens them (the blue one stays the
+admin team's requests). A personal listing has none of the admin team's kinds, and leaves what
+`request_threads` tracks of them alone. Its card answers instead of deciding: **Answer** (a choice for each
+guess, preset to it, and the person's own words), **Ask someone else** (whom) or **I don't know**.
+The agent is told as an input of its own, trusted as the person's, with what it asked the answer for
+(write the runbook, update the draft, file the fact) and, when it asked while answering someone in the
+sidebar, to tell them with `sidebar_followup`. Nothing reaches the customer, and a question can be
+asked in any turn: it changes nothing.
+
+**Portal requests.** Customers ask as well, for a channel of their own in the customer portal:
+the admin team opens one for them from its thread in the admin team's inbox, and a team's managers
+on their team's page when the team follows a technology the customer picked. See [Customer
+portal](#customer-portal).
+
+**Requests as threads.** What waits for the admin team is a thread of its inbox
+(`src/requestthreads.js`, `GET /api/requests`), not a page of the admin pages: a channel request,
+a membership request, a customer in the portal, a merge of customers, a bot or a staff account
+nobody said whose it is, two accounts of a customer's that may be one person, a conflict between the teams' technologies or their rules. Its key is
+`request:<kind>:<id>` (`src/requestkeys.js`: the row's id, a bot's or an account's identity key,
+a conflict's key), and the inbox lists it in the admin team's view only, with the team's own
+threads, under a "customer" of its kind (Channel requests, Bots, Rule conflicts, …), of kind
+`request`, waiting on us while it is open and resolved once it is decided; the decided ones stay
+(the latest hundred of each kind). Their own type on the Type card, **Admin requests** (`f.type=request`,
+beside Conversations and Alerts), filters to them. The number on Inbox in every page's header counts
+the open ones of every kind (`GET /api/admin/requests?count=1`), and a click on it opens them: the
+admin team's inbox, on Admin requests that are unresolved (`REQUESTS` in `ui/header.js`). Its thread is in no channel and nothing of it is posted: the
+request as whoever asked said it (or, for a bot, an account or a conflict, as the inbox sees it),
+what the admin team writes about it, and what was decided. What they write is the request's
+**decision log** (`POST /api/requests/note`, `request_log`, migration 0100), the reply box's place;
+under the messages, the card of what can be decided now, each action with what it does, its fields
+and, where it can be tried, what it would change (Confirm's dry run, a merge's, a rule conflict's
+side winning). Deciding (`POST /api/requests/resolve`) runs the route of `/api/admin/*` the admin
+pages ran, as the person deciding, so the checks, the claim of a request and its outcome are
+src/admin.js's; only what the request offers then can be run. A request's own row says what was
+decided and by whom (a channel, a membership, a portal or a merge request), also when it was
+decided elsewhere (withdrawn by a manager, confirmed on a team's page, answered by an assignment);
+what is decided of a bot, an account or a conflict, which have no such row, goes into the log. The
+kinds without a time of their own are kept in `request_threads` from when they are first seen
+waiting, and a conflict that is gone (settled, or its rules changed) stays there with its title,
+a resolved thread with its log (docs/STATE-MACHINES.md, "Request thread"). Read state is the
+watermarks of the keys, read in the admin team's room as a thread is; a change of a request is
+announced there (`{ type: 'request' }`), and the inboxes load the requests again. Old addresses of
+the Requests page (`/inbox/admin?tab=requests&request=…`) open the request's thread. Nothing of
+this goes to the agents, the labels or the search.
 
 Channel names and authors are not in the events, so the normalizer looks them up
 (`conversations.info` and `users.info` on Slack, Graph on Teams) and caches them in D1 for a
@@ -197,7 +819,9 @@ is left out.
 root message is `<rootId>/<rootId>.md`). Message bodies are markdown themselves, converted
 through a syntax tree: each platform's body is read into mdast (Teams HTML in `src/html.js`;
 Slack's blocks, `rich_text` first, and its mrkdwn where there are none in `src/slackmd.js`;
-Discord's flavor of markdown in `src/discordmd.js`) and written by `src/mdast.js`, so markers
+Discord's flavor of markdown in `src/discordmd.js`; the portal's is markdown as its author
+typed it, which stays as it is but for images, which become links, `src/portalsource.js`) and
+written by `src/mdast.js`, so markers
 and escapes are where markdown wants them and the inbox shows what the platform shows (a
 Teams system notice, whose body is an empty
 `<systemEventMessage/>`, is written from its `eventDetail`: "Meeting ended after 50 s. Only Ada
@@ -225,6 +849,7 @@ at: 2026-10-14T07:37:26Z
 author: { kind: person, name: …, org: …, staff: true }
 editedAt: …
 deletedAt: …
+dropped: [color, highlight]   # only if the markdown cannot show what the platform did
 raw: [<raw object key>, …]
 permalink: https://…
 ---
@@ -236,6 +861,7 @@ The message body, as markdown.
 thread key   slack:<enterpriseId>:<channelId>:<thread_ts>
              teams:<tenantId>:<teamId>:<channelId>:<rootMessageId>
              discord:<guildId>:<channelId>:<rootMessageId>
+             portal:<mail domain>:<channelId>:<rootMessageId>
 ```
 
 - A message that quotes another (Slack: one forwarded with it, `is_share`, or the preview Slack
@@ -245,6 +871,11 @@ thread key   slack:<enterpriseId>:<channelId>:<thread_ts>
   inbox shows it as a card. Its words are not its author's: they count for no mentions, nor for
   the vectors of what people talk about, and editing the message leaves the quote alone.
 - New messages are new objects, so concurrent replies never contend for the same file.
+- What markdown cannot say stays in pile 1 only, and `dropped` names it: a Teams message whose
+  text is in more than one colour (`color`) or partly highlighted (`highlight`), as a table
+  that marks some rows by colour does (`htmlDropped` in [src/html.js](../src/html.js)). A colour
+  all of the text has (pasted from a document) means nothing and is not named. An agent reading
+  the message is told, and reads it as it was sent with `raw_message`.
 - An edit rewrites exactly one file. Earlier versions remain in pile 1.
 - A deletion keeps the file as a tombstone (`deletedAt` set, body removed), so links and read
   watermarks stay valid.
@@ -338,6 +969,13 @@ earlier roots in the same channel, within 14 days, are found by vector search.
   `> <author> wrote:` and its text.
 - **Thread marks:** a root that announces a thread (🧵, `:thread:`) stays on its own too, and
   out of a burst: nearly all of them are answered in their thread.
+- **Numbered items:** a root that starts with an item number of a series ("2/14 Forms: …",
+  "(3/3)", `numbersItem`) stays on its own too, out of a burst and not Clef's to fold: its author
+  posts a list of questions one by one, so that each is answered in its thread. The case that
+  showed it was an RFP's fourteen questions, posted in under three minutes: a burst made them one
+  entry, interleaving the fourteen platform threads, and the inbox's replies would have gone to the
+  last item's (src/post.js `target`). A date ("1/14/2027"), a ratio ("3/40", "50/50") or a time
+  ("24/7") is no item number. Of production's 296 burst members, only that series had one.
 - **Replies of its own (de-threading):** a conversation's root that people answer in its own
   platform thread holds a conversation of its own, however much it reads like a follow-up (a
   different customer raising a related problem by @-mentioning whoever was active last). One
@@ -391,7 +1029,9 @@ messages are embedded again, and a deleted one loses its vector. The cron enqueu
 threads whose vectors are older than their latest message (`threads.vectorized_through`),
 which also fills the index the first time. Alert threads (a bot's posts) get no vectors here.
 A re-filed thread's vectors are made again (its hashes cleared, a vectorize job queued), so
-that they carry its new team and org; re-filed as an alert or ignored, it loses them.
+that they carry its new team and org; re-filed as an alert or ignored, it loses them. The
+knowledge bases' concepts have theirs here too (`type: kb`, see "Search" under
+[Knowledge bases](#3-knowledge-bases)), so every query of a thread's vectors names its `type`.
 
 A third index, `SEARCH` ([src/fulltext.js](../src/fulltext.js)), is for full-text search: an
 [AI Search](https://developers.cloudflare.com/ai-search/) instance with built-in storage, one
@@ -431,8 +1071,9 @@ to them; `generated` says which agent wrote it and when, and `verified` will rec
 review. Every change is a commit, so a bad memory is a `git revert`.
 
 [Thread agents](#thread-agents) are the writers. A thread's agent writes its team's and its
-customer's knowledge base, and those of the teams its channel is shared with (`channel_teams`);
-every other team's it reads but cannot write (src/agent/repos.js, `accessibleRepos`). Code, not the agent, writes `index.md` and `log.md`
+customer's knowledge base, those of the teams its channel is shared with (`channel_teams`), and
+those of the teams that follow a technology its thread shows (`team_follows`, see "Following
+technologies"); every other team's it reads but cannot write (src/agent/repos.js, `accessibleRepos`). Code, not the agent, writes `index.md` and `log.md`
 and stamps `generated`, and a write that is not a well-formed concept is refused. For now
 every write is trusted and lands on `main`; staff review comes later, against the git
 history and the trust tiers OKF derives from `verified`.
@@ -454,35 +1095,82 @@ directories are the ones the agents had settled on most:
 | Playbook | `playbooks/` | |
 | Product Area | `product-areas/` | |
 | Reference | `reference/` | anything else worth looking up |
+| Vendor, Product, Feature, Category | `products/` | kb-team only: the team's catalog of products (see "Labels and facts") |
 | Stack Drawing | `stack.md` at the root | kb-org only, one per customer, written with `draw_stack` (below) |
 
 A type of its own goes in a directory named after it. The agents' prompt lists the table, and
 `kb_write` refuses an agent's concept of one of these types anywhere but its directory, a type
-spelled otherwise, a customer's type in a team's knowledge base, and a Contact that is not one
-person named after its title (a list of people, `contacts/people.md`); people's edits in the
-editor are not held to it. Concepts written before it stay where they are until an agent changes
+spelled otherwise, a customer's type in a team's knowledge base, a catalog type in a customer's,
+and a Contact that is not one person named after its title (a list of people,
+`contacts/people.md`); people's edits in the editor are not held to it (but for the catalog's
+own checks, which hold everyone). Concepts written before it stay where they are until an agent changes
 them, which moves them (the prompt says so). People are a Contact each, an
 [OKF concept](https://github.com/GoogleCloudPlatform/knowledge-catalog/blob/main/okf/SPEC.md#4-concept-documents)
 like any other: its `title` their name as the platform shows it, its `description` who they are
 to us in one sentence (which the inbox's profile cards show), `aliases` the other names they go
 by, and `resource: mailto:<address>` (OKF's "canonical URI for the underlying asset") when a
 message shows it. A customer's knowledge base has everyone who works on its threads, the
-customer's, partners' and Adobe's people, with their role on that account; a team's has the
-colleagues and partners it works with across customers, and never a customer's people.
+customer's, partners' and Adobe's people, with their role on that account; a team's has its own
+members and the colleagues and partners it works with across customers, and never a customer's
+people. A member's Contact in their team's knowledge base is their **profile** on the team, the
+same for every customer: its description what they do on the team and own, its body what they
+know (products, areas), the customers they work with most and how to reach them, with sources.
+Every agent's prompt lists its team's members, the busiest first, with the path of each one's
+profile and whether it is there yet (`team-members`, src/agent/teammembers.js), and asks it to
+keep them as threads show what the members do: their role on one account still goes to kb-org.
+
+**Diagrams.** Beside the concepts, a knowledge base holds diagrams: `.dot` files, Graphviz DOT
+with the FMC attributes of the stack drawing's renderer (src/fmc.js: `fmc` on nodes and clusters,
+`request` on channels), drawn as FMC block diagrams. A diagram goes beside the concept it belongs
+to, which links it (`reference/delivery.dot` beside `reference/delivery.md`); it has no
+frontmatter: its title is the graph's `label` and its description the `//` comment it starts
+with, as `index.md` lists it (`(Diagram)`), and its commit says who wrote it. Agents write them
+directly with `kb_write`, whole, as they write concepts (the prompt teaches them the notation),
+and people in the editor, which draws one beside its text as it is typed (by the renderer
+Worker, below, or where there is none by the page's renderer, `/inbox/fmc.js`, imported the
+first time one is opened). Graphviz cannot run in a Worker (it is
+WebAssembly compiled from bytes, which Workers refuse), so every write of a `.dot` is checked by
+src/dot.js instead: the DOT grammar, the edge operator of the graph's kind, the FMC kinds, at most
+400 nodes and 64 KB. A write it refuses says which line; what passes, Graphviz then lays out on the
+server, and a write of what dot calls an error is refused with dot's words (src/diagrams.js).
+
+**The renderer Worker.** Graphviz runs on the server in a Worker of its own,
+`helix-opspile-graphviz` (src/graphviz/worker.js, graphviz/cloudflare.config.ts), as the agents'
+computers run their programs: a wasm build of dot (`@ai-ecoverse/wasm-graphviz`, built by
+homescoop: dot_static with the core renderers and the dot and neato layouts linked in, no expat,
+zlib or cairo) is the `graphviz` image of the computers' bucket (scripts/computer-images.mjs,
+not offered to teams), and a SLICC kernel with its root in memory runs it, one kernel per isolate,
+booted with the first layout, its processes Dynamic Workers (`LOADER`). A layout is a run of
+`dot -K<engine> -T<format>` with the DOT on its stdin, ten seconds at most (src/graphviz/
+render.js), after which the kernel is ended for the next one to boot. It has no public address:
+the inbox Worker's service binding (`GRAPHVIZ`, its `Graphviz` entrypoint) is its only way in,
+with `layout` (dot's output) and `render` (the FMC drawing of src/fmc.js, `drawLayout`, the same
+the page draws, from `-Tjson0`: the layout without dot's drawing instructions, which src/fmc.js
+does not read, a third of `-Tjson`'s size; dot's output crosses the kernel's pipe, and its size,
+not the layout, is what a large diagram's time goes to). A write is checked with `-Tplain`. It is deployed before the inbox Worker, which binds it; until its image is in
+the bucket, or when it fails, writes are checked by src/dot.js alone and the editor draws in the
+page (`/inbox/fmc.js`). The editor asks it first (`POST /api/diagram`, for every internal user,
+who reads the knowledge bases), so the editor needs no Graphviz of its own where it is deployed; a diagram the renderer
+cannot lay out in its ten seconds is answered 503, and the page draws it itself. dot is in the agents'
+Base image too, for laying out a diagram in the shell before writing it.
 
 **Agent instructions.** Each knowledge base may have a `systemprompt.md` at its root (a
 concept of type `System Prompt`). Every thread agent appends the bodies of those that apply
 to it, its team's first, then those of the teams its channel is shared with, then the customer's,
 to the end of its system prompt, read again
 before each model request; HTML comments in them are left out. Only people write them,
-whoever may edit the knowledge base, in the knowledge-base editor: agents' writes to `systemprompt.md` are refused, so a
+whoever may edit the knowledge base, in its **Knowledge base** section: agents' writes to `systemprompt.md` are refused, so a
 prompt injection cannot change what later agents are told.
 
 **Stack drawing.** A customer's knowledge base may have a `stack.md` at its root (a concept of
 type `Stack Drawing`, src/stack.js; a `Tech Stack` concept is one platform's setup, in
 `tech-stack/`, which a part's Note may link to): how their site is put together, as Markdown that reads as it
 is. A summary, then `## Parts`, a table of `| Layer | Part | Tech | Note |` (the layer by its
-name or id, Tech the id of a tech stack entry where one fits), then `## Flows`, a table of
+name or id, Tech the id of a tech stack entry where one fits, read through the catalog's moves, or
+`own` for what the customer built; every write sets it as the catalog has it, src/stacktech.js: an
+id that moved becomes the one it moved to, a part without one whose name a technology covers,
+src/products.js `coveredBy`, gets that one, and an id no team has is refused for an agent and kept
+for a person; only the Tech cells change, and the agent or the editor is told what was set), then `## Flows`, a table of
 `| From | To | What |` between parts by name, then any notes. Two optional columns say more:
 a part's Kind (an agent, the default, a storage, a channel, a person or an external system)
 and Group (a frame in its layer), and a flow's Kind (by default what is named goes from From to
@@ -496,13 +1184,16 @@ a flow between parts that are not there, more than 40 parts or 60 flows) is refu
 writes it (`checkConcept`), so the inbox can always draw it. `GET /api/kb/stack?org=` answers
 it parsed, by layer, with who wrote it and when (its `generated` stamp), for whoever may read
 the knowledge base; the inbox draws it (ui/stack.js) as an FMC block diagram, a part under the
-pointer or the focus lighting its flows and naming them, and the technologies Clef saw in the
-customer's channels that it does not draw listed under it. Without one, the inbox draws what
-Clef saw, by layer.
+pointer or the focus lighting its flows and naming them. Without one, the inbox draws nothing:
+the drawing is the only customer-level record of what a customer runs, which its thread agents
+keep, and Clef's answers are each thread's. Every write of `stack.md` also keeps its parts (but
+people) in D1 (`org_stacks`, migration 0084, src/orgstacks.js) for the inbox's list by customer;
+the cron reads the drawings of knowledge bases that have no row yet.
 The agents are told to keep it current: every turn's system prompt has a `stack-drawing`
 section with the drawing's parts by layer and its hash (the `base` for `draw_stack`), or that
-there is none, and the technologies Clef saw in the channel (`channel_tech`, at 0.8 or above)
-that no part is; the prompt asks them to draw it once they know what serves the customer's
+there is none, the technologies Clef saw in the customer's channel threads of the last 90 days
+(`thread_tech`, at 0.8 or above, with how many threads showed each) that no part is, and the
+parts none of them showed (retired, or only not talked about); the prompt asks them to draw it once they know what serves the customer's
 pages, and again in the same turn a thread shows a part, flow or change it lacks, only from what
 someone said or showed. The day-later wrap-up asks again.
 
@@ -532,12 +1223,19 @@ guidelines' figures drawn by it at `/__dev/fmc`, and Helix 6's architecture
 docs/architecture.md). A cluster's `class` of `fmc-zone-<edge|pipe|author|dev|oversight>` tints
 an architecture's zones, faintly, as that drawing does.
 
-**Editor.** Members of the admin team, and team managers for the knowledge bases of their
-teams and of the customers their teams own, have an editor at `/inbox/kb`: every knowledge base, its files, its history, and an editor for `systemprompt.md`
-and the concepts. The members of every ops team see every team's knowledge base there read-only (its
+**Editor.** A team's page in **Teams** and a customer's in **Customers** (`/inbox/admin`,
+ui/admin.js) have their agent's sections (ui/agent.js) after their own: **Thread agents**,
+**Tools and MCP servers**, a team's **Extraction rules**, and **Knowledge base**, its files and
+history beside an editor for `systemprompt.md` and the concepts. Beside every section, whoever may look
+at the knowledge base talks to its agent (see "The knowledge base's sidebar", under Thread agents). Members of the admin team, and
+team managers for the knowledge bases of their teams and of the customers their teams own,
+change them there. The files of a knowledge base but `systemprompt.md` and its Clef areas (`areas/`) are everyone's on its team (`pathOwner`, src/agent/kbwrite.js, which takes a path only as it is: `./systemprompt.md` is refused)
+(`mayWrite`, `write` on each knowledge base of `GET /api/kb`): a team's members write their team's,
+and the members of the teams that own a customer the customer's. Every internal user (src/kbaccess.js `isInternal`: the members of every ops team, and Adobe's people on none) sees every team's agent there read-only (its
 files, history, thread agents, tools and MCP servers: the API answers them `GET`s only, and
-says per knowledge base whether they may change it, `may`), as every thread agent reads them,
-and the customers' their teams own the same way. A team owns the customers with a channel filed under it or shared with it
+says per knowledge base whether they may change it, `may`, and write its files, `write`), as every thread agent reads them,
+and every customer's the same way: whoever sees a team's or a customer's page reads its knowledge base and
+talks to its agent, on a team that owns it or on none. Someone signed in from `SIGNIN_DOMAINS` who is not Adobe's sees none. A team owns the customers with a channel filed under it or shared with it
 (`threads.team`, `channel_teams`; ignored channels aside), so ownership follows the channels
 when they are re-filed or shared; src/kbaccess.js says who looks and who changes. What the
 members change is only their
@@ -551,32 +1249,35 @@ attached over CDP dismisses), and only when edits could not be saved or before a
 one exception is leaving the page (Back, reload, closing the tab) with edits that could not be
 saved, where only the browser's own prompt can ask.
 
-The list of knowledge bases has the ops teams first, then the customers and vendors, by
-activity (the default: most entries first, then most tools and MCP servers turned on for their
-threads) or by name, as the person last chose in that browser. An entry is a file other than
+Teams lists the teams you manage (all of them for the admin team), and for everyone else every
+team with a knowledge base, under **Other teams**; Customers the customers (for the admin team)
+or the customers of your teams with a knowledge base, by name, each with its agent's channels
+and its entries. A team's or a customer's own section is for whoever manages it, so the others
+see its agent's sections only. An entry is a file other than
 `index.md`, `log.md` and `systemprompt.md`; `knowledge_bases.entries` keeps the count, which
-every write updates (and opening a knowledge base in the editor, when its listing is complete),
+every write updates (and opening a knowledge base, when its listing is complete),
 and the cron counts the knowledge bases not counted yet, a batch per run, over their whole tree.
 
-**Thread agents per channel.** The editor shows, for each knowledge base, the channels it
+**Thread agents per channel.** **Thread agents** shows, for each knowledge base, the channels it
 learns from (a team's: the team's channels; a customer's: theirs, in every team) and whether
-each one's [thread agent](#thread-agents) is on; the list of knowledge bases marks those with
-an agent in any of their channels. The admin team, and the managers of the team that owns a
+each one's [thread agent](#thread-agents) is on; its tab, and the lists, count those with an
+agent. The admin team, and the managers of the team that owns a
 channel (the team of its latest thread), turn its agent on or off there, right away (no
 question: it is one channel, and switches back as easily). The switch is a row in
 `agent_channels` with who set it and when. A team's knowledge base also has the team's
 default, **On by default** (`agent_teams`, after a question in the page, since it switches many
 channels at once): on, every channel of the team that nobody switched has an agent, the
 channels it gets later too. A new team starts with it on (the admin team's name for it in
-`changed_by`), and with the [agent tools](#agent-tools) `computer` and `extraction_rules` and
-the [global servers](#global-mcp-servers) `browser` and `github` on for the team (those marked
-`newTeams`); the teams from before that have them as they had them, and deleting a team
+`changed_by`), and with the [agent tools](#agent-tools) `computer`, `extraction_rules`,
+`web_search`, `resolve` and `label` and
+the [global server](#global-mcp-servers) `github` on for the team (those marked
+`newTeams`; `fluffyjaws`, which acts as a person, is not); the teams from before that have them as they had them, and deleting a team
 deletes them. A channel nobody switched has an agent when its team's default or
 `AGENT_CHANNELS`, the deployment's default, turns it on. Alert channels have no
 agents. Turned off, a channel's agents stop at their next message and skip their wrap-up;
 their drafts and what they filed stay.
 
-**MCP servers.** Next to the thread agents, the editor lists a knowledge base's **MCP
+**MCP servers.** **Tools and MCP servers** lists a knowledge base's **MCP
 servers**: those of its team (`kb-team-*`) or its customer (`kb-org-*`), which the agents of
 that team's or customer's threads may call from code mode (see [Thread agents](#thread-agents)).
 Whoever may edit the knowledge base adds, checks, edits, switches and deletes them. A server is a
@@ -588,27 +1289,57 @@ knowledge base) and one per channel the knowledge base learns from. In a team's 
 the per-channel switches fold, the channels switched on their own first and then by name, with a
 filter when there are many; in a customer's they are all there is, so they are shown unfolded.
 
-Every page has the same header (`ui/header.js`, `ui/header.css`): a switch between **Inbox**
-and **Agents** (this editor: the agents' knowledge bases, channels, MCP servers and
-instructions) for every member of a team, **Teams** too for team managers, and for the admin
-team **Orgs** and **Requests** too, the sections of `/inbox/admin`, **Topics** (`/inbox/topics`,
-[below](#topic-maps)) and **COGS** (`/inbox/cogs`, [below](#cogs)). Each opens as it was left in that
-browser tab: the header keeps every page's address (sessionStorage) whenever it changes, so
-**Inbox** comes back with its team, filters, sort, unread, the open thread and "view as",
-**Agents** with its knowledge base and file, and each admin section with what was picked in it.
-From the inbox, what is on screen picks what the others open on: Agents and Orgs the customer
-on screen (the open thread's, or the one customer filtered on; Agents its knowledge base if it
-has one, else the team's), Teams the team picked (in the team views, for whoever may manage it).
-With nothing on screen for them, they open as they were left, and Agents, not opened yet in the
-tab, on the team's. The inbox, not
-opened yet, opens from a team's knowledge base on that team. (`back=`, the inbox's
-address on links made before, is still taken.) The editor's URL names the knowledge base and
-the file (or the history), and each one opened is a history entry, so the browser's Back and
-Forward step through them; going between the admin sections is one too. The editor itself is
-always the admin's own, also when they came from a "view as" inbox. On a phone the switch is
+Every page has the same header (`ui/header.js`, `ui/header.css`): a switch between **Inbox**,
+**Teams** and **Customers** (the sections of `/inbox/admin`, each team and customer with its
+agent) for every member of a team, the admin team's requests being threads of its inbox
+("Requests as threads", the number of the open ones on **Inbox**),
+**Topics** (`/inbox/topics`, [below](#topic-maps)) and **COGS** (`/inbox/cogs`, [below](#cogs)).
+Each opens as it was left in that browser tab: the header keeps every page's address
+(sessionStorage) whenever it changes, so **Inbox** comes back with its team, filters, sort,
+unread, the open thread and "view as", and each admin section with what was picked in it, at
+its section and file. From the inbox, what is on screen picks what the others open on:
+Customers the customer on screen (the open thread's, or the one customer filtered on), Teams
+the team picked (in the team views). With nothing on screen for them, they open as they were
+left. The inbox, not opened yet, opens from a team's page on that team. The address names the
+team or the customer, its section and the file open there (`view=`, `path=`), and each file
+or section opened is a history entry, so the browser's Back and Forward step through them;
+going between the admin sections is one too. `/inbox/kb`, where the knowledge bases had a page
+of their own, sends its links there (`repo=`, or the inbox's `org=` and `team=`). The admin
+pages are always the admin's own, also when they came from a "view as" inbox. On a phone the switch is
 the page you are on, with a menu of the others.
 Your menu, on every page, has **Appearance**: the color scheme, the system's (the default),
-light or dark, kept per browser.
+light or dark, kept per browser. The inbox's menu is three columns under who you are (you and
+your view; notifications and the Thread Agent; Appearance, the keyboard and logging out): side by
+side on a screen 1000px wide or more, one under the other below that, so a phone has the single
+column it always had.
+
+**Search.** The inbox's search finds concepts too (`GET /api/search`'s `kb`,
+src/kbsearch.js): those of the knowledge bases of the view's teams (a team's view: the team; the
+personal view: the viewer's own teams, not those of the channels it shows) and of the customers
+those teams own, as far as the viewer may read them (src/kbaccess.js), so nobody on a team
+finds any, and a merged customer's is the one it was merged into. Artifacts has no search, so D1
+keeps what is searched (`kb_concepts`, migration 0094, src/kbindex.js): a row per markdown entry
+(not `index.md`, `log.md` or `systemprompt.md`), its blob hash, its frontmatter's `type`, `title`
+(else its first heading, else its file name), `description`, `tags` and `aliases`, and the first
+8 KB of its body. Every write updates the rows of the files it changed from the work tree it
+pushed; the cron reads the knowledge bases not read yet in full (`knowledge_bases.search_commit`
+NULL: never, or a write's update failed; a new knowledge base has nothing to read), 30 a run,
+the teams' first, reading only the blobs whose hash is not the row's. Each concept also has a
+vector in `CONTENT` (`type: kb`, the knowledge base's `team` or `org` slug, `repo`, `path`), the
+mean of the embeddings of its names, type, tags, description and body in up to four pieces,
+made by the cron, 100 a run, for the rows whose blob changed since (`embedded` NULL); the
+threads' queries ask only for `type` `message` and `thread`. A query is embedded once for the
+threads and the concepts. A concept matches by its words (every word of the query in its title,
+aliases, type, tags, description or body: 0.4, plus up to 0.8 for the words in its title or
+aliases and 0.3 for those in its tags, type or description) and by meaning (its vector, by the
+threads' thresholds: a similarity of 0.6 and within 0.12 of the best), the scores added; only
+what `kb_concepts` has counts, so a vector left behind by a deleted file finds nothing. The ten
+best come with their knowledge base, type, title, description and, where the words are in the
+body (or it has no description), the part of the body around them as markdown: whole lines from
+the first with a word (a long one from shortly before it, a code block from its fence), about
+280 characters, a heading as bold text and images by their text, which the inbox renders as it
+renders messages (its links as text: the entry is the link). The MCP server's
+`search_threads` returns them as `knowledge`, and `get_knowledge` reads one.
 
 The repositories are created through the Worker's Artifacts binding (one namespace per
 environment, `helix-opspile` and `helix-opspile-stage`) as soon as their org or team is
@@ -672,6 +1403,11 @@ repositories that exist and their git remotes. Internal slugs (`_unassigned`) ge
   take the list's place, best match first, each with the message that matched (its words
   marked); opening one scrolls the thread to that message. The filter cards count and filter
   the results, j and k step through them, and Esc or **Clear** brings the inbox back.
+  Above the threads, under **Knowledge base**, are the entries of the knowledge bases about the
+  query (`kb`, [src/kbsearch.js](../src/kbsearch.js), see "Search" under
+  [Knowledge bases](#3-knowledge-bases)), the first three and then **N more**, each a link to it in
+  the editor of its team's or customer's page, with the markdown around the words (else its
+  description) rendered by the messages' renderer, four lines at most; the filters are the threads' and leave them be.
 - A click on a facet value picks it; Shift-click, or the ≠ beside it, excludes it (negative
   filters, as in klickhaus): picked values of a card are OR'd, excluded ones AND'd, and the
   cards AND'd with each other. The URL keeps both, `f.<facet>=a|b` and `not.<facet>=c`; a
@@ -680,7 +1416,8 @@ repositories that exist and their git remotes. Internal slugs (`_unassigned`) ge
 - The thread list has the personal view and a view per team the viewer is in, switched above
   the list (for a member of two teams: *Personal · Admin · Helix*). **Personal**
   (`view=personal`, and the default: any address without `team=`) has the conversations in the channels you posted or
-  were mentioned in, whichever team they are filed under (all of their threads, not only the ones you are in; no alerts), puts the
+  were mentioned in, whichever team they are filed under (all of their threads, not only the ones you are in; no alerts),
+  and the ones that show a technology you follow (see "Following technologies"), puts the
   latest activity first (a person's last post, or for a thread only bots posted in its last
   message) and keeps only the customer and platform cards (one customer is picked
   at a time); filters on the cards it does not show do not apply there, and are kept for the team
@@ -690,15 +1427,25 @@ repositories that exist and their git remotes. Internal slugs (`_unassigned`) ge
   the cards (`not.customer=` in the URL, and in a bell on the view): its threads leave the list,
   and it stays at the end of the column, struck through and out of the red badge of **All
   customers**, with or without threads, until a click brings it back. **All customers** drops
-  the pick and what is excluded.
+  the pick and what is excluded. The column goes by unread mentions of you, then unread, then
+  the rest; within each, your **regulars** come first (with a star), then the others, then the
+  **inactive** ones (faded until something is unread), by name within those, with a line between
+  two of them. Your regulars are the few customers you send most of your messages to: the fewest
+  that have four in five of your messages of the last 90 days, at most a fifth of the customers
+  you posted to, none with less than one in twenty of them (in production most people send four
+  in five of theirs to one to three customers). Inactive are those you have neither posted to
+  nor been mentioned in for two weeks (`standing` of the personal view's first page,
+  src/standing.js). A click on a regular's star takes it out of your regulars: what you posted
+  there so far no longer counts toward them. The others have a mute, on hover: a muted customer
+  leaves your personal view until you post or are mentioned in one of its channels again (that
+  channel comes back, with its threads), or a thread of it you follow has activity again; what came
+  before the mute no longer counts (`POST /api/standing`, `customer_marks`). Both can be undone
+  from the note they leave; neither changes what you may see or work.
   Beside each customer's heading in the list by customer are the key parts of its **stack**:
-  the likeliest technology of each layer of the stack (`tech_stack.layer`, see "Labels and
-  facts"), top to bottom, Other's left out, over the customer's channels on the pages loaded
-  (`stacks` of `/api/inbox`, `orgStacks` in src/api.js: each technology at the highest
-  probability of any of its channels there, at 0.8 or above; pages merge the same way). A click
-  on them shows the customer's [stack drawing](#3-knowledge-bases) (`GET /api/kb/stack`,
-  ui/stack.js) under the heading, or, without one, what Clef saw, by layer; the thread's tech
-  stack dropdown has a link to the same.
+  the first part of each layer of its [stack drawing](#3-knowledge-bases), top to bottom, Other's
+  left out (`stacks` of `/api/inbox`, from `org_stacks`, src/orgstacks.js); a customer without a
+  drawing has none. A click on them shows the drawing (`GET /api/kb/stack`, ui/stack.js) under
+  the heading; the thread's tech stack dropdown has a link to the same.
   Besides its cards it has one switch, **Mentions** (the @ at the top right of the
   customers; `mentions=1` in the URL), keeps the threads that mention you, read or not (`mentioned`, all
   the thread's mentions, has you); with unread only, the ones with mentions of you you have not read. The
@@ -708,7 +1455,7 @@ repositories that exist and their git remotes. Internal slugs (`_unassigned`) ge
   `src/room.js`). Someone on no team (no-team mode, `SIGNIN_DOMAINS`) has only this view.
   A **team's** view
   (`team=<slug>`) puts what needs you most first and has every facet card. First comes the
-  status (unseen and critical, unseen and hot, you, waiting too long, customer silent, team on it,
+  status (unseen and critical, unseen and hot, you, waiting too long, they went silent, team on it,
   the rest); within a status, the score of `ui/rank.js`, boosted trees over what the inbox knows
   of a thread (how long ago, who is waited on, urgency, resolved, kind, …) learned from Clef's
   pairwise judgements of production threads, from what people open in the list and from which
@@ -747,9 +1494,14 @@ repositories that exist and their git remotes. Internal slugs (`_unassigned`) ge
   below the rows you have seen; in the personal view, threads with activity since that you
   have not seen in it come to the top. Another filter or view, unread only, or a click on the
   view already shown sorts it afresh; the thread open then stays, if it passes the filters.
+  With unread only, the filter cards' counts are of what is unread now, so they go down as you
+  read, while their rows keep their order as the list's do.
 - **Notifications** are shown by the browser while an inbox is open (a tab, or the installed
   app, also in the background), through the service worker, so that a click opens the thread
-  in the inbox already open, or in a new one. There are three kinds, settings of the person in
+  in the inbox already open, or in a new one. The inbox stays on the view on screen (Personal,
+  or a team's inbox with its filters) when that view can show the thread, and only otherwise
+  switches to the closest that can, Personal first; a new window opens the view the inbox that
+  showed the notification was on, by the same rule. There are three kinds, settings of the person in
   D1 (`person_settings`, `GET`/`PUT /api/settings`), so every device has them: a message that
   mentions you (on unless turned off in the user menu; the room's announcement says whom it
   mentions), a new message from someone else in a thread of yours (you posted in it, were
@@ -765,7 +1517,15 @@ repositories that exist and their git remotes. Internal slugs (`_unassigned`) ge
   view or turning it off. Inboxes in several tabs show one notification per thread, and none
   for the thread you are reading, nor while viewing as someone else. The first visit asks once
   (a toast) whether the browser may show them; browsers only ask on a click.
-- The toolbar is the same on the inbox and the admin pages: the pages and label review on the
+  A page sees the browser's permission, not whether the system shows the banner (on a Mac,
+  System Settings or a Focus keeps Chrome's banners off while Chrome says "granted"). So the
+  menu's **Send a test notification** sends one with the chime and asks whether a banner
+  showed; if not, a dialog (`ui/notifyhelp.js`) walks through the system's settings, with
+  drawings of System Settings on a Mac, for the browser and the installed app's own entry. While
+  the browser blocks them, the menu says how to allow them again. Once the browser allows them,
+  the inbox sends "Notifications are on" once in a tab and once as the installed app, with a
+  toast asking whether it popped up. `/inbox?notify=help` opens the troubleshooter.
+- The toolbar is the same on the inbox and the admin pages: the pages on the
   left, and on the right whoever is signed in, with the view on screen under their name. Their
   name opens a menu with "View as" (admin team; while it is on, a chip next to the name says
   whose inbox this is and leaves it in one click), the notifications, the keyboard shortcuts, and **Log out**,
@@ -779,8 +1539,12 @@ repositories that exist and their git remotes. Internal slugs (`_unassigned`) ge
   the filters, the list, the thread's messages, its reply box and the sidebar (⌘F6 too, as F6 is
   the browser's), ⌃1…9 (Ctrl+Shift+1…9 off a Mac) picks a view, ↑ or ⌘↑ in an empty reply box
   edits your last message (without one, puts the last message in focus) and ⌘⇧\ reacts to the
-  last one. On a message in focus ↑/↓ move, `e` edits it, `r` reacts and Esc goes back to the reply
-  box. In the text boxes ⌘B, ⌘I, ⌘⇧X, ⌘⇧C, ⌘⌥⇧C, ⌘⇧U and
+  last one. On a message in focus ↑/↓ move, `e` edits it, `r` reacts, `m` (or the menu key, ⇧F10)
+  opens its menu and Esc goes back to the reply box. Esc in the reply box leaves it (what was typed
+  stays), and Space and ⇧Space page through the open thread wherever the focus is not on
+  something Space presses or types in, not the list the browser would scroll after a click on a
+  thread. Every Escape the page takes is kept from the browser, which would leave full screen on
+  a Mac. In the text boxes ⌘B, ⌘I, ⌘⇧X, ⌘⇧C, ⌘⌥⇧C, ⌘⇧U and
   ⌘⇧7/8/9 write (or take off) markdown, and a link pasted over words becomes theirs. The inbox's
   own keys stay: `/`, `j`/`k`, `e` (resolve), `a` (the Thread Agent).
 
@@ -799,8 +1563,9 @@ kind (channels the rules ignore never get there).
   urgency and its level, `resolved_p`) and the facts (tickets, sites, CVEs, URLs, the problem). Its `url` opens the
   thread in the inbox's personal view.
 - **As the inbox shows it.** The label, title, resolution and facts are the inbox entry's: a
-  re-threaded group's latest member's label (with reviews), its first thread's title, the facts
-  of every member, and resolved by a staff ✅ on a member's root (until a customer writes again)
+  re-threaded group's latest member's label (with its agent's answers), its first
+  thread's title, the facts of every member, and resolved by a staff ✅ on a member's root or
+  its agent (until a customer writes again)
   or else by Clef (`resolved_p` ≥ 0.5). Who it waits on is the inbox's `waiting_on`: Clef's
   next actor, except that a thread where Adobe posted last never waits on us, an unlabeled one
   waits on us when the customer posted last, and a 🙏 after the last message leaves nothing
@@ -822,7 +1587,7 @@ kind (channels the rules ignore never get there).
   and a re-file. A job queued before the thread's latest export is dropped, so a burst exports
   once. Each thread remembers what was exported (`threads.exported_through`, the row's
   `updated_at`, and `exported_at`); the cron enqueues up to 1,500 threads a run, newest first,
-  whose rows are behind: a message written since, a label, a review or re-threading since the
+  whose rows are behind: a message written since, a label, an agent's answer or re-threading since the
   export, or a re-file (which clears the watermark). That is the backfill too, and the retry: a
   failed insert leaves the watermark as it was. Without the `CLICKHOUSE_*` bindings nothing is
   exported.
@@ -859,12 +1624,15 @@ The inbox sorts every thread into one pile, most pressing first: **critical** (c
 urgency, nobody at Adobe has seen it), **hot** (high urgency, unseen by Adobe), **you** (you
 posted or were mentioned, and the customer spoke last or you were mentioned), **waiting**
 (waiting on us longer than 15 min / 1 h / 3 h for critical / high / normal), **silent**
-(waiting on the customer or vendor longer than 30 min / 1 h / 1 day: follow up or close; for
-normal and low urgency, Saturdays and Sundays in the viewer's time zone do not count),
-**team** (your team is in it and all is well) and **quiet**. Who a thread waits on is Clef's
-`next_actor`, except that a thread where Adobe posted last never waits on us (the label can
+(waiting on the customer or a vendor longer than 30 min / 1 h / 1 day: follow up, chase the
+vendor, or close; for normal and low urgency, Saturdays and Sundays in the viewer's time zone do
+not count), **team** (your team is in it and all is well) and **quiet**. Who a thread waits on is
+Clef's `next_actor`, except that a thread where Adobe posted last never waits on us (the label can
 be stale or wrong), and an unlabeled thread waits on us when the customer posted last; the
-API sends it as `waiting_on`. Admins can look at the inbox as another person, read-only.
+API sends it as `waiting_on` (`us`, `customer`, `vendor`, `nobody`), and the inbox's Waiting on
+card has Us, Customer, Vendor and Nobody. In a vendor's thread (see "Vendors") the other side is
+the vendor: one that waits on someone outside Adobe waits on the vendor, whatever its label
+calls them. Admins can look at the inbox as another person, read-only.
 
 ### Attention
 
@@ -892,6 +1660,45 @@ Slack, the message and its `/replies` on Graph. Every message lands in pile 1 ma
 channel) ends a request. Any other leaves it open: the queue retries it, and the cron sends out
 what is still open after an hour, an hour apart, until the thread has been quiet for a week.
 
+## History import
+
+What a channel had before the inbox did is read on request (`scripts/import.mjs --since <day>`
+or `--days N`, `src/history.js`): for every known Slack and Teams channel, the threads started
+since, page by page, one `import` job on the NORMALIZE queue a page, which sends the next. Slack's
+`conversations.history` lists the roots posted since (a thread's replies with
+`conversations.replies`); Graph lists a channel's threads by their latest activity, with
+`$expand=replies`, and the first one quiet since before then ends the listing. A page stops
+after about 300 messages, and the next job goes on in the same page. Pages are a few hundred
+subrequests each, so they are spread out: the script starts each channel at its own second, and
+a channel's next page waits 30 to 60 seconds, so that a queue batch rarely holds two. Alert channels are left out
+unless asked for (`--alerts`), and ignored ones always.
+
+- **Only what the inbox does not have.** A thread with a message heard of any other way (live, a
+  backfill, a catch-up) is left as it is; one imported before is imported again, the same keys,
+  so nothing changes but what changed since.
+- **Filed like any message, waking nobody.** Pile 1 marks them `via: import`, and the normalizer
+  files and indexes them as usual, mentions and reactions too, but sends no agent poke,
+  re-threading, label, vector or full-text job, no file copy, no backfill (the import has the
+  whole thread, its root perhaps a moment behind), no export job (the cron's export sweep takes
+  them, newest first) and no announcement to the inboxes.
+- **Imported threads.** `messages.imported` is set while every pile-1 object of a message is the
+  import's (`MIN` on upsert, so in any order), and `threads.imported` while every message of the
+  thread is. Such a thread was over before the inbox began: it is read by everyone (`readState`,
+  the red badge, the other teams' counts), waits on nobody (`waitingOn`, in the inbox and in
+  klickhaus), is quiet in the status piles, and says `imported` to MCP clients. The cron's
+  vector and label sweeps leave it out, and so does a re-file (which exports it again, and
+  moves its vectors only where it has some); `replay.mjs --relabel`, `--vectorize` and `--index`
+  make them when wanted (with `--imported`, only theirs). Their labels announce nothing: the
+  inboxes that follow what one shows hear of it with its next live message. A message of it heard of otherwise (a reply, an edit, a Teams reaction)
+  makes it a live thread like any.
+- **Progress** is `history_imports`, one row per channel: where the next page starts (the
+  platform's cursor, and how many roots of that page are done), and how many pages, threads and
+  messages so far. A page moves the row on only from where it started, so one delivered twice
+  moves it once and sends no second next page; a newer import of the channel replaces the row,
+  and the older one's pages stop. An error that stays (the bot is not in the channel, Graph
+  refuses it) ends it; any other is the queue's to retry (a rate limit backs off), and one that
+  outlives the retries leaves the row open with its error, for `--resume`.
+
 ## Labels and facts
 
 Two minutes after a person posts, the thread is labeled (later posts reuse the same label job,
@@ -901,9 +1708,22 @@ and an unchanged thread is never labeled twice):
   kind of thread it is (`incident`, `security`, `question`, `request`, `access`, `people`,
   `meeting`, `other`; alerts are `alert` without asking), urgency (0–3) and whether it is
   resolved. The state it reads is the thread as text, with every author marked as Adobe staff
-  or customer. `access` is about permissions and getting into tools; people joining, leaving,
+  or customer. A vendor's thread is asked the other way round (`VENDOR_QUESTIONS`, see
+  "Vendors"): its authors outside Adobe are the vendor's, and who acts next is `us`, `vendor` or
+  `nobody`. `access` is about permissions and getting into tools; people joining, leaving,
   being introduced or away are `people`; scheduling and sharing a call's notes are `meeting`.
-- In the same call, Clef answers a yes/no question per **topic** (src/label.js `TOPICS`):
+- In the same call, Clef answers a yes/no question per **area** (a topic, in the code and the
+  inbox's Topic filter). Areas are authored: each is a file at `areas/<id>.md` of a team's
+  knowledge base (type `Area`: its `title` the name, its `description` what Clef is asked, "Is
+  this thread about <description>?", `enabled: false` to stop asking it), compiled into `areas`
+  (migration 0086, src/areas.js) with the team's catalog, on every write and by the cron. The id is
+  the file's name, so a rename (its title) keeps its labels. Clef asks every team's, each id
+  once (the admin team's, else the first team's by name, that is on), the built-in ones in the
+  order they were measured in and the others after. Only people write them (the admin team and
+  team managers; an agent's write under `areas/` is refused): each is one more question in every
+  label. Until a team has written any, the built-in list below is asked, and
+  `npm run areas:bootstrap` writes it as kb-team-admin's files, which ask the same.
+  The built-in areas (src/label.js `TOPICS`) are:
   authoring and content, sign-in and permissions, project plan and go-live, caching and
   delivery, domains and certificates, performance, preview and publishing, SEO, URLs and
   redirects, code and deployment, blocks and front-end code, errors and traffic, limits and
@@ -937,9 +1757,16 @@ and an unchanged thread is never labeled twice):
   and when it runs: that shape backtracks without end on text that almost matches. A script is an ES module whose
   default export gets the thread and returns `[{ field, value }, { tech }]`; it runs in a
   Dynamic Worker of its own (`LOADER`), without network access, within two seconds. Rules are
-  edited on the Agents page (**Extraction rules** of a team's knowledge base), with the MCP
+  edited on the team's page in Teams (**Extraction rules**), with the MCP
   server's tools (`list_extraction_rules`, `save_extraction_rule`, …), and by thread agents
   where the team turned on their `extraction_rules` tool (see "Agent tools").
+  A fact's rule also says what the inbox calls its field (`label`, migration 0108: "Site" for
+  `site`), as a technology's name is in the tech stack: the inbox shows the first label of the
+  channel team's rules of the field, else of the admin team's, else of another team's
+  (src/extract.js `factLabels`), and the field as it is where none has one. Clairic's fields
+  are named next to them (`FIELD_LABELS` in src/label.js). Both come to the pages with the
+  names of technologies and topics (`vocab.facts`), which name a search result's fact and the
+  ids in a thread's header.
 - A language model (`llama-3.3-70b-instruct`) writes a **title** of at most eight words. For an
   alert group it names the specific failure (the error or failing request), once per group.
   The title leaves out what the inbox shows next to it: the customer, the channel, the
@@ -948,19 +1775,81 @@ and an unchanged thread is never labeled twice):
   second answer is kept whole (the names are never cut out of a title, which leaves broken
   phrases such as "Headless options in without App Builder"). When the model finds nothing
   to name ("None", "No title available"), the thread has no title, and the inbox shows its
-  first words.
+  first words. Now and then an inference goes wrong and the answer is no language: the
+  replacement character, the marks of special tokens, one word three times, or text that did
+  not end within the 40 tokens a title may take (`garbled`, `cutOff` in `src/label.js`). The
+  thread is not the cause (asked again, the model answers as ever), so such an answer is asked
+  for once more, and is no title when that is no better: the thread keeps the title it had.
+  The log counts them (`route: 'title'`, `dropped`). Topic names are checked the same way.
 - Clef also answers yes/no questions about the **tech stack** the thread shows (Edge Delivery,
   Document Authoring, Universal Editor, the CDN, the content source, …): the technologies of
   the teams' configuration (`tech_stack`), each asked as "Does this thread show that the
-  customer uses <description>?". The admin team's are asked in every channel; a team's own are
-  asked in its channels too, and one with the id of an admin team's replaces it there (turned
-  off, it is not asked there). Clef gets at most 24 questions per call; the rest are asked in
-  calls of their own, at the same time. The channel keeps the highest probability any thread
-  showed (a rule's detection counts as 1), so every thread of a customer shows their stack;
-  the label keeps what the thread itself showed (`labels.tech`, migration 0059), so its header
-  can name that first.
+  customer uses <description>?". Every team's are asked in every channel, as one union
+  (src/extract.js `techFor`): where the channel's team has an entry of an id, its own is asked
+  there (turned off, it is not asked there); elsewhere the admin team's when it is on, else the
+  first team's by name that is on, with the aliases of every team's that is on (off only where
+  every team has it off). Clef gets at most 24 questions per call; the
+  rest are asked in calls of their own, at the same time, in the order of their ids. A question's
+  key in a call is a hash of the id (src/techid.js `questionKeys`: a catalog path is no key),
+  mapped back when Clef answers, and stored nowhere. The label keeps what the thread showed
+  (`labels.tech`, migration 0059; a rule's detection counts as 1), and so does `thread_tech`, by
+  index. Nothing is kept per channel or customer from Clef's answers: the customer's stack is its
+  stack drawing (`channel_tech`, which kept each technology at the highest probability any
+  thread of the channel showed, was dropped in migration 0085).
+  Of the technologies a thread shows, Clef is then asked, in one more call after the first
+  answers, whether the thread is **about** each: whether the question, the problem or the work
+  concerns it, not only mentions it (`aboutQuestions`, keyed as the tech questions;
+  `labels.about` and `thread_tech.about`, migration 0083). "Uses" is what follows, filters and
+  the agents' evidence read; "about" is for the Topics page and the expert finder, where
+  Edge Delivery, which a quarter of the threads show, would otherwise join everything. A thread
+  that shows nothing makes no second call; one whose second call failed keeps `labels.about`
+  NULL (not asked), apart from `{}` (about none of them), and the failure is logged.
   The inbox shows a team's own name for a technology in its inbox and threads, the admin
   team's elsewhere.
+  The entries are the teams' **catalog** (src/catalog.js, migration 0081): each team's
+  knowledge base lists the products the team supports under `products/`, one concept per file,
+  a `Vendor` at `products/<vendor>.md` (its name, never asked), a `Product` at
+  `products/<vendor>/<product>.md`, a `Feature` of it at
+  `products/<vendor>/<product>/<feature>.md`, and a `Category` at `products/categories/<name>.md`
+  (a kind of product any vendor makes, asked for the vendors no file lists). A technology's id is
+  its path without `.md` (`adobe/aem-sites/edge-delivery`, `fastly/cdn`); its `title` is its
+  name, its `description` what Clef is asked, `aliases` and `layer` as below, and `enabled: false`
+  turns it off. A product with features only groups them and is not asked, unless it says
+  `asked: true`. A feature is part of its product, an Adobe product is a product of its own and
+  another company's is its vendor's (`tech_stack.product`, `vendor`, `kind`), and the portal
+  offers Adobe's. The files are the source and `tech_stack` the compiled copy every reader
+  reads: a write of a team's knowledge base that touches `products/` compiles its catalog from
+  the work tree it pushed (src/agent/kbwrite.js), and the cron compiles one whose head is not the
+  commit it was compiled from (`knowledge_bases.catalog_commit`; src/catalogsync.js), so a revert
+  or a push from outside lands too. A write under `products/` that is not a catalog entry where
+  its type goes, with a title and (but for a vendor) a description, is refused, whoever writes it.
+  A row without a `path` was saved in D1 (with `save_tech`, or before the catalog) and is edited
+  there; a compiled one only in its file.
+  An id moves with its file: a write that deletes a catalog file and creates one of the same type
+  and title gives the new one the ids the old one had in `moved_from` (nothing else pairs them: a
+  file that replaces an unrelated one must not take its labels), and a file may list them itself:
+  a rename that changes the title, or the D1 entries' short ids (`eds`) when they are first
+  written as files. The compile keeps them (`tech_moves`), and when a move is new it rewrites
+  what D1 keeps under the old id, once: the D1 row of that id, follows, `thread_tech`,
+  extraction rules that detect it and the portal's lobbies. A move whose old id
+  is still a file of the catalog is only mapped. Each new move is logged with the rows it
+  rewrote (`route: 'catalog'`, `action: 'move'`), so one nobody meant can be traced. Files (a
+  stack drawing's Tech) and labels from before are read through the map (src/catalog.js
+  `techMoves`), and their technologies keep a name.
+  **Conflicts** between the teams' technologies are the admin team's to settle, in their threads
+  of its inbox ("Requests as threads", counted with the other requests) and with the MCP server's `list_tech_conflicts`
+  and `resolve_tech_conflict` (src/techconflicts.js). They are computed from `tech_stack` each
+  time: an id two teams define otherwise (`diverging`: name, description, layer, product, or on
+  in one and off in another; each team's is asked in its channels, so it may be meant; a team
+  that only turns the admin team's off opts out, which is none), and a
+  name or alias two ids that are on share (`name`: a thread that names it matches either). An
+  admin keeps one as it is (with a note; hidden while its definitions stay what they were kept
+  with, `tech_conflict_keeps.fingerprint`, migration 0082), uses one team's definition everywhere
+  (the others' files and rows of it are deleted), deletes one definition, takes a shared name off
+  one technology's aliases, or merges one technology into another (its files go, then the other's
+  file lists it in `moved_from`, so the compile rewrites what D1 keeps under it). Each writes the
+  teams' catalog files as the admin, through the same write path as the editor, or the D1 row of
+  one saved there.
   An entry also has **aliases** (`tech_stack.aliases`, migration 0057): the names it goes by in
   threads ("AEMaaCS", "IMS Org", "EdgeWorkers"), which match product names to it and are not
   asked of Clef. A feature people ask about by its own name is an entry, not an alias: the AEM
@@ -978,7 +1867,7 @@ and an unchanged thread is never labeled twice):
   AEM as a Cloud Service, MSM and Edge Functions are Experience Manager Sites; Dynamic Media is Experience Manager
   Assets; CX Enterprise Coworker, Brand Concierge, Brand Visibility, Journey Optimizer, … are
   their own), or a category for other companies' (CDN, Code hosting, Consent, …). Clef is asked
-  about each entry; the product groups them, on the Agents page and the Topics page, where an
+  about each entry; the product groups them, in a team's **Extraction rules** and on the Topics page, where an
   entry is a feature of its product. Migration 0056 added what the product census (Clairic over
   all 822 channel threads with a person's message) found the threads naming that no entry
   covered, and the Adobe products they named that had none; it also put the names people use
@@ -986,46 +1875,48 @@ and an unchanged thread is never labeled twice):
   Adobe's analytics another), where nobody had changed them since migration 0043. They are what
   Clef's topics about commerce, assets, Sites Optimizer, integrations and the inbox would have
   been.
+- In a call of its own (so that it moves none of the answers above), Clef reads the **language**
+  the thread is written in, for the most part (`labels.language`, an ISO 639-1 code of
+  src/translate.js `LANGUAGES` or `other`, and `labels.language_p`; migration 0097), which the
+  inbox [translates](#translation) from. A label from before has none until it is labeled again.
 - The inbox filters by kind, topic and tech stack (the channel's, at 0.8 or above), and so do
   the MCP server's `list_threads` and the inbox's WebMCP `filter_threads`.
 - **Clairic** extracts the loose facts: the problem in the customer's words, the affected URL,
   the error, a deadline and a go-live date. Only values at or above a confidence threshold are
-  kept (0.8, and 0.6 for the free-text problem). In the same call it lists the **products** the
-  thread names (`product` facts), for the [topic map](#topic-maps) to match against the tech
-  stack. Clairic lists nearly every name in the state, so `productFacts` (src/label.js) keeps
-  few of them: only its spans count (counted in code points, as Clairic counts; a string here
-  counts UTF-16 units, one more per emoji), not those in the header or an author line, not a
-  mention (`@Name`) or a piece of a word, not the names of the thread's people and customer, nor
-  generic words (src/products.js `GENERIC`). Of the rest it keeps what the tech stack covers, one
-  name per entry, and at most six it does not, the most named first, when they look like the
-  name of a product (`productLike`: a proper name of at most four words, not an id, a variable, a
-  header, a host name, a short acronym, a possessive, a phrase that ends in a lower-case noun, or
-  a word the thread also writes in lower case). The list's one confidence says nothing (it
-  shrinks as the list grows) and is not used. On the census's 822 threads: two names a thread
-  instead of six, two in three of them names of known products (two in five before, and a sixth
-  generic words), the names nobody knows yet a third, and 83% of the products a hand-made alias
-  table finds. A product name says the thread mentions it; Clef's tech questions still say what
-  the customer uses.
-
-**Label review.** Members of the admin team can review labels in the inbox: a queue of
-current labels nobody has reviewed, least confident first, and per question the right
-answer. A review is calibration data (Clef's agreement rate and most common corrections per
-question) and overrides the model's answer for that label version; when the thread changes
-and is labeled again, the model answers again and the old review only counts as history.
+  kept (0.8, and 0.6 for the free-text problem). It was also asked for the **products** a thread
+  names, for the topic map to match against the tech stack, until the teams' catalogs and Clef's
+  "about" replaced it: on the ground-truth set (`npm run truth`) Clef's answers found two in three
+  of the technologies marked by hand and Clairic's names a sixth to a third, and adding them to
+  Clef's added three points of recall and nothing to F1. The `product` facts from before stay
+  until a thread is labeled again; a topic map built before lists the names no entry covered as
+  gaps.
 
 ### Topic maps
 
 Clef's topics are asked: each is a question someone wrote, and a thread about something nobody
 asked about gets none. A **topic map** (`src/topicmap.js`, the **Topics** page) finds what the
-threads are about from what was said in them instead, for the admin team, to see the common
-themes, who works on which and for whom, and where Clef's topics miss: what to ask Clef next.
+threads are about from what was said in them instead, for every internal user: the members of
+the ops teams, and Adobe's people on none (staff, or a mail domain of `STAFF_DOMAINS`), who
+find topics, customers and people to follow there (the admin team and team managers rebuild it
+and change the areas on it). It shows the common themes, who works on which and for whom, and
+where Clef's topics miss: what to ask Clef next.
 
 - The threads: channel threads with a `CONTENT` thread vector, at least three messages, and not
   a `meeting` or `people` thread (whose vectors say "let's meet" more than what about). Their
   vectors are centred (the mean taken away, then of unit length again): bge's vectors share a
   large common part, and without it k-means makes a few big clusters and many of one thread.
-- **k-means** (spherical, cosine; k-means++ seeds, the best of four runs, seeded so the same
-  threads make the same map) into about one topic per twelve threads, at most 30. A few hundred
+- Topics are found **within each area** (map version 2): each thread is in its likeliest area
+  (`labels.topics`), or in none, and each area's threads are clustered with **k-means**
+  (spherical, cosine; k-means++ seeds, the best of four runs, seeded so the same threads make
+  the same map) into about one topic per twelve threads, at most eight, and at most sixteen of the
+  threads in no area, the candidates for new areas (`areaTopics`). A topic
+  that is **one customer's, one team's or one product's concern** is no topic: when one of them
+  has 60% of its threads or more, and at least twice its share of the area's, it is dissolved,
+  each of its threads going to the nearest topic left, until none is or one is left (a single
+  one an area could not split keeps `concentrated`, as `customer:acme`, when one has 60% of it and
+twice its share of all the map's threads). The lift keeps what is
+  everywhere (Edge Delivery, the team with most channels) from concentrating anything. Each
+  topic has its `area` (null: the threads in none, the candidates for new areas). A few hundred
   threads take a quarter of a second.
 - One call names every topic (two to five words) and says in a sentence what its customers
   need: it reads all of them at once, each as the titles of its fifteen most typical threads
@@ -1036,38 +1927,206 @@ themes, who works on which and for whom, and where Clef's topics miss: what to a
   delivery"), too long, or another topic's, and a topic it did not name, are named on their own
   from the titles. No name names a customer; one given twice gets a number.
 - With them, per thread: the Adobe people who posted (staff, by `people.id`, with their
-  messages), the customer (`orgs`), Clef's topics (`labels.topics`), the **tags** on the page,
-  and the **products** Clairic named. Each product is matched against the tech stack (every
-  team's enabled entries, src/products.js `coveredBy`): an entry covers it when its id, name or
-  one of its aliases is the product's; or is in it as words, where the product is written as a
-  name ("Akamai Property Manager" is Akamai's, "en-to launch" is not Adobe Launch's); or its
-  description names it where it writes a name, cut at commas, "or", "such as" and brackets ("a
-  consent manager such as OneTrust or Cookiebot" names OneTrust and Cookiebot, not "consent
-  manager"). A word alone is no name. A covered product is named as its entry, and drawn as the
-  product the entry is part of (its features listed when it is picked); one no entry covers is a
-  **gap**, named as most threads write it. "AEM" and "Adobe" in front do not count, except where
-  a name is generic without them ("AEM Author"), and generic names (API, CDN, JSON, Slack, …)
-  are left out.
+  messages), the customers', partners' and vendors' people who posted (`customers`: by
+  `people.id` where they are a person of D1, else, as every customer's person in production, by
+  their platform account, `a:<author_key>`, named as `identities` has it, and not followed from
+  the page; the accounts of one mail address are one, the first of them: a customer's guest
+  account and the one of their own workspace, on Slack Connect; and so are those the admin team
+  said are one person, "A customer's people with two accounts"; bots are nobody), who each
+  person is to group them by (`peopleOf`: Adobe's by the team they are on whose threads they
+  posted in most, or none when they are on no team, the others by the customer of most of their threads), the customer (`orgs`), Clef's topics (`labels.topics`), the **tags** on the page,
+  and the **products**: the technologies Clef says the thread is about (`thread_tech.about`), or,
+  for a label that was not asked that (from before migration 0083, or whose "about" call failed),
+  the ones it shows (src/topicmap.js `techProductsOf`). Each is named as its entry and drawn as the
+  product the entry is part of (its features listed when it is picked). Clef answers only about
+  the tech stack, so a map has no gaps: what no team's catalog lists yet shows as a stack
+  drawing's part without Tech instead. Maps built before were built from the products Clairic
+  named, matched to the tech stack (src/products.js `coveredBy`), and kept the ones no entry
+  covered as **gaps**, which the page still lists for those maps.
+- Each topic's **place** on the page (`topics[].at`, three coordinates, the farthest topic 1
+  from the middle; `src/topicspace.js`): a thread's vector is its topic, but also its people, its
+  products and its customer (a team's threads read alike, and so do one customer's), so a topic
+  placed by the plain mean of its threads sits where its people are as much as where its
+  subject is. Every thread is fitted as the sum of a part for its topic, one per person who
+  posted, one per product and one for its customer (ridge regression, a part of n threads
+  shrunk by n / (n + 1), ten sweeps of coordinate descent, a third of a second for 4,000
+  threads), and the topics are placed by the first three principal components of their own
+  parts. On the production threads (835, Nov 2026) a thread's main Adobe poster could be told
+  from its vector 52% of the time and from what is left once those parts are out 17% (chance
+  22%), its customer 77% and 21% (26%), its topic 52% and 46%.
 - The cron builds one when the newest is a week old, and the admin team with **Rebuild**; a row
   of `topic_maps` each (the map as JSON), the newest five kept.
 - The [expert finder](#replying) reads the newest (`src/topicindex.js`): which topic each thread
   is in and who worked each topic's threads, so it can tell a thread agent which topics a person's
   similar threads are in, and list who works a topic (`list_topics`).
 
-The page draws the map as one force-directed graph (its own, after d3-force's model): a node per
-person, topic, tag and customer, as big as its threads, a line between two that share threads,
-thicker the more (with the topics shown, a line joins a topic to the others, and a person to a
-customer; the topics are the hubs). One kind shown alone is joined to itself: two people, tags or
-products by the threads they share, and two topics or two customers, which never share a thread, by
-the people they share (as many people as the threads a line needs, each with that many threads
-in both). The filters are a team, the kinds shown and the threads a
-line needs. A node picked shows what it is joined to and its threads, each a link into the inbox;
-without a pick, the panel lists the gaps first (**Not in the tech stack**: the products no entry
-names, by their threads; those two customers or more name, then, folded, those of one customer,
-which are as likely a brand or a system of theirs, and a count of the names of one thread; adding one on the Agents page, or its name to an entry's description,
-makes Clef ask about it), then the topics with the share of their threads Clef tagged at all, the
-fewest first on a click: the topics Clef rarely tags are what its topic questions miss. A gap is
-drawn as a hollow ring.
+The page draws the map in three dimensions (`ui/topicview.js`, with three.js from
+`/inbox/three.js`), in a space laid out by `ui/topicspace.js`, of three kinds, each a **hierarchy
+of bubbles** (`ui/topicgraph.js`): the topics in their areas (and "Not in an area"; on maps
+before version 2, the tag most of a topic's threads have), the people in their teams (Adobe's)
+or their customers (the others'; a customer whose people did not post is a bubble too), and the
+features of the tech stack in their products (Adobe's) or vendors (the others'). A group of one
+child is that child, but a customer stays a bubble.
+
+- **The space.** The topics are fixed at their places (`topics[].at`; on a map from before them,
+  each area on a sphere and its topics around it). The products come next, each pulled to the
+  topics it shares threads with, then the people, pulled to the topics (hardest), the products
+  and the other people they share threads with; how hard two pull is the threads they share
+  against how many each has. A group is where its members are, by their threads. The places are
+  of the whole map, so a bubble stays where it was when a team is picked or only some threads
+  are shown. While drawn, bubbles push each other apart, the bigger moving less, and are pulled
+  gently back to their places.
+- **The bubbles.** Each in its kind's color of the page (the stylesheet's, read by the script),
+  as big as its threads (by volume). A closed group is glass with its children inside, at their
+  own size when they fit, else all scaled down alike and packed so none overlaps; an opened one
+  is a thin shell around its members (an area's topics), or, when they are far apart (a team's
+  people), a hub with a spoke to each. A product no tech stack entry names is glass, empty.
+- **Gestures.** Drag turns, scroll zooms; it turns slowly by itself until it is touched, and
+  again three minutes after (not for those who ask for less motion). A click picks a bubble:
+  lines go to the bubbles it shares threads with, and the rest fade. Holding a group pops it (it
+  swells while held, and its children come out of where they sat in it); holding an opened
+  group's shell or a member folds it (it shrinks). A double-click shows **only** that bubble's
+  threads, with all they are about; a double-click on nothing shows all of them again.
+- **Names.** At most ten, the biggest groups and the most threads first, those a pick shares
+  threads with before them, none over another; the one pointed at besides.
+
+The filters are a team, the kinds shown and the threads a bubble needs; they, the groups opened
+(`open`), only what (`only`) and the pick are the page's address. A node picked shows what it
+shares threads with and its threads, each a link into the inbox; without a pick, the panel
+lists the gaps first (**Not in the tech stack**: the products no entry names, by their threads;
+those two customers or more name, then, folded, those of one customer, which are as likely a
+brand or a system of theirs, and a count of the names of one thread; adding one in a team's
+**Extraction rules**, or its name to an entry's description, makes Clef ask about it), then the
+topics with the share of their threads Clef tagged at all, the fewest first on a click: the
+topics Clef rarely tags are what its topic questions miss.
+
+A **product or technology** picked says what the rest of the inbox knows of it, beside its threads
+(`GET /api/topics/tech`, `src/techinfo.js`, read as the viewer may): first its record, the team's
+catalog file of it (`products/…`), which is where a team keeps what it knows of a product: its
+markdown as `kb_concepts` has it, links to other files into the editor, the one that says the
+most first and other teams' own below it, and, where it says little (the stub the catalog's
+first compile wrote), an ask to its team's agent to write it; then what Clef is asked (in that
+file's words), the names it also goes by and its layer, or for a product of features its own
+file and whose catalogs they are in; the
+knowledge bases' entries about it, as the inbox's search finds them (by its name's words and by
+meaning), each a link into its editor; the extraction rules that detect it, each a link to its
+team's rules; the teams that follow it; and the customers whose stack drawing names it, of
+those whose knowledge base you read (a drawing is its knowledge base's, as on a customer's overview). A name no
+catalog has says so. Each picks out the agent to ask about it (`ui/kbchat.js`, as on Teams' and
+Customers' pages, but offered only: its tab, and **Ask the agent** in the panel): the knowledge
+base of a team whose catalog has it, yours first, then those that follow it, then the admin
+team's. Where it lacks a rule or an entry, or the catalog lacks it, a link opens the agent with
+that question in its box. A team, a customer and an area picked have their own knowledge base's
+agent; a topic or a person keeps the one before.
+
+### Trends
+
+The Topics page also shows how much the channels talk about each part of the map week by week, as
+Google Trends shows a search term, and what is **trending**, **declining** or **peaked**. It is one
+page: the chart over the bottom of the map (the camera keeps the bubbles' middle above it), and
+the panel beside both. The bar's one search finds on the map as you type, and Enter puts what it
+names on the chart (a topic, an area or a product, words, or `~a phrase`, separated by commas);
+the bubble pointed at adds its line while pointed at, a pick or a bubble popped keeps its line
+there.
+
+- **One map.** The trends' topics are the topic map's. Because the map clusters every thread with
+  three messages or more, of every month, an old topic is a topic too. The map keeps the space it
+  found its topics in (`topic_maps.vectors`, the newest map's only): the mean, each topic's centre,
+  and a sample of raw thread vectors. Its own threads have their topics from it
+  (`trend_threads`). Every other thread the page counts gets the topic with the nearest centre, or
+  none below `MIN_SIM` (`src/trends.js` `assignPending`). The cron assigns `ASSIGN_BATCH` threads
+  per run: those without a topic in the newest map, and those whose vector changed
+  (`threads.embedded`). A map from before maps kept their space is built again by the next cron.
+- **What is counted.** Channel threads of the last 52 weeks that Clef labelled, not meetings or
+  people's comings and goings, and no internal org's (`trendsData`). A re-threaded group counts
+  as its first thread, with the messages of all its members. `GET /api/topics/trends` sends all of
+  them in compact form (kept for five minutes per isolate). Each one has its channel, customer,
+  team, platform, kind, topic, technologies, and messages by the week they were written. The page
+  does the counting (`ui/trends.js`).
+- **A week counts channels:** of the active channels that week (those with a message in a
+  counted thread), the share that had a matching thread with one, on a three-week mean. A chatty channel counts once, as a person
+  searching ten times counts once in Google Trends. The history import (more, shorter threads,
+  never re-threaded) then counts the same as the live inbox. The map's team filter applies.
+- **The map's hierarchy.** The series are the graph's nodes, under the graph's ids: a topic
+  (`topic:3`) and its area (`tag:cdn`), a feature of the tech stack (`product:tech:…`) and the
+  product it is part of (`product:group:…`, from `tech_stack.product`). In the panel, without a
+  pick, the areas with their topics and the products with their features are **trees**. A group
+  opens and folds there the way its bubble bursts and folds on the graph, and both use the same
+  `open`. Each row has its sparkline, its badge (↑ trending, ↓ declining, peaked and when) and
+  its share of the active channels in the last six weeks. Filtered to trending, declining or peaked, the trees become one list, the
+  strongest first. A click on a row, or on a bubble, picks the node on the graph and adds its
+  line to the chart's (with none yet, to the most trending topics the chart starts with), where
+  it stays until × takes it off. **Clear** takes every line off, and so does × on the last one:
+  the chart stays empty (an empty `tq`, kept in the address) until a pick or a search adds a
+  line, instead of going back to those.
+- **Terms**, separated by commas (`tq`), are anything the map has, by its name, or words and
+  phrases (`GET /api/topics/trends/match`):
+  - **Words** are whole words, in a title or a message preview (`LIKE`, then a word-boundary test).
+  - **A phrase** (`~…`) is embedded with bge's query prefix. `CONTENT` is asked month by month for
+    its 100 nearest thread vectors, because one query for all time would return only the 100
+    nearest of the year.
+  - Only phrase matches above a floor count. The floor is `SEMANTIC_Z` standard deviations above
+    the phrase's mean similarity to the map's sample of vectors, because bge makes any two threads
+    0.4 to 0.6 alike. The response is `capped` when a month returned all 100, so that month's
+    count is too low.
+
+  A click on a week lists that week's threads in the panel (`GET /api/topics/trends/threads`, by
+  the rowids the data names them by).
+- **Trending, declining, peaked.** Each node is judged on three things:
+  - **Absolute frequency:** how often it comes up (channel-weeks).
+  - **Relative frequency:** its share in the last six full weeks against the twelve before, as a
+    lift and as a Poisson z, which says how certain that change is for so few or so many.
+  - **Acceleration:** whether its share is rising faster or slower than in the four weeks before.
+
+  **Trending** means up on a "before" it had, with z ≥ 2, at least six channel-weeks, and not
+  falling again; the faster it rises, the higher it ranks. **Declining** means down, with
+  z ≤ −2, from at least eight. **Peaked** means a peak (on a five-week mean) at least 1.8 times
+  its usual share and more than four weeks back, with the share at most 60% of the peak now.
+  Something that is trending again is not listed as peaked, and something that peaked is not
+  listed as declining. What never came up before (an area Clef was only just given) is not
+  trending. Anything mostly one customer's (more than 60% of its channel-weeks) counts half and
+  is marked as such.
+
+### Translation
+
+A thread written in another language than the reader's shows translated (src/translate.js,
+`translationOf` in ui/inbox.js). The reader's language is the browser's (`navigator.language`, its
+primary subtag), and a thread's is Clef's (above): where Clef is sure of it (0.8 or more) and it is
+not the reader's, the page asks `GET /api/translate` for the thread's messages in the reader's
+language, and shows them in place of what was written, each marked "translated", under a bar that
+says from which language, shows the thread as written again (for that thread, while the page is
+open), or stops translating the language. A mixed thread is Clef's to call: one written mostly in
+English with a Japanese greeting is English, and is not translated.
+
+- **Settings.** Each person's (`person_settings`): `translate`, on unless turned off, and
+  `noTranslate`, the languages they read as written. The bar's "Don't translate Japanese" adds one;
+  the user menu's **Translation** section has the switch and the list, where ✕ translates a language
+  again.
+- **The model.** Workers AI's GLM-5.3 (`TRANSLATOR`), told the target language by name, gets up
+  to twelve messages (6,000 characters) a call, as a JSON object by number, each with its author's
+  name, and answers with one: each message's translation, or null for one in that language
+  already (in a mixed thread, the English replies). It writes set phrases of politeness as the
+  target language says them, names as their people write them (the authors' names tell it that
+  `龍` is Long), and keeps markdown, mentions, URLs, code, file names, product names and `:emoji:`
+  codes as they are. It thinks little first (`reasoning: low`, temperature 0.2): a call takes one
+  to six seconds. Of twelve models tried on a Japanese thread, Llama 3.3 (the titles' model)
+  translated set phrases word for word ("Please take care of me"), Llama 4 Scout and Mistral Small
+  called Japanese English, and the reasoning models (gpt-oss, DeepSeek, Gemma 4, Qwen) took ten
+  seconds to a minute; GLM-5.3 wrote the most natural English, the fastest, and stayed so on
+  German threads with links, images and mentions. It costs some three times what Llama 3.3 does,
+  about a tenth of a cent for a short thread, once. A message with nothing to translate
+  (links, code, mentions and emoji only) and one over 6,000 characters are not asked. One request
+  translates at most 40 messages, at the same time, and says how many are left (`more`), which the
+  page asks for next; what the model did not answer for (`failed`: no JSON, or the call failed) is
+  not kept, and the page asks again a minute later.
+- **The cache.** D1 keeps every translation (`translations`, migration 0097), by message and
+  language, with a hash of the body it is of: a thread is translated once per language, and an
+  edited message again. It holds the text of messages, as pile 2 does, and the cron deletes rows
+  after 90 days; a page that asks again has them made again. Each answer names the version of each
+  message (`for`: its edit, else its time), so the page never shows the translation of an earlier
+  text. The log says how many were kept, made and failed (`route: 'translate'`), never the text.
+- The platform's notices and deleted messages are not translated, and nothing is translated before
+  it is sent: replies go out as written.
 
 ## Replying
 
@@ -1077,7 +2136,11 @@ account (delegated `ChannelMessage.Send`, which also allows reactions) once. The
 email); tokens are encrypted with `TOKEN_KEY`, Microsoft tokens are refreshed when they expire.
 A reply goes to the latest platform thread of an inbox entry and comes back through the
 normal ingestion path, like any other message. Replies are written in Markdown; on Slack they
-are sent in mrkdwn (`**bold**` as `*bold*`, links as `<url|label>`, bullets as `•`).
+are sent in mrkdwn (`**bold**` as `*bold*`, links as `<url|label>`, bullets as `•`). Mrkdwn has
+no tables: a reply or edit with one goes as a `markdown` block too, which Slack renders, table
+and all, with the mrkdwn as its `text` (`slackBlocks` in `src/post.js`); where Slack refuses the
+block (`invalid_blocks`, `block_mismatch`), it goes once more as the text alone. A reply with
+files goes in mrkdwn still: `files.completeUploadExternal` takes its comment in mrkdwn.
 
 A reply shows in the thread at once, as it will look once sent (the person's name, avatar and
 blue bubble from their latest message on the platform), with a thin bar under it, as in
@@ -1085,7 +2148,12 @@ iMessage. The platform takes a reply in about a second (`POST /api/post`); there
 progress to report, so the bar eases towards 90% and completes and fades once the post
 returns. The bubble then stays until the message comes back through ingestion (some ten
 seconds later: the Slack event, the normalize queue's batch, the live update), and the message
-takes its place unchanged. Replies to a thread go out one after the other, in the order they
+takes its place unchanged. On Teams it does not wait for Graph's change notification, which
+Graph may deliver minutes late or retry for long: the message Graph answered the post with is
+kept in pile 1 at once (`keepTeamsPost`, after the answer), under the key the notification's
+fetch of the same version will use, and normalized like any. Every post logs one line, how it
+ended (`route: 'post'`, `action: 'sent'`: who, where, its key, the status, the platform's id or
+error, the time it took; never the text: `logPost` in `src/postkeys.js`). Replies to a thread go out one after the other, in the order they
 were written. One that failed says why, with **Retry** and **Discard**; it stays until then.
 A page that lost the answer cannot know whether the post went out, and a platform would take the
 same post twice, so a reply carries a key, the same on every retry (`post_keys`, migration 0049,
@@ -1093,9 +2161,15 @@ same post twice, so a reply carries a key, the same on every retry (`post_keys`,
 it, without posting. One that finds the first try unfinished says the reply may have been sent,
 and offers **Send again**, under a new key, so that sending it twice is the person's decision. A
 reply the platform refused is not kept, so its Retry posts. The MCP tools send no key.
-Leaving the page while a reply is still on its way (a reload, closing the tab) asks first,
-with the browser's "Leave page?": the bubble lives in the page only, and the post may be cut
-off.
+A reply the platform took and named waits for its message, however long ingestion takes: after a
+minute it says "Sent, not back from Teams yet" (with Hide), and it goes once the message is in
+the thread, or after a day. Replies being sent are kept in localStorage until then
+(`saveSending`, per person): leaving the page (a reload, closing the tab, a crash) loses none. The
+next page shows each again, one that was still on its way as "Not sure it was sent", with Retry
+under the same key (as the bot, `POST /api/post/app`, if it was sent as the bot), which the Worker
+answers without posting again if the post went out. Files are
+not kept: one with files that did not go out says so and can only be discarded, and leaving the
+page while it is on its way asks first, with the browser's "Leave page?", as for a new thread.
 
 **Emoji names.** A `:name:` in a reply goes out as the platform knows it (`src/shortcodes.js`):
 Slack gets Slack's name, Teams and Discord the character. Another platform's name or spelling is
@@ -1241,6 +2315,37 @@ through an approval flow of its own, and a message written in Slack itself is le
 which asks there; a thread agent still points out a mention of someone not in the channel
 (`src/agent/members.js`).
 
+On Teams the inbox cannot add anyone, and Teams itself says nothing: it completes a mention from
+the whole tenant's directory, so a name that fills in looks like a member. Once the Teams team's
+members are listed in full (a list that came back, of no shared channel, under 2000 members), the
+suggestions say "not in team" of whoever is not among them (`outside`, `GET /api/mentionable`),
+and a reply that mentions them says so (`outside` in `POST /api/post`'s answer, with their mail
+address where known, `mentionedOutside` in `src/post.js`): the page's note, which stays until it
+is dismissed, names them and what to ask admin-bot (`@admin-bot add <address>`). A list that says
+someone is out is listed again first when over half a minute old, so someone just added is not
+called out.
+
+**Mention reminders.** A mention reaches someone only if they look: a colleague on leave, or
+one who rarely answers mentions, may never see it. So the answer to a post that mentions Adobe
+people (`POST /api/post`, `POST /api/post/app`, a reply or a new thread) names those who may not
+(`reminders`, `src/reminders.js`): who has not posted for two weeks (or never, anywhere the inbox
+reads), and, of those not in the thread yet, whom the mention model gives odds under one half of
+an answer within a week (see "Expert finder"; only once it knows three mentions of them). Not the
+one who posts, and no customer. The page says so in a toast that stays ("Lena Berg has not posted
+for 3 weeks. Send Lena Berg a personal reminder with a link to your message."), with the
+message's links to copy, as its menu has them: on its platform (`permalink`: Slack's in the
+channel's workspace, Teams' as Graph's `webUrl` is made) and in the inbox. The post has gone out
+by then: a failure to work this out only leaves the answer without it (logged, `route: post`).
+
+**Posting in a channel you are not in.** Slack lets a person post only in a channel they are
+in, and a team answers channels in the inbox that not all of them joined in Slack. When Slack
+refuses a person's post (`POST /api/post`, text or files) with `not_in_channel`, the opspile
+app adds them to the channel the same way (`inviteAuthor` in `src/invite.js`, into the workspace
+first with `SLACK_ADMIN_TOKEN` where it must), and the post goes again, once. Only staff post as
+themselves, so this puts no customer anywhere. The answer has `joined` (and `joinedWorkspace`),
+and the page says so in a toast; when the app cannot add them, the error says why, with Slack's
+reason, and nothing went out.
+
 The suggestions that open with the `@` bring along everything they are picked from (`pool` of
 `GET /api/mentionable`: the accounts of the workspace, one a person, each marked as in the thread, in the
 channel or by its affinity, and the bots), and the page ranks what is typed after it itself,
@@ -1264,12 +2369,9 @@ large one), each with its root's link. Hovering it names the customer and its ty
 two dropdowns, each named by what matters most for the thread:
 
 - **Tech stack:** what the thread shows (`labels.tech` of its members, the likeliest first),
-  then the rest of the channel's (`channel_tech`), then Clef's topics of the thread. A thread
-  labeled before labels kept their technologies counts those it set the channel's highest
-  probability for (`channel_tech.thread`), until it is labeled again. The dropdown is named by
-  what the thread shows, else by its first topic, and only then by the channel's likeliest: that
-  is the customer's, and a da.live link in one thread would otherwise name every other thread of
-  the channel Document Authoring.
+  then Clef's topics of the thread. The dropdown is named by what the thread shows, else by its
+  first topic. The channel's technologies are not the thread's: a da.live link in one thread
+  would otherwise name every other thread of the channel Document Authoring.
 - **Links:** the pages mentioned in the thread (Clairic's `affected_url` first, then the
   rules' `url` facts), then each Edge Delivery site's production URL
   (`main--<site>--<org>.aem.live`), then links to documentation and code (`aem.live`,
@@ -1282,7 +2384,7 @@ the dropdowns comes whom a thread agent suggests pulling in ("Agent suggests Len
 when one did; the expert finder's own ranking is not shown.
 
 **Expert finder.** Adobe colleagues worth pulling into a thread who are not in it yet, each
-with why: "knows about this topic", "typically responds in about 4 hours" (`GET /api/experts`,
+with why: "knows about this topic", "answers most mentions, in about 4 hours" (`GET /api/experts`,
 `src/experts.js`). The inbox does not show its ranking: line 2 of a thread's header named the
 top one ("Lena Berg knows about this topic"), with a ▾ list of up to eight, each with ✕ for "not
 the right person", and that was taken out, because its picks were mostly wrong and made the
@@ -1347,9 +2449,33 @@ without an account on the thread's platform, who could not be mentioned. Someone
 accounts there is listed once, by their account for the thread ("One account a person"), with
 the signals of all of them.
 
-A response time is the median between a mention and the person's next post in that thread (a
-re-threaded group as one), over the last 180 days, in calendar time, nights and weekends
-included. It is only said with at least three answered mentions, most of those made. "Not in this
+How someone answers comes from the **mention model** (`src/mention-model.js`): of every
+mention of the last year of someone not in the thread yet (a re-threaded group as one; only
+their first mention in it, and none once they posted there), the odds that they post in the
+thread within a week, and how long they take when they do. Both start from what the person's
+posts said at the moment of the mention, counted over the 90 days before it: how long since
+their last post anywhere, how many in the day, the week, the 90 days and the channel, whether
+they are of the thread's team, how many were mentioned with them, how many Adobe people were in
+the thread, and how busy that hour usually is for them. The odds are a logistic regression on
+those, then what the channel and the person add, each pulled towards nothing while its mentions
+are few. The time runs on the person's own clock (`src/response-model.js`: each UTC hour of the
+day, weekdays and weekends apart, counts for as much as they usually post in it, pooled with
+everyone's while they have few posts), so their hours stand for their timezone and a question
+asked as they log off has not waited all night; its log is a regression on how recently they
+posted, then what the channel and the person add, each counting for as much as its data can
+carry, and left out when its groups do not differ beyond chance. Asked about now, it runs the
+person's clock forward and says the minutes on the wall.
+
+The cron fits it once the newest is a day old (`src/mentionmodels.js`, `mention_models`, the
+newest three kept; about 90 ms and 250 KB of numbers by person and channel id), and the finder
+reads the newest once an hour per isolate. Only a person's numbers are read for a list: their
+posts as counts, the thread's Adobe people and its team. Before the first fit nothing is said.
+It is said with at least three mentions of the person in the model: "answers nearly all",
+"most", "about half of", "about a third of" or "few mentions", with the typical time unless
+it is few. `npm run response:backtest` says whether it beats the person's own share of answered
+mentions for the odds, and the response model, which the finder used before, for the time.
+(Gradient-boosted trees, a longer window, the customer, who mentioned them, and weighting a
+person's recent mentions more did no better.) "Not in this
 channel" is only said with a complete list of the channel's members, as for `find_member`: most
 channels have none, and then nothing is claimed. Such a person ranks lower, as their mention may not reach them; `GET
 /api/experts` lists the members in the background when that is a week old, as the mention
@@ -1417,6 +2543,15 @@ The models see reactions too: each message is followed by who reacted with what 
 Adobe staff), and a reaction relabels the thread, so a customer's ✅ or 👍 on the answer can
 make Clef call it resolved.
 
+**The thread's agent resolves too**, with `resolve_thread` (the agent tool `resolve`, on by
+default, see [Agent tools](#agent-tools)): a row in `agent_labels` (`question = 'resolved'`,
+`src/agentlabels.js`), which `resolutionFacts` counts as a staff ✅ on the root from its `at`,
+named "opspile agent", reopened by a customer's message the same way. It is in the inbox only:
+nothing is put on the platform, so the channel never sees it. While only the agent resolved a
+thread, the ✅ button says so and opens it again (`POST /api/resolve` with `undo` deletes the
+agent's row, for anyone on the team, with no account on the platform needed); the agent takes
+it back with `undo` too.
+
 ### New threads
 
 The ✎ button next to the list's bell opens a composer in the pane, where a thread would show.
@@ -1459,18 +2594,38 @@ Admins, who can open any thread, see its draft but change only their own teams' 
 - The draft waits on its own line under the reply box, never in it: who saved it (a colleague,
   you, or the thread agent), when, and how it starts, on one line, rendered as the message will
   be (its Markdown, mentions and emoji, as in the thread). **View draft** opens the line to all
-  of it, and **Hide draft** closes it again, with a click or a tap alike; a mouse resting on the
-  line for 300 ms opens it too, until it leaves. The line grows upwards, so it stays under the
-  pointer, instead of moving away from it and closing again, over and over.
+  of it, and **Hide draft** closes it again, with a click or a tap alike; open, it stays open
+  while you read the thread or talk to the agent in the sidebar. A mouse resting on the line for
+  300 ms opens it too, until it leaves (or until Hide draft, once some of its text is selected,
+  to copy); its button is then **Keep draft open**, which keeps it open as View draft does. The
+  line grows upwards, so it stays under the pointer, instead of moving away from it and closing
+  again, over and over.
   The reply box is yours, and a draft never replaces what you typed. **Edit** takes the draft
   into the box to edit; with text there already, **Add to reply** puts it after that text.
   View draft, Edit and **Discard** are icons (their names are their labels and tooltips), on
-  the line's first row with who saved the draft; the sends are labelled, past a hairline, and
-  get a row of their own at the bottom of a narrow line.
+  the line's last row with its sources; the sends are labelled, past a hairline. They are at
+  the bottom, which opening the line does not move, so the pointer does not have to follow
+  them; a narrow line gives the sources a row of their own above them.
 - The line sends the draft as it is: **Send as me**, or **Send as bot** (as the opspile app,
   `POST /api/post/app`) where the thread says the viewer may (`can_post_as_bot`: the channel's
   **Post messages** switch is on and its platform's bot is set up). On Discord, and before the
   Slack or Teams account is connected, Send as bot is the only way to send it from the inbox.
+- Once someone has sent three of the thread agent's drafts in a channel (`OFFER_AFTER`,
+  `src/postoffer.js`; as they were or edited, as themselves or as the bot), the inbox asks them
+  whether the agent may post its replies there itself: `POST /api/post` answers with
+  `postingOffer` (`{ channel, team, sent }`), and the note offers **Let it post** and **Keep
+  drafts**. Only those who may switch **Post messages** for the channel are asked (the admin team,
+  the managers of the channel's team), only where it is off by the team's switch and nobody
+  switched the channel, and the platform's bot is set up. Let it post switches the channel on
+  (`PUT /api/kb/tools`); Keep drafts adds the channel to their `postingDeclined` setting, and
+  they are not asked there again.
+- With a part of the draft's text selected, Edit and the sends take that part
+  (**Edit selection**, **Add selection to reply**, **Send selection as me** and **as bot**): its
+  Markdown, found by aligning the text selected with the draft's source (src/mdpick.js), so its
+  links, code and mentions come along; formatting the selection starts or ends inside of (bold,
+  code, a link) is closed around the part, never left half open. Sending a part uses the draft up, as sending all of it
+  does: the rest goes. A part taken into the box is the draft cut down to it, so sending it from
+  the box does the same. Double-clicking the draft's text edits all of it, as Edit (or Add to reply) does.
 - Sending a reply written from the draft uses it up (unless it changed since), from the line or
   from the box. Saves and discards are fanned out over the rooms of every team that follows the
   channel, so every open inbox follows at once; a reply box that took the draft in and still
@@ -1486,13 +2641,14 @@ Admins, who can open any thread, see its draft but change only their own teams' 
   and Discard leave it open, and Undo of a discard shows over it. It is the same markup on
   every screen: on a wider one the stylesheet shows no tab and makes the drawer no box
   (`display: contents`), so the lines are the reply box's own.
-- In the inbox, an entry with a draft shows a pencil in place of its status dot (as a resolved
-  one shows ✓), in the status's color and outlined while the team has not read the thread; the
-  personal inbox shows none. The **Draft** card filters by drafts saved last by you, by a
-  colleague, or none. A draft does not change the status pile. The outline is the pencil's
-  own shape, not the ring a dot has for "our move": a ringed pencil would mean two things in
-  one column. A draft that waits on a thread nobody has read yet is what the outline points
-  out; "our move" stays in the pencil's tooltip, after the draft.
+- In the inbox, an entry's status mark is a stack of Spectrum workflow icons (`statusMark`,
+  `ui/inbox.js`): in front its kind, in the status's color, and behind it what applies of its
+  urgency (critical or high), a draft, resolved and "our move", which peek out and spread out
+  under the pointer. While the team has not read the thread, the kind is smaller, inside an
+  outline of its own shape (scripts/wf-rings.mjs); the outline means only that, so "our move"
+  has its own icon in the stack. An entry with a draft has the draft in its stack, its tooltip
+  saying whose and when; the personal inbox shows none. The **Draft** card filters by drafts
+  saved last by you, by a colleague, or none. A draft does not change the status pile.
 - A draft can carry **sources** (`drafts.sources`, src/sources.js): what an agent says it rests
   on, as `{ url, title?, quote? }`, at most 10, http(s) only. They are for the person reviewing
   the draft: they stay in the inbox and the tools, and no reply ever carries them. Whoever may
@@ -1518,6 +2674,31 @@ Admins, who can open any thread, see its draft but change only their own teams' 
   the card. Its time shows the message in the inbox: where it is in the open thread, else its
   thread, opened at it. A message opspile does not have, or the viewer may not see, is a reason.
 
+### A message's menu and its links
+
+The quick reactions end in ⋮, which every message that has come in has, also where one may not
+react (viewing as someone, Discord): its menu (`openMessageMenu` in `ui/inbox.js`), as in Slack,
+a `role="menu"` under the ⋮ in the look of the other floating menus (`.linkpick`). ↑/↓, Home and
+End move in it, Esc and Tab close it, back to the ⋮. It copies the message's links:
+
+- **Copy Slack URL** (Teams, Discord, after the platform): the message's own `permalink`, where
+  it has one.
+- **Copy Opspile URL**: the inbox at the message, `/inbox?team=<view>&t=<thread>&m=<message id>`
+  (`messageHref`): the view on screen (none from Personal), and nothing else of it, no filters,
+  search or "view as". `t` is the message's own thread, not its group's: the Worker reads the
+  asked thread's messages also in a group too large to read them all (`MAX_READ_MEMBERS`), and
+  the inbox opens the group from it.
+
+The item says "Copied ✓" for a moment (and a status says so to a screen reader), then the menu
+closes. An address with `m` opens its thread at the message, also as it loads (the thread is drawn
+twice then, as it opens and as the workspace's emoji arrive: both are placed at it), and marks it
+(`.linked`: a ring that fades out over 3 s; with less motion it stays as long, then goes), and
+keeps it in view while what is above it settles (its images); a message the thread no longer has
+is said so. `m` is the page load's only: the address the inbox settles on has no `m`. The
+installed app captures the inbox's links (`handle_links`, `launch_handler` focus-existing in
+`src/pwa.js`): the window that is open takes the address (`Launch` in `ui/app.js`) and opens the
+thread there, at the message, as a notification's click does; the other pages load it.
+
 ### Steering reactions
 
 Resting the pointer on a message's bubble for 300 ms shows the quick reactions ✅ 👀 🙏 👍 😀 🚀 🛟,
@@ -1536,10 +2717,13 @@ message of the thread:
 
 One agent per inbox entry (a thread, or a re-threaded group under its first thread's key),
 in the channels where agents are on: the admin team and team managers switch them per channel
-in the knowledge-base editor, and their team's default and `AGENT_CHANNELS` turn on the rest. Each is a Durable Object
+on the team's or the customer's page (**Thread agents**), and their team's default and `AGENT_CHANNELS` turn on the rest. Each is a Durable Object
 (`ThreadAgent`) running [Pi](https://developers.cloudflare.com/agents/harnesses/pi/) through
 the Agents SDK's `PiHarness`: the transcript, tool calls and retries live in the object's
-SQLite, so a run survives evictions and deploys, and a model request that fails is retried.
+SQLite, so a run survives evictions and deploys, and a model request that fails is retried. So is
+a read of D1 that D1 turned away as overloaded (a few seconds at a time), once, 0.5–1.5 s later, as
+for `/api/*` and `/mcp`, so that a tool does not fail on it; a write is not asked again, and the
+agent's queries go to D1 one by one, as they are asked (src/agent/agentenv.js, src/d1batch.js).
 Prompt caching asks for the one-hour TTL (`cacheRetention: 'long'`). Turns are often minutes
 apart, past pi's five-minute default, and Bedrock bills a later hit inside the hour as a read.
 But every write costs 2× the input price for an hour against 1.25× for five minutes, so whether
@@ -1563,14 +2747,71 @@ thinking from the history, which Bedrock would refuse. A model the account canno
 the windows every thread is on `long` and AGENT_MODEL. What an agent in an arm uses is counted
 for COGS with the arm in the detail (below).
 
+**Compaction.** pi compacts a transcript on its own only near the model's context window, which
+pi-ai gives Opus and Sonnet 5.5 as 1M tokens: a long thread keeps its whole history, and every turn
+after an idle hour writes all of it to the prompt cache again. The **compaction experiment** (from
+2026-11-18 15:00 to 2026-12-02 15:00 UTC, not pinned, so the threads that started before it take
+part) has half the threads compact once they have been idle for 65 minutes, just past the one-hour
+cache (`src/agent/idlecompact.js`): every turn that ends arms a schedule, and when it fires with no
+turn since, nothing pending and a context of at least 100k tokens (the latest request's), pi-durable's
+manual compaction summarizes the older entries and keeps the latest ~20k tokens as they are, with
+instructions for a support thread (what was asked, promised and posted, the draft, the knowledge
+written, the people, ids and URLs exactly). The agent reads the messages again with `read_thread`
+when it needs them. The summary's tokens are metered with the arm, and the arms are judged by the
+cost per accepted draft. The trace shows the transcript from the summary on (`agent_compaction`);
+the entries before it stay in the object's SQLite. A turn whose input the summary took in is not a
+reset: the turn kept for the thread stays.
+
 **When it runs.** Every new message of the entry pokes the agent through the NORMALIZE queue
 (after 15 seconds, so a burst arrives together; a new root's after it is re-threaded, so that
 a root folded into a group pokes the group's agent, not one of its own); it reads the
 messages after its watermark from pile 2 and gets them as one input, the whole thread on first contact. A new message
 during a run joins that run. A day after the latest message, its own posts included, a schedule
 wakes it once more to wrap up: file what was learned, or put a follow-up in the draft. It is also
-told, as an input of their own, that a person discarded its draft, and how a command it asked a
-person to run ended (see "Agent tools").
+told, as an input of their own, that a person discarded its draft, how a command it asked a
+person to run ended (see "Agent tools"), and the message of a wake-up it set itself: with
+`wakeup_after` at a time, whatever is posted meanwhile; with `wakeup_after_idle` once nothing has
+been posted for a while, counted from when it set it and again from every later message, its own
+too (`src/agent/wakeups.js`). Each wakes it once, at least a minute and at most 7 days ahead, and
+five wait at a time at most; the prompt asks for one whenever it says it will come back to
+something.
+
+**Watching what the thread waits on.** A thread often waits on something elsewhere: a vendor's
+case, another team's thread, a GitHub issue or pull request. Someone tells the agent so in the
+sidebar (or the thread links it), and the agent watches it with `watch_related` (`agent_watches`,
+migration 0104; `src/agent/watches.js` for the agent's side, `src/watches.js` for the Worker's),
+with `why`, what exactly its thread waits on there, in its own words. Each change wakes it with an
+update, as an input of its own, with `why` given back:
+
+- a **thread** of the inbox, by its key, its opspile inbox link or a link to one of its messages
+  (Slack, Teams, Discord; one in a channel the agent may not read only where a person asked for it
+  in the sidebar, else it is "not found", as one that does not exist): a minute after a new message in it (a `{ watched }` queue job; a burst is
+  one update), every message after the watch's `seen` but the system's and Adobe's own bots', so
+  that two agents that watch each other's threads do not wake each other with their posts. The
+  update says how many came, from which side and when, and names the authors and the tool to read
+  them with (`read_thread`, `read_any_thread`) only where the agent may read that thread with its
+  tools; another customer's, without `any_thread`, is a count and nothing more. The agent reads
+  the messages itself, as any it reads.
+- a **GitHub issue or pull request**, by its URL, only of an account the opspile GitHub App reads
+  for the agent's channel (its `github` server on there, asked again before every poll and again
+  before the agent is told: one whose channel lost it ends, and the agent hears only that; one
+  whose access could not be checked, D1 or GitHub not answering, is kept and asked again later). A cron
+  of its own (`*/5 * * * *`, `pollWatches`) polls each when it is due (`poll_after`), with the
+  installation's token. A poll is one conditional request (`If-None-Match`): an unchanged item is
+  a 304, which GitHub does not count against the rate limit; only a changed one asks for its pull
+  request, comments and reviews. A quiet item is polled slower (a twelfth of how long it has been
+  quiet, from 4 minutes to an hour), a failing one backs off (doubling, up to six hours), and all
+  four times slower while the installation has less than a tenth of its requests left. Once GitHub
+  limits an installation (a 429, a 403 with no requests left or a `retry-after`), none of its
+  watches is asked until it says. The update says what changed (its state, merged, out of draft,
+  its title, new comments and reviews and by whom), not what a comment says: the agent reads it
+  with the github MCP server, which hides strangers' text.
+
+`seen` moves before the agent is told, and only from what the job read (`WHERE seen = ?`), so two
+jobs of a burst wake it once. A watch ends with `unwatch_related`, or after 30 days (`days`, at most
+90; the agent is told it ran out). Ten at a time per thread. The prompt asks it to say what an
+update means for its thread in the draft or its note, and never to post only because the other one
+changed.
 
 **In the inbox.** The open thread shows the agent's **latest turn** under its last message,
 on the Adobe side, as "Opspile Agent" with opspile's icon: while it works, a spinner and what
@@ -1590,17 +2831,26 @@ may have changed (work accepted, a round of tools, an answer), so asking does no
 agent's Durable Object, which took over a second for an agent that was not running, and most of
 the agents' CPU outside their turns. Only an agent that has not written one yet, or whose turn
 has said `working` for 15 minutes without a word, is asked itself. Its avatar opens the sidebar
-(below), and its name the agent settings of the thread's team (Agents, its thread agents, at the
+(below), and its name the agent settings of the thread's team (its page in Teams, its thread agents, at the
 thread's channel).
 
 Whether it shows is each person's own choice, in their settings (`person_settings`): `traces`,
-on unless they turn it off, for every channel, and `channelTraces`, by channel id, where they
+off unless they turn it on, for every channel, and `channelTraces`, by channel id, where they
 chose otherwise, which wins. The inbox's user menu changes both (the open thread's channel);
-Agents does too, a select on each channel with an agent. Hidden, the page does not ask
-`GET /api/agent` at all.
+A team's **Thread agents** does too, a select on each channel with an agent. Hidden, the page asks
+`GET /api/agent` all the same (a read of the kept copy, `agent_live`), without showing the note:
+the sidebar shows the agent working on its answer, and the sidebar's tab wiggles as the agent sets
+to work or is done (below).
 
-**The sidebar.** Anyone who may work a thread can talk to its agent in the inbox, about the
-thread, without the channel seeing any of it (`POST /api/agent/sidebar`, `src/sidebar.js`). Each
+**The sidebar.** Anyone who may see a thread can talk to its agent in the inbox, about the
+thread, without the channel seeing any of it (`POST /api/agent/sidebar`, `src/sidebar.js`): who
+may work it, the admin team, and whoever talked in its sidebar before (`maySee`,
+`src/shares.js`). The last is for a channel that moves: someone who asks the agent to move it to
+another team (`request_channel_reassignment`) keeps the thread to read and the conversation to go
+on with once the admin team confirms the move, though they no longer work it. Working it stays
+`mayWork`'s: the reply box, the draft, and deciding on the tools and commands its agent asks for,
+which answer `403` with the team it is filed under to who only sees it; the thread says which
+(`can_work`), and the page says so instead of the reply box and the cards' buttons. Each
 message goes into the agent's own conversation as an input of its own (`ThreadAgent.sidebar`,
 `src/agent/sidebar.js`), after the run it is in, never steered into one; so the agent remembers
 it in later turns. New messages of the thread do not steer into it either: while a sidebar
@@ -1616,12 +2866,55 @@ they when the transcript cannot be read. The input starts with a line that names
 and only an input that starts with it is one: a customer quoting it is told inside a delivery.
 The inboxes of the thread's teams hear of each message and answer through the team's room
 (`{ type: 'sidebar' }`).
+What the agent learns later about a sidebar question goes back there too: the thread's note
+reaches nobody who asked in the sidebar, so in a turn on the thread's messages the agent tells
+them with `sidebar_followup` (the request they waited on went through, what it said turned out
+wrong). A follow-up is one more answer of the agent's to the message (`<id>:followup:<n>`,
+`reply_to` the message, unseen until they see it, so their inbox badges it), only to a message it
+answered already, up to a week old and three times; never while it answers a sidebar message,
+whose closing text is the answer. In the thread, after a message of the thread, it is a run of its
+own: "Thread Agent followed up with you in the sidebar".
+
+**Tool requests.** In the sidebar, the agent can ask for a tool its channel does not have
+(`request_tool`; the record is `tool_requests`, migration 0080, `src/toolrequests.js`, the agent's
+side `src/agent/toolrequest.js`): one of the switchable tools (see "Agent tools") that is off in
+its channel, works in this deployment and on its platform, and is not `internal`; an MCP server of
+its team or customer that is off in its channel; or a global server that is off and has an
+instance, but for those only the admin team switches (`admins`: `slack_channels`). Without `tool`
+it lists them; with one it asks, with a reason, for the person it talks to, and only while it
+answers a sidebar message (never on the thread's messages, which customers write), at most five
+waiting at a time, never twice for the same. The request is a card in the sidebar, under the
+agent's answer to the message it was asked in (`toolCard` in `ui/inbox.js`): what it asks for, the
+agent's reason, what the tool does, and **Grant for a day** and **Deny** for anyone who may work
+the thread (`POST /api/agent/tools/grant|deny`), until its deadline, a day. Nobody else's say is
+needed, and a team's managers have no veto: what is off is only off by default.
+
+A grant is the thread's, for 24 hours, for every turn of its agent, the turns on the thread's
+messages too: `toolsFor` (`src/agent/agenttools.js`) adds granted tools to the switches' (still
+checked against the deployment and the platform), and `serversFor` and `serverWithHeaders`
+(`src/agent/mcpclient.js`, and `globalServersFor` in `src/agent/globals.js`) add granted servers,
+so the agent's catalog changes with them. A granted `post_message` posts on the thread's messages,
+never in the sidebar, which refuses it as before. The decision goes to the agent as a sidebar
+message of the person who made it ("Granted: you have … in this thread for the next 24 hours"),
+which it answers in the sidebar: it reads its tools before each input, so it has the tool in that
+turn. **End now** on a granted card (`…/revoke`) ends it early; the agent goes without it from its
+next input. See docs/STATE-MACHINES.md, "Tool request".
 
 In the inbox, the agent's icon enters **sidebar mode**: its avatar on its note, the button with
-it beside the reply box, *Continue in the sidebar* on an earlier conversation, or `a`. Each run
-of sidebar messages is one line between the thread's messages where it happened ("Lena Berg had
-a sidebar conversation with Thread Agent · 4 messages · not posted"), for everyone who sees the
-thread in the inbox. Where the conversation itself shows depends on the room (`ui/inbox.js`,
+it beside the reply box, *Continue in the sidebar* on an earlier conversation, or `a`. Where the
+panel has room beside the thread, a purple **tab** on the thread's right edge does too (`#side-tab`,
+for the many who hide the agent's note): a click opens or closes the panel, and pulled, the panel
+comes out of the edge with it, or goes back in, open or gone by where it is let go or which way it
+was flicked. Open, the tab is on the panel's edge. It wiggles once when the thread's agent sets to
+work or is done, and has a dot while an answer to you waits in the sidebar. Each sidebar
+conversation is one line between the thread's messages where it was last talked in ("Lena Berg
+and you had a sidebar conversation with Thread Agent · 4 messages · not posted"), for everyone who
+sees the thread in the inbox. It is everyone's who talks to the agent there: one starts it,
+another joins, and it goes on past the thread's messages in between. It ends only where the
+thread's messages come between and the next person's message comes more than four hours after
+the one before (`sideConversations`), or where the agent follows up after the thread moved on,
+which has a line of its own ("Thread Agent followed up with you in the sidebar"). Where the
+conversation itself shows depends on the room (`ui/inbox.js`,
 "the sidebar"):
 
 - **Beside the thread**, where the list, the thread and a panel fit side by side: 1180px from
@@ -1629,7 +2922,8 @@ thread in the inbox. Where the conversation itself shows depends on the room (`u
   the panel's least 360), measured, because the filters fold to a rail on some screens. While
   the panel shows, the content area is shared 3 : 5 : 3 between the list, the thread and the
   panel, so the thread stays the widest by far and the list gives up room too, down to its
-  least width; the panel is 360px to 560px. The panel (`#side`) has every sidebar
+  least width; the panel is 360px to 560px (up to 640px, 720px and 880px on wide
+  screens). The panel (`#side`) has every sidebar
   conversation of the thread, each under when it started, the agent working on its answer, and
   a box of its own, so the thread keeps its reply box and can be read and answered meanwhile.
   A line in the thread opens the panel at its conversation, also for someone who may not talk
@@ -1639,8 +2933,35 @@ thread in the inbox. Where the conversation itself shows depends on the room (`u
   turns into the sidebar's.
 
 Both are purple, say that only the team sees it and that nothing goes to the platform, and are
-left by **✕** (and Esc, and opening another thread). A window that grows or shrinks moves the
+left by **✕** (and Esc, and opening another thread).
+The agent's answer to you that you have not seen yet (asked, then gone to another thread before it
+answered) puts a **purple badge** on the thread's row, with how many there are (`sideNew` from
+`GET /api/inbox`, `sidebar_messages.seen_at`), and keeps the thread in unread only; its line in
+the thread says *New* while it is folded. It goes once the conversation shows to you, in the
+panel or unfolded (`POST /api/agent/sidebar/seen`, `{ type: 'sidebar-seen' }` to your other
+inboxes). A window that grows or shrinks moves the
 sidebar you are in from one to the other, with what is typed in its box.
+
+**Wide screens.** Past a desktop's screen the inbox has three bands (`ui/spectrum-inbox.css`,
+"Wide screens"): ultrawide from 2400px (a 2560px screen), megawide from 3200px (3440px) and
+hyperwide from 4800px (5120px). The filters flow into 2, 3 and 4 columns, in reading order and
+never splitting a group, so all of them show without scrolling; the list takes 30%, 26% and
+22% of the page, and the panel may grow to 640px, 720px and 880px. On any screen where the filters
+are a column (from 1100px, not the rail), the edges between the filters, the list, the thread
+and the panel are grips: dragging one (or its arrow keys) sizes the column, and a double click
+gives it back to the band. The widths are kept in the browser per band (`opspile.columns`), and
+the filters flow into as many columns as their width has room for; whatever is sized, the list
+keeps 380px and the thread 440px (and the sidebar's width beside it), also as the window
+shrinks. Under 1100px (the drawer, the phone) nothing sized on a wider screen applies.
+Where the filters are a column they are one table: every row has the same tracks in every
+card (color, icon, label, unread mentions, count, bar), the count's as wide as the list's
+length has digits, so the bars start at one edge and the mention badges stand in a column; and
+rows, titles and the gaps between cards are each one row high, so the rows of neighboring
+columns line up. In the wide bands each column of filters is 32px wider than the one column.
+Both conversations keep to a reading width (`--read-w`, 1040px): past it the thread's header,
+messages, reply box, draft and command cards, and the sidebar's messages and box, stay in a
+column in the middle, padded on either side, so neither side of a conversation is a head turn
+away from the other.
 
 **Traces.** The admin team sees everything an agent did with the MCP tool `get_thread_trace`:
 the thread's messages and the agent's steps in one timeline (`src/agent/trace.js`, read from the
@@ -1667,19 +2988,35 @@ written by people outside its control.
 |---|---|
 | `read_thread` | the whole entry, flagged messages withheld; with `thread` (a key, or a link to one of its messages as people paste them), another conversation of the same channel, its first and latest 100 messages |
 | `read_file` | a file attached to a message of the entry (`src/agent/files.js`), named by its link as the message shows it or by a Slack file id, never any other: fetched with the app's credentials (the Slack bot's `files.info` and token, the Discord bot's refreshed links, the copies of Teams files in pile 1), up to 10 MB. Images (PNG, JPEG, GIF, WebP up to 3.75 MB and 8000 pixels a side, read from their headers) go to the model as images, larger ones through the Markdown conversion; an image the model would refuse never reaches it (`src/agent/images.js`), since the API refuses the whole request and the image would stay in the history: the provider also leaves such images out of every request (over 2000 pixels a side when it has more than 20 images); plain text as it is; PDF, Word, Excel, OpenDocument, Numbers, HTML, XML and CSV through Workers AI's Markdown conversion (`AI.toMarkdown`). Text comes in parts of 30,000 characters (`offset`), and every part goes through Clef's injection check first, as a message would; a flagged file is withheld. Teams files are read from their copies in pile 1 (one without a copy cannot be read). Files of withheld messages cannot be read. |
-| `list_channel_threads` | the other conversations of the agent's channel, latest activity first (a re-threaded group as one, no join messages), paged by `before`; with `query`, those whose title has it, then those whose root is similar to it (Vectorize, the roots' embeddings from re-threading). Only its own channel: an agent reads another channel's threads only with `read_any_thread` |
-| `read_any_thread` | only where it is turned on (see "Agent tools"): any thread of the inbox, by its key or a link to one of its messages, its first and latest 99 messages, flagged messages withheld |
+| `raw_message` | a message of the entry, or with `thread` of another conversation of its channel, as its platform sent it: the newest version in pile 1 (`src/agent/rawmessage.js`), only what the message says (the Teams body as HTML, its attachments and `eventDetail`; Slack's text, blocks, attachments and files, the edited message for an edit; Discord's content, embeds, attachments, components and poll), not the envelope, in parts of 30,000 characters (`offset`). It is not checked for prompt injection again: the agent is told it is data, not instructions. A withheld message stays withheld. A message whose markdown dropped something (`dropped`, see "Pile 2") says so where the agent reads it, naming the tool; under `read_any_thread`, which it cannot read, not |
+| `related_threads` | the threads of the orgs the agent's thread is linked with (a partner and the customers it works for; "Thread links") like its own, by meaning, or like `query`, active in the last `days` (14, up to 90), with those the inbox kept as possibly the same issue first; each named with its key, title, org, channel, similarity and link only where the agent may read it (`readable`), the others counted (`src/agent/related.js`) |
+| `list_channel_threads` | the other conversations of the agent's channel, latest activity first (a re-threaded group as one, no join messages), paged by `before`; with `query`, those whose title has it, then those whose root is similar to it (Vectorize, the roots' embeddings from re-threading). Only its own channel: an agent reads another channel's threads only with `read_any_thread` (its customer's, or any) |
+| `read_any_thread` | with `org_threads` (on by default) a thread of the customer's other channels, with `any_thread` (see "Agent tools") any thread of the inbox: by its key or a link to one of its messages, its first and latest 99 messages, flagged messages withheld; in the conversations of a knowledge base's sidebar, any thread of the inbox |
+| `search_threads` | a knowledge-base agent's, in the conversations of its knowledge base's sidebar only (see "The knowledge base's sidebar"): every thread of the inbox about a query, best first, as the inbox's search finds them, each with its key, title, channel, customer, team, link, why it matched and the message that matched best; `customer` keeps one customer's. There, `read_file`, `list_topics` and `list_experts` take a thread of the inbox instead of the agent's own |
+| `find_channels` | with `org_threads`: the customer's other channels, all of them, those a query names first; with `any_thread`: the inbox's channels, on every platform, that a customer's name, a channel's or Teams team's name, a domain's name, or a site or repository (`owner/name`, or an Edge Delivery host) names, best first, the agent's own left out: id, platform and name, customer, ops teams, conversations and latest activity, why it matched, and the channel's link on its platform |
+| `list_any_channel_threads` | with `read_any_thread`: as `list_channel_threads`, for another channel (with `org_threads` the customer's, and of it the customer's threads only), by its id from `find_channels`, a link to it, or a thread key or message link in it |
 | `list_experts`, `list_topics`, `suggest_expert` | colleagues not in the thread yet who could help, with the similar threads they worked on and the topics those are in (`about`: what the thread is about, in the agent's words), the topic map's topics and who works each, and a suggestion to the team to pull one in (see "Expert finder"). It tells nobody: a person decides |
+| `channel_assignment`, `list_teams`, `request_channel_reassignment`, `request_team_membership` | where the channel is filed and why (every rule that matches it, in the order they are tried, the shares, Clef's pick and the open requests), the ops teams with their rules and members, and, only while it answers a sidebar message, a channel request for its author: move the channel to another team, or add it to that team's inbox (see "Channel requests"), which the admin team decides; or a membership request: add its author, or someone they name, to an ops team (see "Membership requests"), which an admin or that team's managers decide |
+| `request_partner_link` | asks the admin team to decide that a partner works for a customer (`link`, since when) or no longer does (`end`, until when), from what its thread says or the person in its sidebar tells it, on its own or for them; the customer and the partner default to the thread's org, by its type (see "Partners"). The knowledge base's agent has it too, for the person in its conversation |
+| `request_account_link` | proposes to the admin team that an account of its thread that is staff by itself and that nobody linked (a Discord account with a staff role, the Teams tenant's admin accounts) is a colleague's, by their mail address, from what its thread or the person in its sidebar says, or a colleague's knowledge-base Contact whose `aliases` name it; on its own or for them. It links nothing: the admin team confirms or declines it in the account's thread (see "Adobe's accounts that say nothing of whose they are") |
+| `ask_teammate` | a question to one colleague on the thread's teams (by mail address, or by a name the inbox knows them by: theirs, or an account's linked to them, as a Discord handle the admin team linked; an account of Adobe's nobody linked yet it says so of, and points to `request_account_link`), with its best guess at each of up to three questions, for a runbook, a reply or a fact; they answer it in their inbox, and the agent is told in an input of its own (see "Questions") |
+| `request_tool` | only while it answers a sidebar message: the tools and MCP servers its channel does not have that it could ask for, and a request for one, which anyone on the team grants to the thread for a day or denies, in the sidebar (see "Tool requests") |
+| `sidebar_followup` | tells the person who asked something in the sidebar (`message`, its `sb_…` id) what has happened since, from a later turn on the thread's messages (`addSidebarFollowup` in `src/sidebar.js`): a new answer of the agent's to them, under their question; refused while it answers a sidebar message, for a message it did not answer yet, over a week old, or followed up three times |
 | `find_member` | whether someone is in the agent's channel (on Teams, its Teams team), by name or mail address (`src/mention-match.js`), from the platform's list of members in `channel_members`, listed again when over an hour old; two accounts of one mail address are one match. With no complete list to go by (a failed listing, a Teams shared channel, over 2000 members) it says it cannot tell |
-| `get_draft`, `update_draft`, `discard_draft` | the entry's shared draft and its sources, saved as the person `opspile agent` with the same version check as a person's save. `discard_draft` removes a draft the agent saved last when it is out of date (staff answered themselves); a colleague's draft it leaves alone. Unless `post_message` is on, this and `suggest_expert` are its only writes outside the knowledge bases: it cannot post, react or resolve. A person reads the draft and sends it. |
-| `post_message` | only where it is turned on (see "Agent tools"): posts a reply in the thread as the opspile app |
+| `get_draft`, `update_draft`, `discard_draft` | the entry's shared draft and its sources, saved as the person `opspile agent` with the same version check as a person's save. `update_draft` holds a draft's length against the replies staff write (`src/agent/draftlength.js`, log-normal over characters): beyond one standard deviation (42 to 480 characters) it saves with a warning, beyond two (12 to 1625) it saves nothing and says why. `discard_draft` removes a draft the agent saved last when it is out of date (staff answered themselves); a colleague's draft it leaves alone. With the `computer`, `update_draft`'s `files` attaches pictures from it (a screenshot `playwright-cli` took): PNG, JPEG, GIF or WebP by their bytes, up to 5 MB and four a draft, kept in `FILES` under `drafts/<id>` for 30 days and named in `drafts.files` (migration 0103, `src/draftfiles.js`). Given, they replace the draft's; left out, they stay, as when a person edits the text. The draft line shows them ("Sent with it", `GET /api/draft/file`, served inline under `default-src 'none'`), and they go with it as the reply's files, as a person's own, whether it is sent from the line (as you or as the bot) or taken into the reply box (into its tray), under the channel's rule (src/attach.js). Unless `post_message` is on, this and `suggest_expert` are its only writes outside the knowledge bases: it cannot post, react or resolve. A person reads the draft and sends it. |
+| `post_message` | only where it is turned on (see "Agent tools"): posts a reply in the thread as the opspile app. As no person reads it first, it refuses a reply longer than one standard deviation of staff replies (480 characters, `src/agent/draftlength.js`), which goes into the draft instead, and takes a short one. With the `computer`, `files` posts pictures from it with the reply, where the channel takes them (`appRule`) |
 | `request_membership` | only where it is turned on (see "Agent tools"): asks the platform's admin bot to add people to the channel, or remove them, for the author of a message of the thread that asked; the bot's admins approve |
 | `add_reaction` | with `post_message`: reacts to a message of the thread with an emoji, as the opspile app, on Slack and Discord |
 | `bash` | only where the `computer` is turned on (see "Agent tools"): a shell with files of its own |
+| `view_image` | with the `computer`: a picture in its working directory (`/workspace`), PNG, JPEG, GIF or WebP by its bytes, up to 3.75 MB and 8000 pixels a side, as an image the model sees: a screenshot it took, before it attaches it (`readComputerFile`, `src/agent/computer.js`) |
 | `request_bash` | with the `computer`: asks a person on the team to run a command in that shell, with values the person fills in; it answers at once, and the agent is told later how it ended |
+| `request_codemode` | a thread's agent only: asks a person on the team to run a code mode script as themselves, calling the inbox's read-only tools it names (`search_threads`, `list_threads`, `get_thread`, `get_message`, `get_knowledge`, `whoami`) with that person's permissions; it answers at once, and the agent is told later what the script output (see "Scripts a person runs") |
 | `git_ls`, `git_read`, `git_grep`, `git_log` | the team's and the customer's knowledge base (`kb-team`, `kb-org`), every other team's (`kb-team-<slug>`), and the GitHub repositories listed for the team, the customer or everyone in `agent_repos` (to start: this repository) |
 | `kb_write` | create, replace or delete concepts in one commit, in the team's or the customer's knowledge base or that of a team the channel is shared with; the other teams' are read only |
+| `wakeup_after`, `wakeup_after_idle` | a thread's agent only: wakes it up once with a message it writes to itself, at a time (a duration or an ISO time) or once the thread has been quiet for a while (see "When it runs") |
+| `watch_related`, `unwatch_related` | a thread's agent only, always: watches another thread of the inbox or a GitHub issue or pull request its thread waits on, and is woken with an update whenever it changes; without `url`, lists its watches (see "Watching what the thread waits on") |
 | `draw_stack` | the customer's stack drawing, `stack.md` of kb-org (see "Stack drawing"), whole: a summary, parts by layer and the flows between them. One that exists is drawn again only from its `base` |
+| `send_feedback` | only where `FEEDBACK_REPO` and `FEEDBACK_GITHUB_TOKEN` are set: feedback to the people who build opspile, about opspile itself (a tool that failed or misled, something the agent needed, instructions that did not fit, or what a person asked it in the sidebar to pass on), as a GitHub issue labelled `agent-feedback` in that repository, or a comment on an open one about the same thing (`issue`); without `title`, the open ones (`src/agent/feedback.js`). The repository may be public, so the text is refused when it names the case: the customer, the channel, a person of the thread or who asked (by their whole name, or a word of it as it is written: a first name), an email address, a link, a host name on any ending (but files', `stack.md`, and the platforms' and tools' own, `api.github.com`), or a Slack, Teams, Discord or thread id; the thread, the team and who asked stay in `agent_feedback` (migration 0101), and only a private repository's issue links to the thread. Kept before it is filed; the cron files what GitHub did not take. Three a thread and forty in all a day |
 | `codemode` | a JavaScript script that calls the tools above, and the team's and the customer's MCP servers, as `await tools.<name>(args)`; only what the script outputs reaches the model |
 
 **Mentions of people who are not in.** When a message the agent is told about mentions someone
@@ -1702,12 +3039,12 @@ in a QuickJS sandbox on the agent's own thread (`createInlineCodemodeSandbox`; o
 thread, so a script that computes holds up only its own agent, for at most its interrupt
 budget), every call it makes is a nested tool call, and a script interrupted by an eviction
 resumes where it was without making its finished calls again. Each ops team and each customer
-can have MCP servers (`mcp_servers`, maintained in the knowledge-base editor next to the
+can have MCP servers (`mcp_servers`, maintained on the team's or the customer's page next to the
 per-channel switch; credentials are request headers sealed with `TOKEN_KEY`, or an OAuth
 grant, below). Each server is on or off for every channel of its team or customer, and a
 channel can have a switch of its own that wins (`mcp_server_switches`), as the global servers'
-do. An agent gets the servers of its thread's team and customer that are on in its channel, and
-connects only to those: each tool becomes `mcp__<server>__<tool>`, callable **only from scripts**, never
+do. An agent gets the servers of its thread's team and customer that are on in its channel (or
+granted to its thread, see "Tool requests"), and connects only to those: each tool becomes `mcp__<server>__<tool>`, callable **only from scripts**, never
 offered to the model as a tool of its own, and each server is a code mode namespace that
 `describeNamespace()` and `searchTools()` find. So a server with a hundred tools costs the
 prompt a few lines, and a script can call several and filter what they return. A server's
@@ -1746,24 +3083,24 @@ refresh tokens that expire unused (opspile's own after 30 days) stay alive. opsp
 ### Global MCP servers
 
 Some servers are not a team's or a customer's but opspile's own, built in
-(`src/agent/globals.js`) and set up once: **`browser`** and **`github`**. A new team starts
-with both on; otherwise they are off until the admin team or a team's managers turn one on, for an ops team or for a single channel
+(`src/agent/globals.js`) and set up once: **`github`**, **`fluffyjaws`** and
+**`slack_channels`**. A
+new team starts with the first on; otherwise they are off until the admin team or a team's managers turn one on (one marked `admins`, `slack_channels`, the admin team only), for an ops team or for a single channel
 (`mcp_global_switches`; a channel's switch wins over its team's, and a channel without one
 follows its team). An agent gets those on for its thread's team or channel, next to the team's
-and the customer's, as `mcp__browser`, `mcp__github`; its id there is `global:<key>`. Their
+and the customer's, as `mcp__github`, `mcp__fluffyjaws`, `mcp__slack_channels`
+(a server with `platforms` only in threads on one of them); its id there is `global:<key>`. Their
 tools are those the last check found (`mcp_global_tools`), so an agent does not ask a
 server or mint a token just to list them; the editor's **Check** and the cron, once a day,
-ask again. The prompt says that these are opspile's own, and that customer data does not go
-into websites or URLs that are not the customer's or Adobe's.
+ask again. The prompt says that these are opspile's own; a server with a `guide` adds its
+own rules there (the `mcp-servers` section), next to the instructions `describeNamespace` shows.
+Only these definitions can give a connection its own `fetch`, which is how one reaches a service
+binding (`connect()` in `src/agent/mcpclient.js`): a team's or a customer's server is a row of
+`mcp_servers`, and its requests go to its URL on the internet, whatever it says.
 
-**`browser`: Cloudflare Browser Run.** Cloudflare's own hosted
-[Browser Run MCP server](https://github.com/cloudflare/mcp-server-cloudflare/tree/main/apps/browser-rendering)
-(`https://browser.mcp.cloudflare.com/mcp`), with an account API token that may only use Browser
-Run (`BROWSER_RUN_TOKEN`, *Browser Run Write*; account-scoped, so the server finds the account
-itself). Its tools load a page in Browser Run's Chrome and return it as markdown or HTML, a
-screenshot, a PDF, its links, elements by CSS selector or JSON extracted from it, or crawl a
-site. Each call loads the page anew, signed in nowhere: there is no session to click through.
-The tools that list and kill the account's browser sessions are left out of what agents get.
+There was a global **`browser`** server, Cloudflare's hosted Browser Run MCP server, until the
+computers had a browser of their own ("The computer's browser", below): migration 0106 deleted
+its switches and checked tools. Tool requests that named it (`global:browser`) are history.
 
 **`github`: GitHub's MCP server, read-only, as the opspile GitHub App.** The server is GitHub's
 hosted one, at `https://api.githubcopilot.com/mcp/readonly` with `X-MCP-Readonly` and
@@ -1782,6 +3119,65 @@ Web Crypto; GitHub's PKCS#1 key is wrapped as PKCS#8), trades it for a token per
 keeps it per isolate until shortly before it expires, and an agent's client is replaced
 before its token runs out. An app installed on several accounts is a server per account,
 `github_<account>`.
+
+**`fluffyjaws`: FluffyJaws' MCP server, as a person or a service app.** FluffyJaws, Adobe's
+internal support assistant, serves MCP at `https://api.fluffyjaws.adobe.com/api/v1/mcp`
+(Streamable HTTP): searches of its knowledge, product documentation, Slack, the wiki, Jira,
+GitHub code and support tickets, and a chat. Agents get every tool but
+`content_compass_recommend`, which saves a conversation there. FluffyJaws takes an access token
+of its own Okta authorization server (`FLUFFYJAWS_ISSUER`) as `Authorization: Bearer`, and only
+one with five minutes left (`src/agent/fluffyjaws.js`). The transport gets it from an auth
+provider before each request, and another one when FluffyJaws answers 401. Two credentials,
+the service app winning where both are set up:
+
+- **A person's grant.** `FLUFFYJAWS_CLIENT_ID` is opspile's own Okta client there: native,
+  public (no secret), authorization code with PKCE (S256) and refresh tokens, its one redirect
+  URI the agents' OAuth callback (`/api/kb/mcp/oauth/callback`). FluffyJaws' Okta refuses
+  dynamic client registration, so nothing is discovered or registered: the endpoints are the
+  issuer's `/v1/authorize`, `/v1/token` and `/v1/revoke`. A member of the admin team
+  **connects** it in the editor: the browser goes to Okta with `openid profile email
+  offline_access` and a `state` whose hash finds the sign-in again (`mcp_global_grants`, one row
+  per server), and comes back to the callback, which tries the agents' servers first and then
+  this; only the person who started may finish, within ten minutes. The tokens are sealed with
+  `TOKEN_KEY`; who signed in (the ID token's email and name, read without checking its signature:
+  it came straight from Okta's token endpoint) and who connected it are plain columns, and the
+  editor shows them to everyone, since **every agent where it is on acts as that person** at
+  FluffyJaws and sees what they see. That is why it is off for new teams. A token with less than
+  seven minutes left is refreshed, one refresh at a time across every agent, as the agents' OAuth
+  servers do (a 30-second lease, `refresh_lock`; Okta may rotate refresh tokens): a refresh
+  writes only over the grant it started from, and one that lost revokes what it got. A grant Okta
+  rejects (`invalid_grant`) is dropped with the reason until someone connects again; connecting
+  again revokes the grant before, and **Disconnect** revokes it and deletes the row. The daily
+  check of the global servers needs a token, so the refresh token is used at least once a day.
+- **A service app.** `FLUFFYJAWS_SERVICE_CLIENT_ID` and the secret `FLUFFYJAWS_SERVICE_SECRET`:
+  an Okta service app registered in FluffyJaws' Integrations workspace, client credentials
+  (`client_secret_basic`) with the scope `fluffyjaws`. No person: each call says
+  `X-FluffyJaws-End-User: automation`. The token is kept per isolate until seven minutes before
+  it expires.
+
+The agents are told that FluffyJaws is Adobe's own, so searching it for the customer's errors,
+tickets and products is what it is for, and that what it returns is about every customer: never
+another customer's name or data in the thread.
+
+**`slack_channels`: Slack channel management, through a service binding.** The slack-automation
+relay (AEM Ops Automation, the Worker `request_membership` posts to on Slack) serves MCP on a
+named entrypoint, `SlackMcp`, that has no public URL: opspile binds it as `SLACK_MCP` (with
+`SLACK_AUTOMATION_WORKER`, the same Worker), and the connection's `fetch` hands each request to
+the binding (`src/agent/slackmcp.js`), with `x-mcp-via: opspile`, which names opspile in the
+relay's reports. No credential: being bound is the permission. The relay is stateless Streamable
+HTTP (every POST answered with JSON, no session, a GET 405, as `noStream` expects; it ignores the
+URL). `channel_profile` and `person_status` read; `invite_guest`, `add_to_channel`,
+`remove_from_channel`, `invite_slack_connect`, `disconnect_org` and `archive_channel` act at
+once, with no confirmation in opspile or at the relay, which posts every write to the Slack
+admins with its `asked_by` and `reason` and keeps its own guards: the invite rules (a decline
+stands unless `ignore_rules`), no disconnection while a leaving person has no guest account
+(unless `force`), never #general. What keeps agents from it is the switch: off for new teams,
+switched by the admin team only (the editor's switches are disabled for the team's managers,
+and the API refuses them), and listed only for agents whose thread is on Slack. Its guide in the
+prompt names the thread's Slack channel id, says to change things only for what a person in the
+thread asked for, the destructive ones and the overrides only when Adobe staff ask, and to pass
+`asked_by` (the Slack user id of the person who asked, which `person_status` gives for the
+address `find_member` shows, else their name) and `reason` on every write.
 
 Writes clone the knowledge base into memory (isomorphic-git), apply the change, rewrite the
 indexes and the log, commit and push with a short-lived write token. Many agents write the
@@ -1806,6 +3202,90 @@ agent names alone: `{ team, kb: "team" }` needs no customer and reaches `kb:<tea
 left empty), which has no kb-org at all, and only the chosen knowledge base is created when it
 is missing.
 
+**The knowledge base's sidebar.** On a team's page in Teams and a customer's in Customers, whoever
+may look at its knowledge base (src/kbaccess.js `mayRead`: every internal user, on an ops team or
+not, for a team's and a customer's alike, so whoever sees the page has its panel) talks to
+its knowledge-base agent, to ask what it knows and to have it changed: a panel beside every section
+of the page (ui/kbchat.js, the global `KbChat`, in `ui/spectrum-kbchat.css`), beside the page where
+three columns fit, over it where they do not. Its tab is the inbox's sidebar's: purple, on the right
+edge of what is picked, halfway down; a click opens or closes the panel, pulled the panel comes with
+it, and it wiggles when the agent answers, with a dot while that answer waits behind a closed panel.
+Where the page is wide enough (1400px) the panel shows by itself unless you closed it there; where
+it comes over the page it shows only when you open it. Opened or closed beside the page is kept in
+the browser. A team's is the agent `kb:<team>:`, a customer's
+`kb::<org>`, which is no team's: neither has a thread or a draft. Each conversation is the person's
+own (`kb_chat_messages`, migration 0104, src/kbchat.js): nobody else sees it, **New** starts
+another, and the earlier ones are a pick away. Each is a session of the agent of its own, pinned
+to that knowledge base as a seed's is (src/agent/kbchat.js), so `kb_write` and `draw_stack` write
+it and nothing else, and it starts without the context of the other conversations. A message goes
+into the session as an input that starts as a thread's sidebar message does (`Sidebar message
+sb_… from`), so its turns are read as those are (`sidebarTurns`), and the turn's closing text is
+the answer, kept in D1 at every round of the agent's tools and whenever the page asks while it
+waits (`GET /api/kb/chat`, which also says what the agent is doing, `POST /api/kb/chat`).
+
+**Who changes it.** Everyone on its team (`mayWrite`: a team's members, the owning teams' members
+for a customer's, and the admin team) has the agent change the knowledge base and run commands;
+for anyone else (another team's members, on a team's page or on a customer's their teams do not
+own, and Adobe's people on no team), the agent answers but refuses to: each message tells it which (`write`, kept with
+the session as of the latest message, `chat-of:<session>`), and `kb_write`, `draw_stack`, `bash`,
+`request_bash` and the extraction rules' and tech stack's saves and deletes check it at every call.
+
+**Who reads through it.** What the agent reads there (below: every thread of the inbox, every
+knowledge base) it reads for whoever talks to it, whatever they see in the inbox themselves:
+another team's members, and Adobe's people on no team, whose inbox is their personal view. That is
+on purpose: whoever sees a team's or a customer's page may ask its agent what the inbox knows, and
+only the agent's changes depend on who asks (`write`). Someone signed in from `SIGNIN_DOMAINS` who
+is not Adobe's has no page and no conversation (`isInternal`, src/kbaccess.js).
+
+**What it has there**, and only there (the tools refuse in the agent's other sessions, a seed's or
+a dream's, and are not in their prompt):
+- every thread of the inbox (`kbChatExtension` in src/agent/tools.js): `search_threads` searches
+  every team's threads as the inbox's search does (src/search.js `find`: meaning, full text,
+  titles, channels, customers and facts), with `customer` for one customer's and its partners'
+  threads about it ("Thread links"); `read_any_thread`,
+  `find_channels` and `list_any_channel_threads` as a thread's agent has them where `any_thread`
+  is on; `read_file`, a file of a message of any thread (`thread` and `file`);
+- who knows what: `list_topics` (with `topic`, the colleagues who worked its threads lately,
+  `topicPeople` in src/experts.js) and `list_experts` for a thread (`thread`, `about`);
+- its switchable tools, whatever the switches say, as they are for a person's conversation and not
+  a channel (`KB_AGENT_TOOLS`, src/agent/agenttools.js): the `computer` (`bash`, and `request_bash`,
+  which asks the conversation's person: a card in the conversation with Run and Deny, `POST
+  /api/kb/chat/bash`, `bash_requests.chat`; how it ended comes back as a line of theirs and a
+  sidebar message to the session, `tellChat`), `web_search`, and a team's agent the team's
+  extraction rules and tech stack. The computer is the agent's, so its files are shared by every
+  conversation of the page, and it has the team's and the customer's secrets.
+
+A customer's agent reads every team's knowledge base, those of the teams that work with the
+customer (`customerTeams` in src/shares.js) first and named so (`via: 'owner'`), read only. Its
+prompt (`kb-chat`) asks it to do what the person asks, read before it writes, back what it writes
+with the threads that say it (or the person, as `human:<name>`), keep one customer's details out of
+kb-team, and ask before it removes or rewrites much nobody asked for. Its commits say who asked
+(`log.md`: "asked by … on the knowledge base's page"). When it answers, the page lists the
+knowledge base again and shows the open file as it is now, unless you are editing it
+(`Agent.changed`). The agent's model use is metered under its team or customer, as a seed's.
+
+**Dreams.** Agents write the knowledge bases a thread at a time, so over time a customer's
+kb-org gathers the same site, issue or person under two names, facts repeated across concepts, and
+claims a later thread contradicted. The **dream experiment** (from 2026-11-18 15:00 to 2026-12-02
+15:00 UTC) consolidates it while nobody is talking: for half the customers (by a hash of the org
+slug, `unit: 'org'`, since a dream changes what every thread of the customer reads), once their
+channels have had no message for eight hours and there has been no dream since their latest one,
+the cron (`src/dreams.js`) hands kb-org to the customer's knowledge-base agent
+(`kb:<team>:<org>`, the team of its latest channel with an agent). Only customers with a message in
+the last week, a kb-org of at least five concepts and a channel with an agent take part, and at
+most three dreams start per cron run. The agent dreams in a session of its own, pinned to kb-org as
+a seed is (`src/agent/dream.js`), without the context of earlier dreams: it reads the index and the
+files, finds duplicates, misfiled concepts and contradictions, merges them into one concept at the
+path of its type and deletes the rest in the same commit, keeping every source, footnote and alias,
+and resolves a contradiction by the newest dated source (or keeps both and says so). It adds
+nothing, looks nothing up elsewhere, and leaves `stack.md` and `systemprompt.md` alone. Its commits
+land on `main` as every agent's do, each with an `Opspile-Dream: <id>` trailer, and `log.md` says
+they came from a dream, so a bad one is reverted from the history. Each dream is a row of
+`kb_dreams` (migration 0077): the knowledge base's entries before and after, when it was taken and
+ended, its outcome and the agent's closing sentences. The knowledge-base agent's model use is tagged
+with its customer's arm, as the customer's threads' is, so the arms' cost per accepted draft
+includes the dreams.
+
 **Discarded drafts.** When a person discards a draft the agent saved (`DELETE /api/draft`, the
 inbox's **Discard**), the agent is told who did and what the draft said, as feedback: it looks
 for why it was not wanted, does not save it again, and files a lesson in kb-team when there is
@@ -1825,14 +3305,17 @@ pile 3 (git history); replaying pile 1 pokes them, but they find nothing past th
 
 ### Agent tools
 
-Four tools are off until they are turned on (a new team starts with `computer` and
-`extraction_rules` on for the team). Three by the admin team or a team's managers, as
+Nine tools are off until they are turned on (a new team starts with `computer`,
+`extraction_rules`, `org_threads`, `web_search`, `resolve` and `label` on for the team; migration
+0077 turned `web_search` on for every team before it, migration 0091 `resolve` and `label`, and
+migration 0102 `org_threads`). All but `any_thread` by the admin team or a team's managers, as
 the global MCP servers are: for an ops team or a single channel (`agent_tool_switches`; a channel's switch wins
-over its team's), in the knowledge-base editor (**Tools and MCP servers**, `src/agent/agenttools.js`).
+over its team's), on the team's or the customer's page (**Tools and MCP servers**, `src/agent/agenttools.js`).
 Before an agent is told anything it reads the switches of its thread's team and channel; the
 tools it has are kept in its storage and installed as their own extension (`opspile-tools`,
 right after opspile's own), which a change replaces in place. Each comes with a section of the
-system prompt on how to use it.
+system prompt on how to use it. A tool granted to the thread in its sidebar counts as on there,
+for a day (see "Tool requests"); `any_thread` is never granted.
 
 **`post_message`.** The agent posts a reply in the latest platform thread of its entry right
 away (`src/agent/posting.js`), as the opspile app, never as a person: on Slack with the bot
@@ -1869,15 +3352,15 @@ other; the agent is not told about reactions.
 **`computer`.** pi's own `bash` tool, run on [Cloudflare Computer](https://github.com/cloudflare/computer)
 (`@cloudflare/computer`, `src/agent/computer.js`). The ThreadAgent object holds a Workspace: a
 filesystem in its own SQLite, so each thread has a working directory (`/workspace`) whose files
-last from one turn to the next, and nobody else's. Commands run in a `WorkerShellBackend`:
-[just-bash](https://github.com/vercel-labs/just-bash) in a Dynamic Worker (the `LOADER`
-binding), which reaches the files back over Workers RPC through `WorkspaceServiceProxy` (the
-Worker exports it) and the object's `__getWorkspaceStub()`. The shell has the text tools (cat,
-grep, sed, awk, sort, find, jq…) and `curl`, with network access through the Worker's
-`SecretGateway` (egress `http-gateway`, no filter; see "Computer secrets" below), and no npm,
-node or python. What curl fetches is untrusted, like
+last from one turn to the next, and nobody else's. Commands run in GNU bash on the SLICC
+kernel, with the programs of the team's image (below, "The computer's shell"), and `curl`,
+with network access through the gateway's `forward` (no filter; see "Computer secrets"
+below), and no npm, node or python. What curl fetches is untrusted, like
 customer messages; nothing stops an agent from sending what it read, so the prompt says not to
-send anything to sites that are not the customer's or Adobe's. The
+send anything to sites that are not the customer's or Adobe's. The one exception is a link a
+person posted in the thread for Adobe to see (a whiteboard or slides on a third-party tool): the
+agent opens it as posted, nothing added, and types in the password posted for it, but only looks
+there (no account, no sign-up, nothing submitted past the gate). The
 bridge is an `ExecutionEnv` for pi-durable whose `exec` is `workspace.runtime.exec`; pi's file
 tools are not installed, so the rest of the environment answers `not_supported`.
 
@@ -1895,47 +3378,80 @@ Files of withheld messages stay out of it, as they do of `read_file`, but a file
 checked for prompt injection here, and a raw HAR holds its recorder's credentials: the prompt
 says not to quote them, and code does not stop the shell from reading or sending them.
 
-**The computer's shell.** just-bash is an interpreter in JavaScript: what it has not built in
-does not run. The admin team can give a team's agents another shell (`runtime`, a row of
-`agent_tool_options`, migration 0064; `PUT /api/kb/tools` with `runtime`; the pickers in the
-Computer tool's row of the team's knowledge base): GNU bash and real programs on the
-[SLICC kernel](https://github.com/ai-ecoverse/slicc-kernel) (`slicc-kernel`,
-`src/agent/kernel.js`). It is experimental, as the kernel is on Cloudflare, and just-bash stays
-the default. An agent follows its team's choice before each delivery, as it follows its tools
-(`syncTools`; docs/STATE-MACHINES.md, "Computer shell").
+**The computer's browser** (`src/agent/browser.js`). An image with `playwright-cli` (the
+`browser` image) drives a browser over the Chrome DevTools Protocol, Cloudflare Browser Run's,
+where the deployment has `BROWSER_RUN_TOKEN` (*Browser Run Write*) and an account
+(`BROWSER_RUN_ACCOUNT`, by default the deploy's `CLOUDFLARE_ACCOUNT_ID`).
+
+- **How it connects.** The kernel serves CDP to its programs at `SLICC_CDP_URL`
+  (`ws://127.0.0.1:9222/devtools/browser/<id>`, and `/json/version`), the port the wasm
+  `playwright-cli` dials. Each connection goes to the kernel's `cdp` hook, which the agent's
+  object gives it when it boots an image with the programs (`browserFor`), and which opens a WebSocket of
+  the Worker's to `wss://api.cloudflare.com/client/v4/accounts/<account>/browser-run/devtools/browser…`
+  with the token in its `Authorization`, and relays the messages both ways. The token never enters
+  the computer. An image without the programs, or a deployment without Browser Run, serves none:
+  the programs are answered 503, no CDP host; a hook that fails (Browser Run refused, a
+  `--runtime` there is none of) is answered 502 with why, and a connection Browser Run closes
+  is closed (1011) with its reason. How long each connection held the browser is counted for
+  COGS as Browser Run's `browser_ms`.
+- **One Chromium per computer.** Every `playwright-cli` command is a process and a connection of
+  its own, and a new connection to `/devtools/browser` would be a new browser. So the first one
+  makes a session (`POST …/devtools/browser?keep_alive=600000`) and every connection is to
+  `…/devtools/browser/<session>`: a command finds the tabs, cookies and page state the one before
+  left (`open`, then `eval` that adds CSS, then `screenshot`). Its id is kept in the agent's
+  storage (`browser-session`), so the computer finds its tabs again after its object was
+  evicted, while the session lives. A session that refuses a connection has ended (ten minutes
+  after its last): the next one makes another, once. A new image (`changeImage`) ends it
+  (`DELETE`), the one in storage too when the object was evicted since and has no host. What a
+  command sets on its own CDP session (a viewport) ends with the command.
+- **Kitesurf**, Browser Run's browser that runs on Workers without a container, is
+  `playwright-cli --runtime kitesurf`: a browser for each connection, which keeps nothing.
+  playwright-cli 2.1.20 refuses its pages yet ("target is on seven's origin").
+
+**The computer's shell** is GNU bash and real programs on the
+[SLICC kernel](https://github.com/ai-ecoverse/slicc-kernel) (`src/agent/kernel.js`). It
+replaced just-bash, an interpreter in JavaScript that ran only what it had built in; migration
+0076 deleted the teams' choice between the two (`runtime`). What a team's agents have is the
+image of their kernels (below), which the admin team chooses; an agent follows its team's
+choice before each delivery, as it follows its tools (`syncTools`; docs/STATE-MACHINES.md,
+"Computer image").
 
 - **Where it runs.** The kernel (`createCloudflareKernel`) lives in the ThreadAgent object; each
   process is a WebAssembly instance in a Dynamic Worker (the `LOADER` binding) that has no
-  network of its own and asks the kernel for every system call over Workers RPC. It is a
-  backend of the same Workspace (`sliccBackend`), mounted at `/workspace`, so the files of a
-  thread are the same in either shell, the uploads too, and so are `request_bash`, the output
-  limits and the timeouts. A run the kernel stops at its timeout ends by `SIGTERM` (exit code
+  network of its own and asks the kernel for every system call over Workers RPC. It is the
+  backend of the Workspace (`sliccBackend`), mounted at `/workspace`, with the uploads, and
+  `request_bash` runs there too. A run the kernel stops at its timeout ends by `SIGTERM` (exit code
   143, or 137 after `SIGKILL`), which counts as a timeout when the time was up (`timedOut`).
 - **Its files.** `/workspace` is the Workspace. `/opt/image` is the image, read-only (below).
   Everything else (`/root`, `/tmp`, `/etc`) is the kernel's own root, in the same SQLite, in
   tables of its own (`slicc_*`). Output that was too long is saved under
-  `/workspace/.computer/output`, not the Workspace's `/.computer/output`, which this shell
+  `/workspace/.computer/output`, not the Workspace's `/.computer/output`, which the shell
   cannot see. A file is in the Workspace when its program closes it (`writeBehind: false`).
   The kernel's driver of `/workspace` knows the Workspace's read-only mounts (the uploads):
   files below them are read-only to the kernel too, so it refuses any change there when it
   starts, as Linux does: `Read-only file system`, and a non-zero exit code. `npm run
-  computer:check` checks both shells on the uploads in local workerd, and on Cloudflare in the
-  `Computer on stage` workflow.
+  computer:check` checks the uploads in local workerd, and on Cloudflare in the `Computer on
+  stage` workflow.
 - **Its programs are an image** (`src/agent/image.js`), and a deployment can have several,
   by what a computer is for. An image is a stack of read-only layers, as a container image
   is. The Worker carries none, and no agent keeps a copy: they are in the `IMAGES` bucket, and
-  the admin team chooses one per team, next to the shell (`image`, another row of
-  `agent_tool_options`; `base` without one).
+  the admin team chooses one per team (`image`, a row of `agent_tool_options`, migration
+  0064; `PUT /api/kb/tools` with `image`; the picker in the Computer tool's row of the team's
+  knowledge base; `base` without one).
   - **Layers.** A layer is a tree of files. An image names its layers from the bottom up, on
     top of those of the image it is `from`, and where two layers have a path, the upper one's
     file is the image's. A layer cannot take a lower one's file away. `scripts/computer-images.mjs`
     defines them (`LAYERS`, `IMAGES`) and builds them from the `@ai-ecoverse/wasm-*` packages
     ([homescoop](https://github.com/ai-ecoverse/homescoop)) this repository pins, each under
-    `node_modules/`: `shell` (bash, coreutils), `text` (grep, sed, gawk, jq, findutils, diff
-    and cmp, tree, which, rev, column, hexdump, xxd, patch), `archive` (gzip, tar, zip and
-    unzip, xz, bzip2), `net` (curl, BIND's dig, host and nslookup), `tls` (openssl), `js` (qjs), `git`, `formats` (yq,
-    html2markdown, file) and `data` (ripgrep, sqlite3, strings). `base` is the first eight, and
-    `data` is `from: 'base'` with the ninth. A package's other files a program needs are named
+    `node_modules/`: `shell` (bash, coreutils), `text` (grep, ripgrep, sed, gawk, jq,
+    findutils, diff and cmp, tree, which, rev, column, hexdump, xxd, patch), `archive` (gzip,
+    tar, zip and unzip, xz, bzip2), `net` (curl, BIND's dig, host and nslookup), `tls`
+    (openssl), `js` (qjs), `git`, `formats` (yq, html2markdown, file), `data` (sqlite3,
+    strings) and `browser` (playwright-cli, `@ai-ecoverse/slicc-cdp`, without its curlwright; below,
+    "The computer's browser"). `base` is the first eight, and
+    `data` is `from: 'base'` with `data`, and `github` with `github`. Each of the three has an
+    image with the browser too, its own layers and `browser` on top: `browser` (from `base`),
+    `data-browser` and `github-browser`. They replaced the global `browser` MCP server. A package's other files a program needs are named
     in its `files` (git's `libexec/git-core`, whose transports git runs by their paths; file's
     magic; openssl's `etc/ssl`, its configuration and Mozilla's roots).
     An image names what the agent is told it has (`tools`), and the build fails if that names
@@ -1969,22 +3485,35 @@ the default. An agent follows its team's choice before each delivery, as it foll
     computer failed".
   - **What is kept in memory.** Layers and blobs never change, so the Worker keeps what it
     read for every agent in its isolate: the trees of the last 8 images, and pieces (and the
-    whole blobs of files without them) up to 32 MiB, the least recently used going first. A
-    new isolate reads them again. Of a file over 16 MiB (yq, gh) the isolate keeps nothing:
+    whole blobs of files without them) up to 48 MiB, the least recently used going first. A
+    new isolate reads them again. Of a file over 24 MiB (yq, gh) the isolate keeps nothing:
     the agent's mount holds the last two pieces it read, so a read that starts in the piece
     the one before ended in does not fetch it again (a file without pieces is held whole by
-    the open file that read it, once per open). The kernel keeps its own copy of a program it
-    runs, and two of gh's 50 MB would crowd the object's 128 MB. So while a kernel runs, what
-    the isolate keeps of a program is a second copy, which it never reads; it pays when the
-    agent's kernel boots again, in the same isolate as it mostly does, and finds its programs
-    there (a command in some 100 ms instead of one to three seconds).
+    the open file that read it, once per open). The kernel keeps no copy of a program (since
+    slicc-kernel 1.189.1): a Dynamic Worker that starts cold reads it again, whole, through the
+    mount. So the isolate's cache is the only copy of a program in the agent's object, and
+    serves those reads and the kernel's next boot, in the same isolate as it mostly is (a
+    command in some 100 ms instead of one to three seconds). The object's 128 MB hold that
+    cache, the agent itself (its model loop), and, while the Worker Loader takes a program, its
+    bytes once more (gh's 50 MB). With 1.189.0's copies, two commands of one GitHub agent
+    exceeded it; stage checks that sequence now (`github: a session`). The sizes are measured
+    on stage (`npm run computer:check -- --measure 48/24,64/64 <origin>`, or the workflow's
+    `measure` input): at 64 MiB, with gh kept, the kernel's next boot exceeded the memory; at
+    48 MiB with gh kept it pushed every other program out, so the next boot read them all
+    again; 48 MiB and 24 MiB of one file kept the rest, and the next boot read only gh.
   - **What the agent is told** comes from the image too (`shellInfo`): its `tools`, and
     whether it has `jq`. So the prompt cannot name a program the image lacks.
 - **Its network.** The kernel's programs reach the network through its proxy, which hands
-  every request to a transport: `fetchTransport` over `gatewayFetch`, which calls the same
-  `forward` as `SecretGateway` with the agent's name. So secrets go in, are refused and are
-  taken out of answers as below, and a redirect is curl's to follow (`-L`), through the gateway
-  again.
+  every request to a transport: `fetchTransport` over `gatewayFetch`, which calls the
+  gateway's `forward` with the agent's name. So secrets go in, are refused and are taken out
+  of answers as below, and a redirect is curl's to follow (`-L`), through the gateway again.
+  Programs find the proxy in `https_proxy`, so curl's `-i`, `-I` and `-D` would show the
+  proxy's answer to its `CONNECT` (`HTTP/1.1 200 Connection Established`) before the site's
+  headers, and a script that reads the first status line would read that one. Every process
+  has `CURL_HOME` (`KERNEL_ENV`), whose `.curlrc`, written at each boot, says
+  `suppress-connect-headers`. It has `TAR_OPTIONS=--no-same-owner` too: the kernel lets no
+  process give a file another owner, not even root, so tar would warn for every file it
+  unpacks.
 - **`https://`.** curl speaks TLS to the kernel's proxy, which ends it with
   `@ai-ecoverse/wasm-tls-engine` and hands the request to the transport. Elsewhere the kernel
   loads that engine from the image, by `import()` of a `data:` URL and compiling its wasm at
@@ -2036,8 +3565,7 @@ the default. An agent follows its team's choice before each delivery, as it foll
   HTTP goes through the kernel's transport, so the gateway puts a team's `GH_TOKEN` in; gh
   does not run without one. The agent is told to read with it, not to change anything on
   GitHub.
-- **What it does not have:** python, node (and so the AEM CLI or `aio`), and `xan`, which
-  just-bash has.
+- **What it does not have:** python, node (and so the AEM CLI or `aio`), and `xan`.
 
 **Computer secrets.** API keys and tokens of a team or a customer (`agent_secrets`, migration
 0060, `src/agent/secrets.js`), kept in the Computer tool of its knowledge base by whoever edits
@@ -2045,10 +3573,10 @@ it (`/api/kb/tools/secrets`, `src/secretadmin.js`), sealed with `TOKEN_KEY` and 
 again. A team's wins over the customer's of the same name. The agent never holds a value: its
 prompt lists the names, hosts and descriptions, and pi's `bash` gets each as a variable whose
 value is a placeholder (`$ACME_API_KEY` is `opspile-secret-ACME_API_KEY`), through the tool's
-`prepare`. The Workspace's egress is `http-gateway` with `SecretGateway` (`src/agent/gateway.js`,
-exported by the Worker), a `WorkerEntrypoint` that becomes the Dynamic Worker's
-`globalOutbound`: every `fetch` of the shell, curl's too, arrives there, with the agent's name in
-its props, which the shell cannot touch. A request that names no placeholder goes out as it is.
+`prepare`. Every request of the shell's programs, curl's too, leaves through the kernel's proxy
+and its transport (`gatewayFetch`), which hands it to `forward` in the agent's own object, with
+the agent's name, which the shell cannot touch. A request that names no placeholder goes out as
+it is.
 One that does is sent with the values in place of the placeholders (in the URL, the headers, a
 Basic `Authorization`, a textual body up to 1 MiB; percent-encoded in the URL and a form body,
 escaped in JSON and XML, a "form" that parses as JSON as JSON, which is what `curl -d` sends
@@ -2115,6 +3643,51 @@ not stop: the command itself can write a value to a file, which the agent can re
 send it to any host, or print it encoded. The person who runs the command is the check, as with
 a command a colleague asks them to run: the card shows it whole, and says so.
 
+**Scripts a person runs.** Every thread's agent, with a computer or not, has `request_codemode`
+(`src/agent/scriptrequest.js`; the record is a command's, `bash_requests`, with `kind: 'codemode'`
+and `tools`, migration 0102): the agent asks a person on the team to run a code mode script **as
+themselves**, with their permissions in the inbox. The agent's own tools see its channel; a
+person sees every thread of their teams and the knowledge bases they may read. So when what the
+agent needs is in the inbox but out of its reach (a thread in another channel that someone links,
+whether another team answered the same question), it writes a script that calls the inbox's tools
+it names, `await tools.search_threads({ query })`, and gives its reason; the person reads it and
+runs it, or denies it. The tools are those of the inbox's MCP server (`src/mcp-tools.js`), by the
+same names, that only read and that every person has: `search_threads`, `list_threads`,
+`get_thread`, `get_message`, `get_knowledge` and `whoami` (`SCRIPT_TOOLS`, `src/scripttools.js`,
+which declares them for the agent's prompt without importing the inbox's API; a test keeps the two
+alike). A script resolves a call to the tool's `data`, and a failed one throws. Nothing that
+writes, posts or is the admin team's is among them. The deadline, the limit of 5 waiting, the
+timeout (60 seconds unless it says, 180 at most), the denial, the expiry and the watchdog are a
+command's.
+
+The card (`bashCard`, **Script**) shows the script, highlighted as JavaScript, the reason, the
+tools it calls ("Calls as you, reading what you may read"), **Deny** and **Run as me**. Run goes
+to `POST /api/bash/run` as for a command: the Worker that serves the click hands the agent's
+object (`runScript`) a function, over RPC, that runs one of the request's tools as the person who
+clicked (`inboxCall` in `src/mcp.js`, which the Worker passes to the API as `inboxTools`, so that
+`src/api.js` does not import the MCP tools). The object runs the script in a QuickJS sandbox of
+its own whose only tools are the ones the request names, on its thread as its own code mode
+(`scriptSandbox`), and each call goes back to the Worker; the Worker also refuses a tool the
+request does not name. Nothing of the person's session reaches the object, only the calls'
+results, which are what they may read. The function is good only while the call lasts, so `run`
+answers once the script has ended and the agent was told (200, not 202). A script that threw is
+`done` with its `error`, as a command that exits with an error; a sandbox that failed is
+`failed`. The agent is told what the script output (`text()`, `console.*`) and returned, 30,000
+characters of each at most, which tools it called how often, and that what it read is the
+person's to see, not the channel's: never to put another customer's threads, names or details
+into this thread's draft or posts, and to tell someone who asked in the sidebar with
+`sidebar_followup`.
+
+**Requests asked in the sidebar.** A command or a script the agent asks for while it answers a
+sidebar message keeps that message's id (`bash_requests.sidebar`, migration 0102, as a tool
+request's), and is part of that conversation: while the conversation shows, in the panel beside
+the thread on a wide screen or unfolded in the thread on a narrower one, its cards are there,
+under the agent's answer (`bashSideCards` in `ui/inbox.js`, next to `toolCards`), and not in the
+bar under the reply box. While it does not show (the panel closed, the conversation folded), the
+bar has them as before, with "the agent asks **in the sidebar**", a link that opens the
+conversation at them. The agent is told, with how it ended, to tell the message's author with
+`sidebar_followup`, as its note does not reach them.
+
 The shell reads a file whole, in one isolate: above about 30 MB `grep` no longer finds it, and
 `jq` runs out of memory on a large one. So files over 30 MB stay out (200 MB a thread), and
 `INDEX.txt` says which. A HAR also gets `<name>.requests.ndjson` (`src/har.js`): one line per
@@ -2129,11 +3702,44 @@ labeling of a thread; it cannot change the admin team's, which apply to every ch
 section of the prompt asks it to add a rule only for what recurs and the existing rules miss,
 to test it first, and never to put a customer's name or a secret into one.
 
+**`org_threads`.** A customer often has more than one channel (one per project, or one on Slack
+and one on Teams), and a question in one is worked, or was settled, in another. With this tool,
+on for every team by default, the agent has `read_any_thread`, `find_channels` and
+`list_any_channel_threads`, as with `any_thread`, but the boundary is its customer, the org its
+thread is filed under, not the inbox: `find_channels` lists the org's other channels (a channel
+counts when its latest thread is filed under the org, as everywhere in `src/agent/channelfind.js`;
+a query only orders them), `list_any_channel_threads` takes only such a channel, and lists only its
+threads of the org (a channel can have older threads of another), and `read_any_thread` reads only
+an entry whose threads are all filed under the org (`resolveAnyThread` with `org`). Another org's
+channel or thread is refused with the error a missing one gets. Each call asks again where the
+agent may read (`readScope`), so an agent that had `any_thread` reads only its customer's once that
+is off. It is not on in an org of type `internal` (Adobe's own channels, which are about every
+customer: reading those is `any_thread`'s) nor under an internal slug (`_unassigned`, many
+customers' channels), so the agent never reads across customers. Its section of the prompt keeps
+what it learns there in kb-org (never kb-team) and another customer's details out of the
+knowledge bases, the draft and its posts. A team's managers turn it off for the team, or opt one
+channel out; a thread can be granted it for a day, as other tools. Where `any_thread` is on too,
+that one's tools and section stand for both. Every thread it reads is kept in
+`agent_thread_reads`.
+
 **`any_thread`.** Agents read only their own channel's threads, but staff in an internal channel
 paste links to customers' threads elsewhere. With this tool the agent has `read_any_thread`:
 any thread of the inbox, whatever its channel, team or customer, by its key or a link to one of
 its messages (`resolveAnyThread`, `src/agent/history.js`), except in channels the rules ignore.
-It has no search: a person points it to a thread. The messages go through Clef's injection check
+With it come `find_channels` and `list_any_channel_threads` (`src/agent/channelfind.js`): when a
+colleague relays a customer's question into an internal channel, the agent looks for the
+customer's own channel and whether the question is being worked there, instead of depending on a
+link someone saved in kb-org. `find_channels` matches the query's words against the customers'
+slugs and names (`orgs`, and the slugs the rules file threads under), the channels' names (and
+a Teams team's), and as the owner of the `site` and `repo` facts of their threads; a site
+(`owner/name`, or an Edge Delivery host) matches those facts exactly. Words every company name
+has ("Technologies", "Inc") are left out, and a channel is ranked by how many words matched,
+then by its sites, then by its latest activity; a word matches at the start of a word of a name
+("acme" is in aem-acme, not in megacme). A channel of an internal org or a vendor is found by its
+name or its org's, never by a site someone asked about there, and the agent's own channel and
+those the rules ignore never. Neither tool searches the messages: what they show is the names
+and facts the inbox has already, and the agent reads a thread with `read_any_thread`, which
+records it. The messages go through Clef's injection check
 like any others, and each thread an agent reads is kept in `agent_thread_reads`, since a
 transcript can be reset.
 
@@ -2144,14 +3750,17 @@ checked with the switch before each read, and a channel opspile has no details o
 Neither says that nobody outside is in the channel (guests are not recorded), so the org's type
 alone does not turn it on. The prompt asks the agent to keep other customers' details out of the
 knowledge bases and out of what it posts; that and the channel's other tools are not restricted
-by code: what it read can reach them, `bash` and the `browser` server included.
+by code: what it read can reach them, `bash` and its browser included.
 
 **`membership`.** Customers and colleagues ask in a thread for someone to be added to the
 channel, and on each platform the admins have a bot for that: admin-bot (teams-admin-agent) on
 Teams, AEM Ops Automation (the slack-automation relay) on Slack. A request that does not reach
 the bot properly (a plain "@admin, can you add …") is easy to miss, and the thread does not wait
 on us when Adobe posted last. With this tool the agent files it (`request_membership`,
-`src/agent/membership.js`), naming the author of the message that asked. Neither bot listens to
+`src/agent/membership.js`), naming the author of the message that asked: their name, and their
+mail address and platform account (opspile's person's, else the author's platform account's, as
+most customers are no person here), so the admins who approve see who asked as they do when a
+person asks the bot. Neither bot listens to
 other bots (Teams delivers no bot's message to another bot; the relay ignores bot messages), so
 opspile calls each through a service binding to its `MembershipRequests` entrypoint, on the same
 Cloudflare account; a named entrypoint answers no HTTP, so no secret is shared:
@@ -2167,6 +3776,43 @@ Cloudflare account; a named entrypoint answers no HTTP, so no secret is shared:
   otherwise.
 
 Nobody is added until it is approved, and the prompt says not to tell anyone otherwise.
+
+**`web_search`.** The agent has a computer, with a browser in an image that has one, but
+nothing that finds a page it has no address for. With this tool it searches the public web
+(`src/agent/websearch.js`), with the deployment's provider (`WEB_SEARCH_PROVIDER`): Microsoft
+Web IQ's Web Search REST API (`webiq`, the default where the secret `WEBIQ_API_KEY` is set,
+billed to its Azure subscription), or Cloudflare's Web Search API, through the Workers AI binding
+(`env.AI.websearch()`) and AI Gateway (`WEB_SEARCH_GATEWAY`, default `AGENT_GATEWAY`, which keeps
+no logs): Ceramic.ai (the default otherwise) and Linkup keep no data; Exa does. Cloudflare's
+search source and the rendering of results (numbered: title, address, a description cut to 600
+characters; Web IQ's passages, which answer the query, to 1,500) are the Agents SDK's
+`agents/websearch`, which imports nothing of `cloudflare:workers`; Web IQ's source
+(`createWebIQSearch`) answers in the SDK's shape, so both read the same to the agent. It answers with up to 10 results, not pages: the prompt
+has the agent read a page (playwright-cli or curl on its computer) before relying on it, and give `update_draft` only
+pages it read as sources. A query leaves Adobe, so the prompt has it write general queries in the
+product's words, never the customer's name, people, hosts, ids or the thread's words. The one
+exception is a company someone at Adobe asks about (in the sidebar, or the person a knowledge
+base's agent talks to): what it does, who owns it, how it relates to another. The agent searches
+its public name, alone or with general words, never with what the threads say of it, its ids,
+hosts or people. The
+Worker logs a search's team, provider, result count or error, never its query. A failed search
+(nothing to pay with, a rejected key, a timeout) tells the agent to fix the query, retry once,
+or go on without searching. Each search that answered is counted for COGS as the thread's
+(`web_search`, per provider, at the provider's list price). It is on for every team: new teams
+get it (`newTeams`) and migration 0077 switched it on for the teams before.
+
+**`resolve` and `label`.** The agent reads every message of its thread anyway, so it says what
+Clef would otherwise guess: `resolve_thread` marks the thread resolved (see [Resolved](#resolved)),
+`label_thread` corrects Clef's kind, urgency and next actor (`waiting_on` to the agent, as the
+inbox calls it), with a reason, and without arguments shows Clef's and its own. Both write
+`agent_labels` (`src/agentlabels.js`, one row per platform thread and question, on the entry's
+latest member, whose label the inbox shows), and nothing goes to the platform, so they work in
+the sidebar too. `applyAgentLabels` (`src/agentlabels.js`) puts the agent's answers in place of Clef's
+while they hold: a kind until the agent changes it (what a thread is about rarely changes, and
+Clef's answer can flip from one message to the next), the urgency and the next actor until a
+person posts after them (`threads.last_at`), when Clef reads the thread anew. The label lists the questions the agent's answers
+replaced (`agent`). The open inboxes hear of a change at once (the room's `thread` event), and
+the export sends it to ClickHouse. Both are on for every team (migration 0091, `newTeams`).
 
 ## COGS
 
@@ -2185,8 +3831,8 @@ operations per bucket, queue operations (three per 64 KB of a message: write, re
 AI tokens per model (the model's `usage`, else a quarter of the characters it was given),
 Vectorize dimensions queried and written, AI Search queries (full-text or semantic) and the tokens
 it ingests; and one Workers request per invocation (a queue batch's shared by its jobs). Code adds
-what no binding shows: an agent's Bedrock tokens and the time its global browser server's calls
-take. Whom the work was for is the scope's subject: a request's `thread` parameter, a queue job's
+what no binding shows: an agent's Bedrock tokens and the time its computer's browser
+connections take. Whom the work was for is the scope's subject: a request's `thread` parameter, a queue job's
 thread, a raw event's channel once it is filed (`processKey` names the customer and team its rules
 gave), an agent's thread (or `kb:<team>:<org>`), a room's team; else nobody, *shared*. At the end
 of the invocation (a request's after its `waitUntil` work too; a Durable Object's 15 seconds after
@@ -2308,10 +3954,17 @@ Authors are normalized to `{ kind: person | bot | system, org, staff }`.
 - On **Discord**, bots carry `author.bot`, webhooks `webhook_id`. Discord shares no email
   with bots, so a member is staff when they have one of the `DISCORD_STAFF_ROLES`
   (`identities.staff`), or when they connected the account in the inbox (OAuth `identify`),
-  which links it to their person: their posts move their watermark and count as theirs.
+  which links it to their person: their posts move their watermark and count as theirs. One
+  with a staff role that they did not connect the admin team links to them ("Adobe's accounts
+  that say nothing of whose they are", below).
 - On **Teams**, the support tenant invites everyone as a guest, staff included, so
   `userType` and `tenantId` do not distinguish staff from customers. The organization is
-  derived from the person's **mail domain** instead. Bot posts carry `from.application`; a
+  derived from the person's **mail domain** instead. The one exception is the tenant's own
+  admin accounts: members, not guests, whose user name begins `owner_` (`owner_` and the
+  initials of the Adobe person who uses one, mailed at the tenant's own domain). They are
+  staff by themselves (`isHostAdmin` in `src/lookup.js`, `identities.staff`), and the admin
+  team says whose each is ("Adobe's accounts that say nothing of whose they are", below), so
+  it shows as that person. Bot posts carry `from.application`; a
   bot (`applicationIdentityType: bot`) keeps its id as its identity, webhooks and connectors
   stay anonymous.
 
@@ -2334,7 +3987,10 @@ person's, the first by:
 2. in its channel at all, then of its own workspace at all: a mention reaches someone in the
    channel, and the inbox can add a colleague of its own workspace to it (an account of another
    workspace it cannot);
-3. a full member before a guest (`identities.guest`, migration 0061: Slack's `is_restricted` or
+3. their own account before one the admin team linked to them (`identities.linked_at`: a host
+   tenant's admin account, which they use only to run the tenant, or a Discord account with a
+   staff role they never connected), then a full member before a
+   guest (`identities.guest`, migration 0061: Slack's `is_restricted` or
    `is_ultra_restricted`, Graph's `userType`; NULL until the account is looked up again);
 4. the one that posted in the last 90 days, then the one with the most messages in the last 180,
    in the most channels, that posted last, and by id.
@@ -2352,17 +4008,67 @@ what opspile knows about the person: name, picture, platform account, job title 
 (Slack profile title, Graph `jobTitle` and `companyName`, cached with the identity), mail
 domain, ops teams, the channel's org, and above all who they are to us:
 
-- **Adobe**: staff (a person marked staff, or a mail domain in `STAFF_DOMAINS`);
-- **Partner**: their mail domain, or a parent domain, is in the `partner_domains` table
-  (agencies and system integrators, maintained by hand, like the rules);
+- **Adobe**: staff (a person marked staff, or a mail domain in `STAFF_DOMAINS`); a bot an
+  admin said is Adobe's is staff too, but its card still says **Bot**;
+- **Partner**: their mail domain, or a parent domain, is a partner's (agencies and system
+  integrators; "Partner domains" below), and the card names the partner;
 - **Customer**: anyone else; the card notes when their domain is not the usual customer
   domain of the channel, which is how an unlisted partner shows up;
+- in a public channel ("Public channels"), **Customer: Acme** for someone of a customer's own
+  mail domain (`customer` on the card, `customerDomains`), and **Community** for anyone else
+  outside Adobe and its partners;
 - **Bot**.
 
-A list of partner domains is explicit and never wrong, where guessing from "not staff and not
-the customer's domain" would call a customer's second domain a partner. The cards travel with
-the inbox and thread payloads (`profiles`, keyed by `messages.author_key`), so a hover costs no
-request, and emails stay on the server.
+The cards travel with the inbox and thread payloads (`profiles`, keyed by
+`messages.author_key`), so a hover costs no request, and emails stay on the server.
+
+**Partner domains.** Which mail domains are a partner's is one list, `partnerDomains` in
+src/partners.js, that everything which tells people apart asks (the cards, mentions, a customer's
+people, its "Who" and `partnerCount`, the ClickHouse export's `relation`), never `partner_domains`
+itself. It is found, not kept by hand: the usual mail domains of the people outside Adobe who
+post in the threads of each org of type `partner` (`derive`):
+
+- a partner's first domain is the one that names it (its slug or display name, as `acme.co.uk`
+  names `acme`), else the one most of its people write from; its other domains count when nearly
+  as many of its people (half the busiest one's) write from them, or when they have the first
+  one's name (`acme.co.uk` beside `acme.com`);
+- free mail, Microsoft tenant and staff domains never count (`orgDomain`, src/favicons.js);
+- a customer's own domain is never a partner's: one that names a customer in whose threads its
+  people post; one whose org part is that of a customer's icon (`orgs.icon`, a domain or the host
+  of its URL, `iconDomain`), since a subsidiary's people may write from its parent's domain; and,
+  for any but a partner's first domain, one most of a customer's people write from. A partner's first domain may well be the domain most people in a customer's channel write
+  from, where only the partner's people post: that is how partners work, so it stays;
+- a domain two partners have is the one's with more of its people there;
+- a domain of a partner's very name (its name part is the slug's or the display name's, `acme.com`
+  of `acme`) is that partner's wherever its people post, though none of them posted in the
+  partner's own threads, unless it names a customer they post for or is a customer's icon's: in a
+  customer's channel they would else be the customer's people;
+- a domain that names one other partner org and not the partner whose people write from it is the
+  one's it names, though that one's people post nowhere the inbox reads their mail (Slack Connect
+  hides it): an agency that was bought still has its own org, its channels and its people, who
+  write from the parent's domain, and the parent's customers are not the agency's;
+- each is named by its org's display name.
+
+Guessing from "not staff and not the customer's domain" would call a customer's second domain a
+partner; this starts from the orgs said to be partners instead, and leaves out what names a
+customer. It reads every message, so an isolate keeps it an hour; what changes it (an org's
+name, type or icon, a merge, an edit of `partner_domains`) forgets it in its own isolate, and the
+others find it again within the hour (docs/STATE-MACHINES.md, "Partner domain"). The rows of `partner_domains` (migration 0109) are the admin team's over it,
+under **Partner domains**, a tab of Customers' review (`GET`, `PUT`, `DELETE
+/api/admin/partner-domains`), which adds nothing to its count: a
+domain added by hand with a partner org or a name, a found one renamed or given to another partner,
+and one that is not a partner's (`excluded`), which its subdomains are not either unless one of
+them has a row of its own. The page also lists the domains left out as a customer's, each one
+click from being the partner's.
+
+For an Adobe person, the card is also who they are on their teams, as their card on their team's
+overview has them (`person` of `GET /api/person`, src/person.js `personCard`; both cards are drawn
+by ui/person.js): the best name, picture and title of any of their accounts (src/personsql.js),
+their ops teams with their role on each (a link to the team's overview), their profile on each team
+(their Contact in its knowledge base, for whoever may read it), and how often they post, their
+expertise and products (each a link to the Topics page) and key customers, as their busiest team's
+overview counts them (kept there five minutes, so the first card of a team's member costs that
+team's numbers once).
 
 Below that, the card says who the person is in the thread's knowledge bases: the description
 of their Contact (`contacts/<first-last>.md`, see "Layout" under the knowledge bases) in its
@@ -2377,6 +4083,397 @@ blob and isolate. Bots have none. A click on someone's picture in the thread or 
 card's *What should I know about …?*) opens the thread, enters its sidebar and asks its agent
 that, where the thread has an agent and the viewer may talk to it; elsewhere the click does what
 it did.
+
+**Customer cards.** The same card, for a customer: hovering over (focusing, or tapping) its icon
+or name wherever the inbox shows them (`data-org`, ui/inbox.js "customer cards") shows it. That is
+the thread's icon in its header, the customer in a row of the list, its icon in the Customer
+filter and in the personal view's column and headings, and the badge on the picture of one of
+its people (their mail domain: the thread's customer's usual one or its icon, else the icon the
+admin team set for another customer on the list; one matched to none keeps its tooltip). It says what the inbox has of the customer at once: its
+name, icon and type, how many of its threads are on the list, wait on us and are unread, the
+thread's channel (with its link on the platform, from the header) and its latest activity. Then
+the numbers of its overview (`GET /api/customers/profile`, "Customer overview"), asked when its card first
+shows and kept five minutes in the page: how much it says, week by week, how soon it is
+answered, its people, the teams that work it, and what its threads are about and show, each a
+link to the Topics page. Its foot leads to its overview in Customers (*Open profile*) and picks
+it alone in the filters (*Only its threads*). A person's card links their channel's customer to
+its overview too, and so does the foot of the header's tech stack dropdown. A tap on a filter's
+icon still filters, and Enter on the header's icon still opens the thread on its platform.
+
+### Team overview
+
+A team's page in Teams opens at its overview (`ui/team.js`, from `GET /api/teams/profile?team=`,
+`src/teamprofile.js`), which every internal user sees, as the Topics page: the members of the ops
+teams and Adobe's people on none. What changes the team (its members, rules, channels and the
+technologies it follows) is its second section, **Manage** (`view=manage`), for its managers and
+the admin team; its agent's sections follow. The overview is the team's last 26 weeks, from D1:
+
+- the **team's threads**, its inbox's conversations (filed under it, in the channels shared with
+  it, and those that show a technology it follows) with a message in the window, week by week:
+  what Adobe's people said in them and what the customers and partners said, as a chart; and
+  over it its numbers, each with a drawing of its own (`Overview.stats`, ui/overview.js): its
+  people as faces as big as what each said, its customers' shares, the customers' part against
+  Adobe's, its threads day by day (how many were active each day, `activity.days`, as a
+  contribution graph) and its collaborators by team;
+- its **people**, a card each: their picture and title (their accounts'), role, how often they
+  post (anywhere in the inbox, a line of their weeks), and what sets them apart: Clef's areas and
+  technologies of their threads, ranked by how much more of a member's messages are in the
+  threads with one than of the team's (the lift) times the log of its threads, so a tag everyone
+  has counts for its threads alone; a tag of one thread only where there is nothing more. Their
+  key customers are those they posted the most for, and their profile on the team, their Contact in
+  its knowledge base, is under their name (for whoever may read it). Those who did not post are
+  listed after;
+- its **customers** (no internal or public org) and its **collaborators** (Adobe's people not on the team,
+  a person's accounts as one, no workflow or bot account), ranked by what they said in its
+  threads, each with their weeks;
+- its **technologies**, by the layer of a stack: those it follows, those of its catalog, and the
+  others Clef sees most in its threads, each with how many of its threads show it;
+- its **knowledge base**, its entries by type (`kb_concepts`, the catalog left out), listed for
+  whoever may read it (src/kbaccess.js) and counted for everyone else, and its stack drawing
+  where someone drew one at `stack.md` of the team's knowledge base (`GET /api/kb/stack?team=`).
+
+Names, numbers, pictures and titles only: no message text and no mail address. A team's numbers
+cost the biggest team under a second of D1, and are kept five minutes per isolate.
+`GET /api/teams` lists every team, for the list beside it.
+
+### Customer overview
+
+A customer's page in Customers opens at its overview too (`ui/customer.js`, from
+`GET /api/customers/profile?org=`, `src/orgprofile.js`), every internal user's as a team's is: a
+starting point for anyone at Adobe who is about to talk to the customer. Both overviews are drawn
+with `ui/overview.js` (`Overview`) in `ui/spectrum-overview.css`. What changes the customer (who
+follows it, its channels; its name, icon, type and merges for the admin team) is its second
+section, **Manage** (`view=manage`), for the members of the ops teams; its agent's sections follow.
+Its title has a Follow of your own (its conversations in your personal view) and a link to its
+threads in an inbox of yours, where one has them. The overview is the customer's last 26 weeks of
+channel threads filed under it, from D1:
+
+- its **threads**, week by week, as a stacked bar chart (where a team's has an area chart), broken
+  down by the focus picked above it: who said it (its people, the partners', Adobe's), which of
+  its people, the team a thread is filed under, its likeliest area (Clef's surest), technology,
+  or its channel (`breakdowns`; a thread is in one part of each, the biggest seven parts shown and
+  the rest as one); over it its numbers, and how soon Adobe **answers** a thread its people
+  start: the
+  median wait from their first message to Adobe's first post, over the threads started in the
+  window (with how many of those have an answer, and every wait: its numbers draw each a dot);
+  its numbers, over the chart, each have a drawing of their own (its people's faces, the part of
+  each side, its weeks as cells, Adobe's people by team), as a team's do;
+- its **people**, a card each: their picture and title, a partner's marked (its mail domain
+  another partner's than its own, src/partners.js `partnerDomains`, as the profile cards have it),
+  how often they post (in its threads, a line of their
+  weeks), what they ask about (Clef's areas and technologies of their threads, ranked by their
+  lift over the rest of its people, as a team's members are), and their profile there: their
+  Contact in its knowledge base (`contacts/`, found by their name as src/kbpeople.js finds one),
+  its description under their name, for whoever may read it. The cards are drawn by
+  `ui/person.js`, as a team's members' and the inbox's profile cards are;
+- **Adobe's people** in its threads (a person's accounts as one, no workflow or bot account),
+  ranked by what they said there, with the teams they are on; and the **teams** that work it: by
+  what their people said there, with the channels filed under or shared with each, and whether
+  it follows the customer (a follow rule);
+- what its threads are **about** (Clef's areas, by how many threads), and its **channels**, by
+  what was said in each, with the team it is filed under and those it is shared with;
+- its **technologies**, by the layer of a stack: those Clef sees most in its threads, and the
+  parts of its stack drawing (`org_stacks`) for whoever may read its knowledge base;
+- its **knowledge base**, its entries by type (`kb_concepts`, the catalog left out), listed for
+  whoever may read it (src/kbaccess.js) and counted for everyone else, and its stack drawing
+  (`GET /api/kb/stack?org=`);
+- its **partners**, the agencies and system integrators that work for it (confirmed and likely,
+  src/orgpartners.js `partnersOf`) or whose people posted in its threads, each a link to its page
+  with what links them ("Partners").
+
+A vendor's page is the other way round ("Vendors"), and a partner's has its customers, its people
+wherever they post and what waits on Adobe first ("Partners").
+
+Names, numbers, pictures and titles only: no message text and no mail address. The biggest
+customer's numbers cost under a tenth of a second of D1, and are kept five minutes per isolate.
+`GET /api/customers` lists every customer for Adobe's people on no team, who do not get
+`/api/admin/orgs`.
+
+### Vendors
+
+An org of type `vendor` (`orgs.type`) is a company whose products or services Adobe uses: a CDN,
+an observability or a translation service, a model provider. In its channels Adobe is the
+customer: the team asks, and the vendor answers, investigates and fixes. So:
+
+- **Clef** reads a vendor's thread with its header saying so (`Vendor: <slug> (Adobe is its customer
+  here)`) and its people as the vendor's, and is asked `VENDOR_QUESTIONS` (src/label.js): who acts
+  next is Adobe (reply, test, send logs, decide) or the vendor (answer, investigate, fix,
+  escalate), urgency counts production impact at Adobe or its customers, and a ✅ by Adobe staff
+  says it is resolved. The same questions in the same order: the topics were measured with a
+  customer's. Its thread agent is told so too.
+- **Who it waits on** (`waitingOn`, src/threads.js) is the vendor, `vendor`, whenever it waits on
+  someone outside Adobe: labels from before say `customer`, and need no relabel. The inbox's
+  status pile for one that waits too long is the silent one, its hint "chase them".
+- Its **status posts** (a status page's bot, its newsletters) are alerts when an admin says their
+  bot only posts alerts (`identities.alerts`, src/alertbots.js): nobody is waited on in them.
+- Its **page** in Customers is the customer overview the other way round (`vendorNumbers`,
+  src/vendors.js; ui/customer.js): its numbers are its open cases (its conversations of the window
+  that are not resolved and wait on the vendor or on Adobe), how soon it **answers** what Adobe
+  starts (the median wait from Adobe's first message to its first post; `answers.by` is `them`),
+  its status posts and the customers on its products; then its open cases and its latest status
+  posts, the customers whose threads of the window show one of its products (a technology whose
+  catalog id is its slug or under it: `fastly/cdn` is Fastly's, as `products/<vendor>/` names
+  it, src/catalog.js), by how many, and those of their threads that Clef says wait on a third
+  party. The rest is a customer's.
+- A team's **Vendors** section in Teams (`view=vendors`, `GET /api/teams/vendors?team=`,
+  `teamVendors`; `TeamView.vendors` in ui/team.js), everyone's as the overview: the vendors the
+  team files a channel of, shares or follows one of, whose threads its members posted in, or whose
+  products its customers' threads show, each with its open cases, how soon it answers and whether
+  its channels are in the team's inbox; a vendor's whose are not has a Follow for the team's
+  managers and the admin team (`PUT /api/admin/org-follows`, a follow rule: every channel of it
+  shared with the team). Above them what waits on a vendor in the team's inbox (the vendors' cases,
+  and its customers' threads that wait on a third party), and the vendors' cases that wait on
+  Adobe.
+
+Who files a vendor's channel is the team that owns what Adobe uses it for: the one that is paged
+when it breaks, or that builds the integration; the others follow it. A vendor Adobe is buying or
+trying has a champion rather than a team: they follow it themselves. The counts on these pages are
+everyone's at Adobe; a thread's title and its link only for whoever works it, on the team it is
+filed under or one it is shared with (`visible`, src/vendors.js), so the lists say how many more
+there are. Every conversation of the window that may wait on someone is read for the cases, however
+many newer ones are resolved. A team's vendors are kept five minutes per isolate, as its overview,
+and forgotten when a team starts or stops following one. A partner's page ("Partners") lists what
+waits on Adobe the same way (`entriesOf`, `listRow` and `forViewer` of src/vendors.js), in its
+channels and in the customers' threads its people are in.
+
+## Customer portal
+
+Some customers can use neither Slack nor Teams with Adobe: their company allows no chat tool
+but its own. The **customer portal** is where the inbox reaches them: a second Worker
+(`src/portal/worker.js`, deployed as `helix-opspile-portal`, `-test` for the test one) with its
+own page, its own D1 database (`portal/migrations`) and nothing else. To the inbox it is a
+**platform**, as Slack is, with the source `portal`:
+
+```mermaid
+flowchart LR
+  C[Customer<br/>signed in by Access] --> PW[portal Worker<br/>page, API, D1]
+  PW -- "events (OPSPILE: PortalSource)" --> IN[inbox Worker<br/>pile 1, then the queue]
+  IN -- "post, edit, react, typing, open,<br/>decline, resend (PORTAL: PortalPlatform)" --> PW
+  PW -. "status (OPSPILE: PortalSource)" .-> IN
+```
+
+Neither Worker reads the other's database. Each reaches the other through a service binding to
+one named entrypoint, which only a Worker of the same account can bind: the portal's `OPSPILE` is
+the inbox's `PortalSource` (`src/portalentry.js`: `events`, `technologies`, `status`), the inbox's `PORTAL`
+the portal's `PortalPlatform` (`src/portal/platform.js`). Both bindings are optional, so either
+Worker deploys without the other: an unbound portal keeps what happens in it in its outbox, and
+an unbound inbox shows the portal's threads it has, and says that it cannot post there.
+
+**Embedding hosts.** [Portal integration v1](PORTAL-INTEGRATION.md) is a separate service-only
+path on this Worker. Access's verified service identity selects a registered host; a short-lived
+assertion identifies its enrolled tenant and member, or, for a host that registered a trusted
+identity provider (Adobe IMS), the user's own token and the provider's profile do. Each host/customer has one reserved channel
+ID for team/customer routing and its own `<channel>.embed.invalid` lobby, never a sign-in domain.
+It uses the same messages, inbox outbox and staff reply binding as the standalone portal. A
+separate resumable feed contains public invalidations only, not the outbox or staff status. A
+user-token host's caller who is not enrolled becomes an access request in the portal's database,
+which the admin team approves or declines in its inbox as it does a lobby's
+([access requests](PORTAL-INTEGRATION.md#access-requests), `src/integrationrequests.js`).
+
+**Signing in.** The standalone portal is behind its own Cloudflare Access application, whose only login
+method is a one-time code by mail: a customer signs in with their work mail address, with no
+account at any chat tool. The Worker verifies Access's token itself (`src/access.js`) and takes
+only the mail address from it. `PORTAL_DOMAINS` lists the mail domains the portal is open to;
+nobody else gets past its API, whatever Access lets in.
+
+**Lobbies.** A customer is its mail domain, and its **lobby** is where its people wait for a
+channel (`lobbies`, `members`). The first of a domain to sign in founds the lobby. Members
+invite colleagues **of the same domain** by mail address; an invited colleague is in the lobby
+from then on and joins when they first sign in, and anyone else of the domain is told whom to
+ask. (Nothing is mailed: the member tells them where the portal is.) In the lobby they say
+what the company is called, pick the **technologies** they use, and say what they need. The
+technologies are Adobe's of every team's catalog (`tech_stack.portal`, set for each of Adobe's
+products and features, src/catalog.js: Edge Delivery, Universal Editor, Assets, …, not the CDNs,
+code hosts and categories the stack also has), each feature on its own under its product, each
+id once as it is asked where no team's own replaces it (`portalTechnologies`,
+src/portalsource.js), which the portal asks the inbox for and keeps for an hour
+(`src/portal/tech.js`). A lobby's picks that a catalog move renamed are its new ids on both
+sides: the inbox stores them so when the lobby's event arrives, and the portal rewrites its
+lobbies when it refreshes the list, which names the ids each technology had (`moved_from`). Then they
+**ask for a channel**.
+
+**Portal requests.** A lobby that asked reaches the inbox as a `lobby` event, a snapshot of it
+(what it picked, its note, its people), again with every change. The normalizer keeps the
+latest as one row per lobby (`portal_requests`, `src/portalrequests.js`; an event older than
+the row's `seq` changes nothing, so a replay does not either). The admin team sees each as a
+thread of its inbox ("Requests as threads"), with the channel requests, and counted with them in
+the header.
+A request names the teams that **follow** a technology the lobby picked (`team_follows`): their
+managers see it on their team's page.
+
+- **Open channel** (`POST /api/admin/portal/open`): the portal makes the channel, and every
+  member of the lobby is in it (a lobby's channels are all its members'; most lobbies have one).
+  In the inbox the channel is filed **by hand** under a team and a customer (two `channel_id`
+  rules with priority 10, as a manual assignment's), shared with more teams (`channel_teams`),
+  and the customer gets a row in `orgs` when the inbox has not met it (named as it calls itself,
+  with its domain's icon). The **welcome message** is posted in the channel as whoever opens
+  it, which starts its first thread. The admin team picks any team and customer; a manager opens
+  it for a team they manage that follows what the lobby picked, under the customer the inbox
+  suggests. A lobby that has a channel can get another the same way.
+  A customer that uploaded a logo has it as its icon there.
+- **Decline** (`POST /api/admin/portal/decline`, the admin team): with a reason the customer
+  reads in the lobby. They may ask again, which opens the request again.
+
+**In the channel.** The customer's page is the personal inbox without the rest: the lobby's
+channels (a picker when there is more than one), a channel's threads with what is new to you
+and what Adobe resolved, and the thread picked, with a reply box. A thread is its first message
+(its first line is the title) and the replies to it, shown as a **conversation**: the
+customer's own people's messages on the right, a bubble each (one's own without a name),
+Adobe's on the left, people and the app alike. Messages are markdown, and one's own can be
+edited and deleted. Reactions are emoji; Adobe's ✅ on a thread's first message shows it
+**resolved**, and writing again reopens it in the inbox as on any platform. The page asks for
+the channel's threads every 15 seconds while it is on screen, and for the open thread's
+status every four (see [Listening and the next answer](#listening-and-the-next-answer)),
+which says when the thread changed: only then is it loaded again.
+
+**Individual channels.** A channel's customers see each other's threads: a company's people work
+together. Where each end user is their own customer (a product's users, of one organization or of
+none, who ask each for themselves), the admin team makes the channel **individual** (portal
+migration 0008, `channel_audiences`; [Individual channels](PORTAL-INTEGRATION.md#individual-channels)):
+each customer sees only the threads they are in (`thread_members`: they started it, wrote in it, or
+Adobe added them), and hears nothing of another's, neither its title nor that it is there. Every
+customer read of the portal asks it (`theirs` in `src/portal/store.js`): a channel's list, a thread,
+its status and who writes in it, its files, reactions and replies, whom one can mention, and the
+integration's list, thread, badge, unread counts and feed with its watermark
+(`src/portal/integration-read.js`). It is the channel's, not its org's: who sees what is the
+portal's to enforce, which never reads the inbox's orgs, and a channel filed under Adobe's own,
+internal org may be individual without that org becoming anything else (see "Partners" and
+"Vendors" for what an org's type is). One org holds the whole channel, as any: nobody is an org of
+their own. Adobe's side is as in any channel: its teams see, label, search and work every thread
+in their inbox. The events of an individual channel say so (`channel.audience`), and setting it
+sends a `channel` event.
+
+**Writing** there is **rich text** (`ui/richtext.js`): what is bold is bold in the box, a list
+is a list, and nobody types markdown's marks, though a line that starts with `- `, `1. `, `> `
+or three backticks becomes what it would be in markdown. The box takes Slack's formatting
+shortcuts, with a toolbar for them (`ui/writing.js` names the keys, as for the inbox's reply
+box). **Enter sends** and Shift+Enter starts a new line; on a touch screen, whose keyboard has
+no Shift+Enter, Enter is the new line and the button sends. The page sends the box's HTML,
+and the portal makes markdown of it (`src/portal/richtext.js`) through the syntax tree that
+Teams' HTML goes through (`src/html.js`): what was typed stays as typed (a `*` is escaped),
+and nothing of the HTML is kept, no image, no script, no link but to the web or a mail address.
+A message is stored, delivered and shown as markdown, as before; `POST /api/post` still takes
+`text` (markdown) from anything that is not the page. `@` suggests the people of the channel
+(the lobby's who signed in, and the
+Adobe people who wrote there), and a message **mentions** those whose `@Name` it has
+(`messages.mentions`): the thread says "@ you" in their list until they read it. `:` suggests
+emoji, by the names the inbox knows, and a `:name:` typed out shows as its emoji. **Files** are
+attached, pasted or dropped, up to ten of 20 MB a message; each is uploaded when it is added
+(`POST /api/upload`, `files`) and named by the message that is then sent, and one no message
+took is deleted after a day. A message shows its images where they are (their size read from
+their bytes, so the page keeps their space) and larger on a click, its video and audio in a
+player, and its other files as cards to download.
+
+**Pictures and logos** (`src/portal/files.js`). Everyone has a face beside what they write: the
+picture they uploaded (in the lobby, where they wait, or later from their menu), else their
+Gravatar, else their initials; Adobe's people the picture the inbox knows of them (their Slack
+one first), which the inbox names with everything it does there. The portal fetches Gravatar's
+and Adobe's pictures itself (`GET /api/avatar/<account>`), so a customer's browser asks nobody
+but the portal. A customer has a **logo**, uploaded by any of its people, which stands beside
+the channel's name; the inbox shows it on the customer's request, and makes it the icon of a
+customer it had not met when a channel is opened. Pictures and logos are made small in the
+browser (256 and 512 pixels) and are PNG, JPEG, WebP or GIF, never SVG.
+
+**What people upload is served so that a browser runs none of it**: with `nosniff` and a
+content security policy that loads nothing, shown in the page only when it is a raster image,
+a video or audio, and as a download (`application/octet-stream`) otherwise, in the portal and
+through the inbox alike. The bytes are in the portal's R2 bucket (`FILES`:
+`files/<lobby>/<channel>/<id>`, `avatars/<account>/…`, `logos/<domain>/…`).
+
+**In the inbox** a portal channel is a channel like any other: its threads are in the inboxes
+of its teams, labeled, re-threaded, searched and worked by thread agents. What differs:
+
+- **Nobody connects an account.** The inbox says who acts, by their mail address, and the
+  portal takes its word (the binding is the trust): a person's reply, their edit of it, their
+  reactions and ✅ are theirs in the portal, where Adobe's people show with an **Adobe** badge.
+  The account id is a hash of the mail address (`src/portal/ids.js`), which both Workers work
+  out, so the inbox knows a person's account there without asking.
+- **The app** posts and reacts there as a bot account, *Enterprise Support* (the agents'
+  `post_message` and `add_reaction`, and `POST /api/post/app`, where **Post messages** is on).
+- **The tenant is the lobby**, the customer's mail domain: accounts, mentions and the people a
+  reply can name stay within one customer. The channel is `shared` (customers are in it), so the
+  agents' `any_thread` tool, which is for internal channels, is never on in it; `org_threads`
+  is, as in the customer's other channels: its agent reads the org's Slack, Teams and Discord
+  channels, and theirs the lobby, never another org's.
+- **Files stay in the portal.** A message's event names its files by their address there
+  (`https://<portal>/api/file/<id>/<name>`), and pile 2 lists them as every platform's files
+  are. Nobody of the inbox can open that address, so the inbox opens it through the portal's
+  Worker (`PORTAL.file`), for the thread's people: images through the media proxy, video and
+  audio in the player, text in the preview, anything else as a download (`GET /api/file/open`),
+  and agents with `read_file`. The portal opens a file only for the channel of the thread it is
+  asked for, and only a portal message's links are portal files: a link to a Slack or Teams
+  file that a customer typed is text, as is a portal file's address posted elsewhere
+  (`threadFiles` in `src/agent/files.js`). An image in a customer's markdown is a link.
+  Files the inbox sends (a person's reply, the app's) are uploaded to the portal first
+  (`PORTAL.upload`), up to ten of 10 MB.
+- **Mentions are by name.** The portal's event names whom a message mentions, with their
+  accounts, so the inbox knows them before they have written; a lobby's event makes its people
+  accounts too, so a reply from the inbox can name one who has not written yet. What the inbox
+  sends mentions whoever's `@Name` it has, as the portal reads any message.
+- **Pictures.** A customer's uploaded picture is their account's in the inbox, through the
+  portal's Worker (`GET /api/portal/avatar/<account>`); without one, their Gravatar.
+- **No link to the message**: the portal is its customers', so pile 2 keeps no `permalink`
+  nobody of the inbox could open.
+- **A reply whose thread the inbox does not have** is backfilled by asking the portal to tell of
+  the thread again (`resend`).
+
+**Delivery.** Every change the inbox has to hear of is written to the portal's `events` table
+in the same batch as the change, then sent through `OPSPILE.events` behind the request that
+made it, and by the portal's cron (every other minute) for what that left: at least once, the
+inbox's pile-1 key making a second delivery the same object. Delivered events are deleted after
+a week.
+
+### Listening and the next answer
+
+A customer who writes into a portal sees nobody: no presence, no channel full of people. The
+thread says what Slack would have shown them, and no more. The portal asks the inbox
+(`OPSPILE.status`, `src/portalstatus.js`) for **Adobe's side** of the thread on screen, at most
+once in ten seconds per thread however many pages ask, and adds what it knows itself
+(`GET /api/status`):
+
+| The page shows | From | What it is |
+|---|---|---|
+| "14 people at Adobe are listening" | the inbox | The staff who have the thread in their inbox: the members of its teams (the one its channel is filed under, those the channel is shared with, those that follow a technology it shows, `teamsOf`) and the people who follow such a technology themselves, each once. For a thread about to be written, the channel's teams. **A number, never who**: no name, no team |
+| "Usually answered in about 2 hours" | the inbox | The typical wait until Adobe's next post, from the wait model below. While a customer waits, for their wait (and gone once the wait is past twice that, or the thread is resolved: a "thank you" nobody answers has no estimate); otherwise for a reply written now, or a new thread |
+| "Grace Hopper is writing" | the portal | Someone at Adobe types a reply in the inbox, which tells the portal every four seconds (`POST /api/typing`, `PORTAL.typing`, the `typing` table); it shows for eight seconds after the last word, and goes when their message arrives. Only portal threads are told: Slack and Teams take no such word from an app |
+| "Adobe's agent is working on an answer" | the inbox | The thread agent's turn is `working` (`agent_live`), and not on a sidebar message, which is the team's own. Only that it works: what it does stays in the inbox |
+| "Adobe is reviewing a draft of the answer" | the inbox | The thread has a draft (`drafts`), an agent's or a person's, while the customer waits. Not what it says |
+
+Nothing of this is in pile 1 or pile 2: it is the present, asked for, and gone when nobody asks.
+It is a thread's own people's: the portal answers only for a thread of the channel asked for,
+which is one of the caller's lobby (`404` otherwise, as `GET /api/thread`), and asks the inbox
+nothing before it knows that.
+
+**The wait model** (`src/wait-model.js`) estimates the customer's **wait**: from their first
+message since Adobe's last post to Adobe's next post in the conversation. That is not the time
+an expert takes to answer a mention (`src/mention-model.js` measures that one for the expert
+list, on the same clocks): a customer does not care who answers. Two things say most about a wait:
+
+- its **phase**, how the conversation stood when the customer wrote: `new` (Adobe has not
+  written yet), `live` (Adobe wrote in the last 30 minutes), `day` (in the last day) or `old`.
+  A live conversation is answered in minutes, a new thread in hours;
+- the **team** the channel is filed under, and its **clock**: the hours and weekdays its people
+  post in, so that a question at their night waits for their morning.
+
+It is the response model with other keys, unchanged: the phase where that has the channel, the
+team where it has the person, minutes counted on the team's clock and both shrunk towards
+everyone's, so a team with few waits says what everyone's say. The inbox fits it from the last
+180 days' conversations and keeps it for an hour per isolate; after that it answers with the
+one it has and fits the next behind the answer, so only an isolate's first status waits for
+the read.
+
+Checked against production, walking forward a day at a time over four weeks (1,836 waits,
+`npm run response:waits`), it beats one number for everyone: the mean error on the log of the
+minutes is 2.00 against 2.35 (−0.35, 95% interval −0.44 to −0.29, resampled by channel), and
+58% of waits end within the estimate. The error is still large, a factor of seven, because
+most of what decides a wait is not in the data: whether the question is hard, whether the one
+who knows is at lunch. So the page says "usually" and "about", rounds to what a person would
+say (a few minutes, about an hour, about a day), and never counts down. Per-channel and
+per-person variants did no better; the phase alone does most of it (2.01).
+
+**What it does not do yet.** Nothing is mailed: not the invitations, and not a notice that
+Adobe answered or mentioned somebody, so a customer sees an answer when they look. No channel
+is opened without a lobby's request, and none is closed or renamed.
 
 ## Platform facts that shape the design
 
@@ -2401,6 +4498,11 @@ These were measured against the live APIs during exploration.
   the conversation of the message it answers, and a thread started from such a reply joins it
   too. Message ids are snowflakes (ms since 2015 shifted by 22 bits), unique across Discord.
   Joins, pins, boosts and "started a thread" notices are not stored in pile 2.
+- **The customer portal is two-level by design**: a thread is its first message, and replies
+  carry its id (`root`); a reply to a reply is a reply in its thread. Message ids are `m`, the
+  time in base 36 and six random digits, unique across the portal; a message's version is the
+  number of its changes (`rev`), not a time, so an edit in the millisecond it was posted in is
+  still newer.
 - **Alert channels** consist entirely of bot posts without replies. They are filed as
   `kind: alert` and counted, rather than shown as individual unread threads.
 
@@ -2439,6 +4541,12 @@ Two new apps:
   reaction timed when it was first seen), a message no longer there as a deletion. The object
   stores each thread's parent, each reply's root, the last message id per channel and thread,
   and its view of the last day's messages; the cron pokes it, so a stopped alarm restarts.
+
+- The **customer portal** needs no app: it is a Worker of this repository, which delivers its
+  events to the inbox's `PortalSource` entrypoint (see [Customer portal](#customer-portal)).
+  The events carry the channel's name and the author's name and mail address, so the
+  normalizer's lookups take them from the event (`channelHint` and `authorRef` in
+  `src/normalize.js`, `src/lookup.js`) and a replay asks the portal nothing.
 
 **Failed jobs.** The NORMALIZE queue retries a job five times. Its last failure is recorded in
 `dead_jobs` (migration 0050, `src/deadjobs.js`; ids and keys only, kept for 30 days), which

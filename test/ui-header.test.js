@@ -21,7 +21,7 @@ const ORIGIN = 'https://pile.example';
  * ui/header.js on a page at `path`, with a browser tab's sessionStorage and history, and the
  * browser's localStorage (`local`).
  */
-function tab(path, storage = new Map(), local = new Map()) {
+function tab(path, storage = new Map(), local = new Map(), preset = {}) {
   const location = new URL(path, ORIGIN);
   const element = () => ({
     dataset: {},
@@ -30,12 +30,19 @@ function tab(path, storage = new Map(), local = new Map()) {
     querySelector: () => null,
     querySelectorAll: () => [],
     closest: () => null,
+    matches: () => false,
   });
   const go = (url) => {
     const u = new URL(url, location.href);
     location.href = u.href;
   };
+  location.assign = go;
   const listeners = {};
+  // The <header>'s own listeners (its clicks), by type.
+  const header = { ...element(), on: {} };
+  header.addEventListener = (type, fn) => {
+    header.on[type] = fn;
+  };
   const elements = new Map();
   const root = { dataset: {} };
   const metas = [
@@ -43,6 +50,9 @@ function tab(path, storage = new Map(), local = new Map()) {
     { dataset: {}, media: '(prefers-color-scheme: light)' },
   ];
   const byId = (id) => {
+    if (id in preset) {
+      return preset[id];
+    }
     if (!elements.has(id)) {
       elements.set(id, element());
     }
@@ -65,9 +75,10 @@ function tab(path, storage = new Map(), local = new Map()) {
     matchMedia: () => ({ matches: false }),
     addEventListener: (type, fn) => { listeners[type] = fn; },
     document: {
+      createElement: (tag) => ({ tag, innerHTML: '', addEventListener() {} }),
       documentElement: root,
       getElementById: byId,
-      querySelector: element,
+      querySelector: (sel) => (sel === 'header' ? header : element()),
       querySelectorAll: (sel) => (sel.startsWith('meta') ? metas : []),
     },
   };
@@ -82,7 +93,32 @@ function tab(path, storage = new Map(), local = new Map()) {
     metas,
     listeners,
     local,
+    header,
   };
+}
+
+/**
+ * A click on Inbox in the header, on its number (`count`) or on its name; says whether the
+ * page took it (the browser follows the link otherwise).
+ */
+function clickInbox(t, { count = true, asks = false } = {}) {
+  const a = {
+    dataset: { page: 'inbox' },
+    target: '',
+    hasAttribute: () => false,
+    getAttribute: () => '/inbox?team=edge',
+    closest: () => null,
+  };
+  const badge = { hidden: false, classList: { contains: (c) => asks && c === 'asks' } };
+  let prevented = false;
+  t.header.on.click({
+    button: 0,
+    target: {
+      closest: (sel) => ({ 'a[data-page]': a, '.count:not(.total)': count ? badge : null }[sel] ?? null),
+    },
+    preventDefault: () => { prevented = true; },
+  });
+  return prevented;
 }
 
 describe('the header', () => {
@@ -107,13 +143,49 @@ describe('the header', () => {
     assert.equal(odd.Header.scheme(), 'system');
   });
 
+  it('puts Appearance in your menu before the keyboard, in its column where the menu has columns', () => {
+    /** A menu of sections (`keys`: the keyboard's), each noting what is put before it. */
+    const menu = (names) => {
+      const placed = [];
+      const sections = names.map((name) => ({
+        name,
+        querySelector: (sel) => (sel === '.keys' && name === 'keys' ? {} : null),
+        before: (box) => placed.push({ before: name, box }),
+      }));
+      return {
+        placed,
+        querySelectorAll: (sel) => (sel === 'section' ? sections : []),
+        append: (box) => placed.push({ before: null, box }),
+        addEventListener() {},
+      };
+    };
+    // The inbox's: its sections in columns, which `section` finds as it finds them on the menu.
+    const inbox = menu(['asBox', 'expertBox', 'followBox', 'notifyBox', 'tracesBox', 'keys', 'logout']);
+    tab('/inbox', new Map(), new Map(), { menu: inbox, schemes: null });
+    assert.equal(inbox.placed.length, 1);
+    assert.equal(inbox.placed[0].before, 'keys');
+    assert.match(inbox.placed[0].box.innerHTML, /^<h4 id="schemesLabel">Appearance<\/h4><div id="schemes" role="radiogroup"/);
+    assert.deepEqual([...inbox.placed[0].box.innerHTML.matchAll(/data-scheme="(\w+)"/g)].map((m) => m[1]), ['system', 'light', 'dark']);
+    // A page with no keyboard section: before logging out; one with no section at all: at its end.
+    const admin = menu(['logout']);
+    tab('/inbox/admin', new Map(), new Map(), { menu: admin, schemes: null });
+    assert.deepEqual(admin.placed.map((p) => p.before), ['logout']);
+    const bare = menu([]);
+    tab('/inbox/cogs', new Map(), new Map(), { menu: bare, schemes: null });
+    assert.deepEqual(bare.placed.map((p) => p.before), [null]);
+  });
+
   it('knows which page an address is, on this origin only', () => {
     const { Header } = tab('/inbox');
     assert.equal(Header.pageOf('/inbox?team=t'), 'inbox');
-    assert.equal(Header.pageOf('/inbox/kb?repo=r'), 'agents');
+    // The editor that was: the Worker sends it to Teams or Customers.
+    assert.equal(Header.pageOf('/inbox/kb?repo=r'), null);
+    assert.equal(Header.pageOf('/inbox/admin?tab=teams&team=t&view=kb&path=a.md'), 'teams');
     assert.equal(Header.pageOf('/inbox/admin'), 'teams');
     assert.equal(Header.pageOf('/inbox/admin?tab=orgs&org=o'), 'orgs');
-    assert.equal(Header.pageOf('/inbox/admin?tab=requests'), 'requests');
+    // The bots and the other requests are threads of the admin team's inbox: no page of their own.
+    assert.equal(Header.pageOf('/inbox/admin?tab=bots&bot=k'), 'teams');
+    assert.equal(Header.pageOf('/inbox/admin?tab=requests'), 'teams');
     assert.equal(Header.pageOf('/inbox/cogs?range=7d'), 'cogs');
     assert.equal(Header.pageOf('/inbox/topics?team=helix'), 'topics');
     assert.equal(Header.pageOf('/inbox/admin?tab=nope'), 'teams');
@@ -134,18 +206,20 @@ describe('the header', () => {
     assert.equal(admin.Header.href('teams'), '/inbox/admin?tab=teams&team=edge');
     assert.equal(admin.Header.href('orgs'), '/inbox/admin?tab=orgs&org=acme');
     // Never opened: where it starts.
-    assert.equal(admin.Header.href('requests'), '/inbox/admin?tab=requests');
-    assert.equal(admin.Header.href('agents'), '/inbox/kb');
+    assert.equal(admin.Header.href('cogs'), '/inbox/cogs');
+    // A section of a team's page, and the file open there, too.
+    admin.history.pushState(null, '', '/inbox/admin?tab=teams&team=edge&view=kb&path=a.md');
+    assert.equal(admin.Header.href('teams'), '/inbox/admin?tab=teams&team=edge&view=kb&path=a.md');
     // Back in the inbox, as it was.
-    assert.equal(tab('/inbox/kb', storage).Header.href('inbox'), '/inbox?team=t&filters=1&f.type=conversation&t=th1');
+    assert.equal(tab('/inbox/topics', storage).Header.href('inbox'), '/inbox?team=t&filters=1&f.type=conversation&t=th1');
   });
 
   it('asks the page where a page opens that was not opened yet', () => {
     const { Header } = tab('/inbox?team=t');
-    Header.init({ admin: true }, { count: false, fallback: { agents: () => '/inbox/kb?org=acme' } });
-    assert.equal(Header.href('agents'), '/inbox/kb?org=acme');
-    Header.remember('/inbox/kb?repo=r');
-    assert.equal(Header.href('agents'), '/inbox/kb?repo=r');
+    Header.init({ admin: true }, { count: false, fallback: { orgs: () => '/inbox/admin?tab=orgs&org=acme' } });
+    assert.equal(Header.href('orgs'), '/inbox/admin?tab=orgs&org=acme');
+    Header.remember('/inbox/admin?tab=orgs&org=r');
+    assert.equal(Header.href('orgs'), '/inbox/admin?tab=orgs&org=r');
   });
 
   it('opens a page where the page on screen sends it, before where it was left', () => {
@@ -153,12 +227,12 @@ describe('the header', () => {
     let customer = 'acme';
     Header.init({ admin: true }, {
       count: false,
-      prefer: { agents: () => (customer ? `/inbox/kb?org=${customer}` : null) },
+      prefer: { orgs: () => (customer ? `/inbox/admin?tab=orgs&org=${customer}` : null) },
     });
-    Header.remember('/inbox/kb?repo=r');
-    assert.equal(Header.href('agents'), '/inbox/kb?org=acme');
+    Header.remember('/inbox/admin?tab=orgs&org=r');
+    assert.equal(Header.href('orgs'), '/inbox/admin?tab=orgs&org=acme');
     customer = null;
-    assert.equal(Header.href('agents'), '/inbox/kb?repo=r');
+    assert.equal(Header.href('orgs'), '/inbox/admin?tab=orgs&org=r');
   });
 
   it('shows Stats to whom /api/me gives it, a plain member too, after the other pages', () => {
@@ -171,13 +245,82 @@ describe('the header', () => {
     const stats = { url: 'https://klickhaus.example/opspile.html' };
     assert.deepEqual(nav({}), { pages: [], hidden: true, html: '' });
     const member = nav({ teams: [{ slug: 'edge' }], stats });
-    assert.deepEqual([member.pages, member.hidden], [['inbox', 'agents', 'stats'], false]);
-    assert.deepEqual(nav({ teams: [{ slug: 'edge' }] }).pages, ['inbox', 'agents']);
+    assert.deepEqual([member.pages, member.hidden], [['inbox', 'teams', 'orgs', 'topics', 'stats'], false]);
+    assert.deepEqual(nav({ teams: [{ slug: 'edge' }] }).pages, ['inbox', 'teams', 'orgs', 'topics']);
     // Another site, in a new tab, with what it is in its title.
     assert.match(member.html, /<a data-page="stats" href="https:\/\/klickhaus\.example\/opspile\.html\?t=1mo" title="Statistics of all threads[^"]*klickhaus[^"]*new tab\)" target="_blank" rel="noopener">Stats/);
-    assert.deepEqual(nav({ manages: ['edge'], stats }).pages, ['inbox', 'agents', 'teams', 'stats']);
-    assert.deepEqual(nav({ admin: true, stats }).pages, ['inbox', 'agents', 'teams', 'orgs', 'requests', 'topics', 'cogs', 'stats']);
-    assert.deepEqual(nav({ admin: true }).pages, ['inbox', 'agents', 'teams', 'orgs', 'requests', 'topics', 'cogs']);
+    assert.deepEqual(nav({ manages: ['edge'], stats }).pages, ['inbox', 'teams', 'orgs', 'topics', 'stats']);
+    assert.deepEqual(nav({ admin: true, stats }).pages, ['inbox', 'teams', 'orgs', 'topics', 'cogs', 'stats']);
+    const admin = nav({ admin: true });
+    assert.deepEqual(admin.pages, ['inbox', 'teams', 'orgs', 'topics', 'cogs']);
+    // The requests that wait for the admin team are counted on Inbox: they are threads there.
+    assert.match(admin.html, /<a data-page="inbox" href="\/inbox" title="[^"]*">Inbox<span class="count" hidden><\/span><\/a>/);
+    // The questions thread agents ask a member have their own, the agent's purple.
+    assert.match(nav({ teams: [{ slug: 'edge' }] }).html, /Inbox<span class="count asks" hidden><\/span><\/a>/);
+    assert.match(nav({ admin: true, teams: [{ slug: 'admin' }] }).html, /Inbox<span class="count" hidden><\/span><span class="count asks" hidden><\/span>/);
+    assert.doesNotMatch(nav({ staff: true }).html, /class="count/);
+  });
+
+  it('counts the questions asked of you on their own, and opens them', () => {
+    const inbox = tab('/inbox?team=edge');
+    const opened = [];
+    inbox.Header.init({ teams: [{ slug: 'edge' }], questions: { open: 2, team: 'helix' } }, { open: (url) => opened.push(url) });
+    assert.equal(inbox.byId('pages').dataset.count, '2');
+    assert.equal(clickInbox(inbox, { asks: true }), true);
+    const questions = '/inbox?team=helix&filters=1&f.type=request&f.resolved=open';
+    assert.deepEqual(opened, [questions]);
+    // An admin's: the blue number opens the admin team's requests, the purple one the questions;
+    // the sum (a phone's) the admin team's.
+    inbox.Header.setCounts({ admin: 3 });
+    assert.equal(inbox.byId('pages').dataset.count, '5');
+    clickInbox(inbox);
+    clickInbox(inbox, { asks: true });
+    assert.deepEqual(opened.slice(1), [inbox.Header.REQUESTS, questions]);
+    // None of either: nothing to click.
+    inbox.Header.setCounts({ admin: 0, questions: 0, team: null });
+    clickInbox(inbox);
+    assert.equal(opened.length, 3);
+    // Viewing as someone else (`count: false`), theirs are not counted.
+    const as = tab('/inbox?team=edge');
+    as.Header.init({ teams: [{ slug: 'edge' }], questions: { open: 1, team: 'edge' } }, { count: false });
+    assert.equal(as.byId('pages').dataset.count, '0');
+  });
+
+  it('opens the admin team\'s open requests from the number on Inbox', () => {
+    const requests = '/inbox?team=admin&filters=1&f.type=request&f.resolved=open';
+    // In the inbox: the inbox opens them itself, in the tab.
+    const inbox = tab('/inbox?team=edge');
+    const opened = [];
+    inbox.Header.init({ admin: true }, { count: false, open: (url) => opened.push(url) });
+    assert.equal(inbox.Header.REQUESTS, requests);
+    inbox.Header.setCount(1);
+    assert.equal(clickInbox(inbox), true);
+    assert.deepEqual(opened, [requests]);
+    // Inbox's name, on the inbox: nothing to open.
+    clickInbox(inbox, { count: false });
+    assert.deepEqual(opened, [requests]);
+    // No request waits: the number is not there to click.
+    inbox.Header.setCount(0);
+    clickInbox(inbox);
+    assert.deepEqual(opened, [requests]);
+
+    // A page that opens the others itself (Teams, which saves what its agent has open first).
+    const admin = tab('/inbox/admin?tab=teams');
+    const went = [];
+    admin.Header.init({ admin: true }, { count: false, go: (id, url) => went.push([id, url]) });
+    admin.Header.setCount(2);
+    assert.equal(clickInbox(admin), true);
+    assert.deepEqual(went, [['inbox', requests]]);
+    // Its name: the inbox as it was left.
+    clickInbox(admin, { count: false });
+    assert.deepEqual(went, [['inbox', requests], ['inbox', '/inbox?team=edge']]);
+
+    // Any other page: the browser goes there.
+    const cogs = tab('/inbox/cogs');
+    cogs.Header.init({ admin: true }, { count: false });
+    cogs.Header.setCount(1);
+    assert.equal(clickInbox(cogs), true);
+    assert.equal(cogs.location.href, `${ORIGIN}${requests}`);
   });
 
   it('opens Stats on the org and the team the page on screen sends', () => {

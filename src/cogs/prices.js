@@ -40,6 +40,8 @@ const WORKERS_AI_MODELS = {
   '@cf/cloudflare/clef-omni': { input: 0.15, output: 0 },
   '@cf/cloudflare/clairic': { input: 0.10, output: 0 },
   '@cf/meta/llama-3.3-70b-instruct-fp8-fast': { input: 0.293, output: 2.253 },
+  // The translations' (src/translate.js).
+  '@cf/zai-org/glm-5.3': { input: 1.4, output: 4.4 },
   '@cf/baai/bge-base-en-v1.5': { input: 0.067, output: 0 },
 };
 
@@ -270,11 +272,33 @@ export const SERVICES = [
   {
     id: 'browser_run',
     name: 'Browser Run',
-    about: 'The agents\' global browser MCP server',
+    about: 'The browser of the agents\' computers (playwright-cli)',
     url: 'https://developers.cloudflare.com/browser-run/pricing/',
     metrics: [
       {
         id: 'browser_ms', label: 'Browser time', unit: 'ms', per: 3.6e6, usd: 0.09, included: '10 hours a month',
+      },
+    ],
+  },
+  {
+    id: 'web_search',
+    name: 'Web search',
+    about: 'The agents\' web_search: Microsoft Web IQ, on Azure, or Cloudflare\'s Web Search API,'
+      + ' through AI Gateway, at the provider\'s list price',
+    url: 'https://learn.microsoft.com/web-iq/resources/pricing',
+    // One metric per provider: the deployment's (WEB_SEARCH_PROVIDER) is the one counted.
+    metrics: [
+      {
+        id: 'webiq', label: 'Searches (Web IQ)', unit: 'searches', per: 1e3, usd: 7.00,
+      },
+      {
+        id: 'ceramic', label: 'Searches (Ceramic.ai)', unit: 'searches', per: 1e3, usd: 0.25,
+      },
+      {
+        id: 'linkup', label: 'Searches (Linkup)', unit: 'searches', per: 1e3, usd: 5.00,
+      },
+      {
+        id: 'exa', label: 'Searches (Exa)', unit: 'searches', per: 1e3, usd: 7.00,
       },
     ],
   },

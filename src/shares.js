@@ -17,8 +17,12 @@
  * their inboxes, and their members read, reply, react, resolve and draft there.
  */
 
-import { ADMIN_TEAM } from './review.js';
+import { ADMIN_TEAM, isAdmin } from './roles.js';
 import { UNASSIGNED } from './rules.js';
+import { mutedOrgs } from './standing.js';
+import {
+  followedByPerson, followersOf, followersOfAreas, followersOfTech, followingTeams, followsEntry,
+} from './follows.js';
 
 /**
  * Teams that hold a channel only until a real team takes it: adding a team to a channel one
@@ -45,15 +49,20 @@ export async function sharesOf(env, source, channelId) {
 }
 
 /**
- * Every team whose inbox has a thread (a row with `team`, `source` and `channel_id`): the
- * team it is filed under first, then the teams its channel is shared with.
+ * Every team whose inbox has a thread (a row with `team`, `source` and `channel_id`, and its
+ * `thread`): the team it is filed under first, then the teams its channel is shared with, then
+ * the teams that follow a technology its entry shows (src/follows.js). A row without `thread`
+ * is a channel's, which no one follows.
  */
 export async function teamsOf(env, row) {
   if (!row) {
     return [];
   }
-  const shares = await sharesOf(env, row.source, row.channel_id);
-  return [...new Set([row.team, ...shares].filter(Boolean))];
+  const [shares, follows] = await Promise.all([
+    sharesOf(env, row.source, row.channel_id),
+    row.thread ? followingTeams(env, row.thread) : [],
+  ]);
+  return [...new Set([row.team, ...shares, ...follows].filter(Boolean))];
 }
 
 /**
@@ -103,6 +112,22 @@ export async function ownedCustomers(env, teams) {
   return new Set((results || []).map((r) => r.org));
 }
 
+/**
+ * The ops teams (slugs) that own customer `org` (see `ownedCustomers`): its channels are filed
+ * under them or shared with them. Sorted.
+ */
+export async function customerTeams(env, org) {
+  if (!org || !env.DB) {
+    return [];
+  }
+  const { results } = await env.DB.prepare(`SELECT t.team FROM threads t
+      WHERE t.org = ?1 AND t.kind != 'ignore' AND t.team IS NOT NULL
+    UNION SELECT c.team FROM channel_teams c WHERE (c.source, c.channel_id) IN (
+      SELECT source, channel_id FROM threads WHERE org = ?1 AND kind != 'ignore')`)
+    .bind(String(org)).all();
+  return [...new Set((results || []).map((r) => r.team).filter((t) => !isHolding(t)))].sort();
+}
+
 /** Whether one of `teams` (slugs) owns customer `org` (see `ownedCustomers`), by `threads_org`. */
 export async function ownsCustomer(env, teams, org) {
   if (!(teams || []).length || !org) {
@@ -132,6 +157,18 @@ export const inPersonalView = (alias, param) => `${alias}.channel_id IN (
   AND (${alias}.source, ${alias}.channel_id) IN (${personalChannels(param)})`;
 
 /**
+ * SQL: thread row `alias` is in person `param`'s personal view, as its list has it: in one of its
+ * channels (`inPersonalView`), or in an entry they follow (src/follows.js); and not of a customer
+ * they muted and have not posted in since (src/standing.js `mutedOrgs`). The access to a thread
+ * stays `inPersonalView`'s: muting a customer takes its threads off the list only. The mute is
+ * asked after the OR, not in it: in it, SQLite no longer searches each side of it by index
+ * (MULTI-INDEX OR), and reads every thread.
+ */
+export const inPersonalInbox = (alias, param) => `((${inPersonalView(alias, param)})
+    OR ${followedByPerson(alias, param)})
+  AND COALESCE(${alias}.org, '') NOT IN (${mutedOrgs(param)})`;
+
+/**
  * Which of `people` (ids) posted or were mentioned in channel `place` (`source`, `channel_id`):
  * whose personal view has it. A Set of ids. Their mentions first (`CROSS JOIN` keeps that order):
  * a person has a few hundred at most, while an alert channel has tens of thousands of threads,
@@ -158,22 +195,82 @@ export async function inPersonalChannel(env, person, place) {
 /**
  * Who may work a thread (read, reply, react, resolve, draft): `(teams, place) => Promise<bool>`
  * for a thread whose inbox teams are `teams` and whose channel is `place` (a row with `source`
- * and `channel_id`). A member of one of the teams may, and so may anyone in the channels of
- * their personal view (posted or mentioned there), whichever team they are filed under.
+ * and `channel_id`, and the `thread`). A member of one of the teams may, and so may anyone in the
+ * channels of their personal view (posted or mentioned there), whichever team they are filed
+ * under, and anyone who follows a technology the thread's entry shows.
  */
 export const mayWork = (env, me) => async (teams, place) => memberOf(me)(teams)
+  || (Boolean(me) && (await inPersonalChannel(env, me.id, place)
+    || (Boolean(place && place.thread) && followsEntry(env, me.id, place.thread))));
+
+/**
+ * Who may post where the platform does not decide it: in the customer portal, and as the inbox's
+ * app (src/postapp.js). As `mayWork`, but a person's own follow is not enough. On Slack and Teams
+ * they post as themselves, and the platform decides whether they may post in the channel; the
+ * portal and the app take the inbox's word, which is the channel's teams' and its people's (who
+ * posted or were mentioned there).
+ */
+export const mayPost = (env, me) => async (teams, place) => memberOf(me)(teams)
   || (Boolean(me) && inPersonalChannel(env, me.id, place));
 
 /**
+ * Who may reply as themselves (src/post.js): who may work the thread (`mayWork`), but in the
+ * customer portal, where the inbox posts for them, who may post there (`mayPost`).
+ */
+export const mayReply = (env, me) => (teams, place) => (place && place.source === 'portal'
+  ? mayPost(env, me) : mayWork(env, me))(teams, place);
+
+/**
+ * Whether person `person` talked to the agent in the sidebar of thread `thread`'s entry: in its
+ * group, on any member's key (a sidebar is kept under the entry's key when it was talked in).
+ */
+export async function inSidebar(env, person, thread) {
+  if (!person || !thread || !env.DB) {
+    return false;
+  }
+  const row = await env.DB.prepare(`SELECT 1 AS yes FROM sidebar_messages
+    WHERE person = ?1 AND role = 'person' AND thread IN (
+      SELECT thread FROM threads
+      WHERE thread = (SELECT COALESCE(logical_thread, thread) FROM threads WHERE thread = ?2)
+        OR logical_thread = (SELECT COALESCE(logical_thread, thread) FROM threads WHERE thread = ?2)
+      UNION SELECT ?2) LIMIT 1`).bind(person, String(thread)).first();
+  return Boolean(row);
+}
+
+/**
+ * Who may see a thread, and talk to its agent in its sidebar: `(teams, place) => Promise<bool>`,
+ * as `mayWork`. Who may work it may, and so may the admin team, and whoever talked in its sidebar
+ * before: a channel that moves to another team (often because they asked its agent to move it)
+ * does not take away the conversation they had about it. Only to see and talk: replying,
+ * drafting, and deciding on what its agent asks for stay `mayWork`'s.
+ */
+export const maySee = (env, me) => async (teams, place) => isAdmin(me)
+  || await mayWork(env, me)(teams, place)
+  || (Boolean(me) && Boolean(place && place.thread) && inSidebar(env, me.id, place.thread));
+
+/**
  * The rooms (teams, by slug) a person's inbox listens to: their own teams', and the rooms of
- * the teams their personal view's channels are filed under. In those other rooms they hear
- * only about the channels of their personal view (`scoped`, room.js).
+ * the teams their personal view's threads are filed under (its channels', and the ones that show
+ * a technology they follow). In those other rooms they hear only about the threads of their
+ * personal view (`scoped`, room.js).
+ *
+ * A channel's teams one by one, each by a search of `threads_channel_team` (migration 0098): its
+ * least team, then the next after it, and so on. Its threads are nearly always one team's, and an
+ * alert channel has tens of thousands: asking for its threads' teams read every one of them.
  */
 export async function roomsOf(env, me) {
   const own = (me.teams || []).map((t) => t.slug);
-  const { results } = await env.DB.prepare(`SELECT DISTINCT team FROM threads t
-    WHERE ${inPersonalView('t', '?1')} AND team IS NOT NULL ORDER BY team`)
-    .bind(me.id).all();
+  const { results } = await env.DB.prepare(`WITH RECURSIVE
+      c(source, channel_id) AS (${personalChannels('?1')}),
+      s(source, channel_id, team) AS (
+        SELECT source, channel_id, (SELECT MIN(x.team) FROM threads x
+          WHERE x.channel_id = c.channel_id AND x.source = c.source) FROM c
+        UNION ALL SELECT s.source, s.channel_id, (SELECT MIN(x.team) FROM threads x
+          WHERE x.channel_id = s.channel_id AND x.source = s.source AND x.team > s.team)
+        FROM s WHERE s.team IS NOT NULL)
+    SELECT team FROM s WHERE team IS NOT NULL
+    UNION SELECT team FROM threads t WHERE ${followedByPerson('t', '?1')} AND team IS NOT NULL
+    ORDER BY team`).bind(me.id).all();
   return [...new Set([...own, ...(results || []).map((r) => r.team)])];
 }
 
@@ -190,9 +287,20 @@ export async function recipients(env, event, sockets) {
   }
   let allowed = new Set();
   if (event && typeof event.thread === 'string') {
+    const people = scoped.map((s) => s.person);
     const place = await env.DB.prepare('SELECT source, channel_id FROM threads WHERE thread = ?')
       .bind(event.thread).first();
-    allowed = await inChannel(env, scoped.map((s) => s.person), place);
+    // A thread whose label gained or lost technologies (`tech`, src/normalizer.js) is told to
+    // those who follow one of them too: one that no longer shows what they follow leaves their
+    // open inbox when it reloads. The event names the thread only, nothing of what is in it.
+    const [inIt, following, changed, moved] = await Promise.all([
+      inChannel(env, people, place),
+      place ? followersOf(env, people, event.thread) : new Set(),
+      Array.isArray(event.tech) ? followersOfTech(env, people, event.tech) : new Set(),
+      // And areas it joined or left (`areas`): one no longer in an area they follow goes too.
+      Array.isArray(event.areas) ? followersOfAreas(env, people, event.areas) : new Set(),
+    ]);
+    allowed = new Set([...inIt, ...following, ...changed, ...moved]);
   }
   return sockets.filter((s) => !s.scoped || allowed.has(s.person));
 }

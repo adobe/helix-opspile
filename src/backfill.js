@@ -14,6 +14,7 @@ import {
   discordApi, messagesAfter, putDiscord, reactionsOf, threadInfo,
 } from './discord.js';
 import { cachedGraph } from './graph.js';
+import { portalCall } from './portalsource.js';
 import {
   dayPath, messageKey, putRaw, segment,
 } from './raw.js';
@@ -27,7 +28,7 @@ import {
 const MAX_PAGES = 20;
 
 // Errors that stay: asking again changes nothing. Anything else may pass, so it is tried again.
-const FINAL = /\b(channel_not_found|thread_not_found|not_in_channel|missing_scope|is_archived|no_permission|access_denied|not_authed|invalid_auth|account_inactive|token_revoked)\b|^graph 40[134]\b|^discord 40[134]\b/;
+export const FINAL = /\b(channel_not_found|thread_not_found|not_in_channel|missing_scope|is_archived|no_permission|access_denied|not_authed|invalid_auth|account_inactive|token_revoked|team_access_not_granted)\b|^graph 4(0[134]|10)\b|^discord 40[134]\b/;
 
 // A request nobody finished, a job that died or was never sent, goes out again this long after.
 const SWEEP_AFTER_MS = 60 * 60 * 1000;
@@ -53,7 +54,8 @@ export async function requestBackfill(env, request) {
   return created;
 }
 
-async function slackReplies(env, channel, ts) {
+/** A Slack thread's messages, its root first (`conversations.replies`). */
+export async function slackReplies(env, channel, ts) {
   const messages = [];
   let cursor = '';
   for (let page = 0; page < MAX_PAGES; page += 1) {
@@ -167,7 +169,22 @@ async function backfillDiscord(env, { tenant: guild, channelId, rootId }) {
   return envelopes.length;
 }
 
-const BACKFILL = { slack: backfillSlack, teams: backfillTeams, discord: backfillDiscord };
+/**
+ * The customer portal: it tells of the thread's messages again, as events (src/portal/store.js
+ * `resend`), which are filed as they arrive. A portal that is not bound here, or has no such
+ * channel, is not asked again.
+ */
+async function backfillPortal(env, { tenant, channelId, rootId }) {
+  const res = await portalCall(env, 'resend', { domain: tenant, channel: channelId, root: rootId });
+  if (res.error) {
+    throw new Error(res.status === 404 || res.status === 409 ? `portal: channel_not_found (${res.error})` : `portal: ${res.error}`);
+  }
+  return res.messages || 0;
+}
+
+const BACKFILL = {
+  slack: backfillSlack, teams: backfillTeams, discord: backfillDiscord, portal: backfillPortal,
+};
 
 /**
  * Runs one backfill request from the queue. An error that stays is recorded on the request (for

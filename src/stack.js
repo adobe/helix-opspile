@@ -42,12 +42,17 @@
  * `checkConcept`), whoever writes it, so the inbox can always draw it (GET /api/kb/stack,
  * ui/stack.js).
  *
+ * A part's Tech is a technology's id (its path in a team's catalog, src/catalog.js, which readers
+ * take through the catalog's moves: a short id from before is the path that lists it), `own` for
+ * what the customer built, or empty.
+ *
  * The layers are fixed, so every customer's drawing reads the same way, top to bottom. The tech
  * stack's technologies are in one each too (`tech_stack.layer`, migration 0068), and the list by
  * customer names the likeliest of each, in this order (ui/inbox.js `stackLine`).
  */
 
 import { readMarkdown, writeMarkdown } from './mdast.js';
+import { isTechId } from './techid.js';
 
 export const STACK_PATH = 'stack.md';
 export const STACK_TYPE = 'Stack Drawing';
@@ -73,7 +78,6 @@ export const MAX_PARTS = 40;
 export const MAX_FLOWS = 60;
 const MAX_NAME = 60;
 const MAX_NOTE = 300;
-const TECH_ID = /^[a-z][a-z0-9_]{0,31}$/;
 
 const layerById = new Map(LAYERS.map((l) => [l.id, l]));
 const key = (s) => String(s || '').trim().toLowerCase().replace(/\s+/g, ' ');
@@ -181,8 +185,8 @@ export function parseStack(text) {
     if (names.has(key(name))) {
       return { error: `${line}: there is another part called ${name}; the flows name parts, so each name is once` };
     }
-    if (tech && !TECH_ID.test(tech)) {
-      return { error: `${line}: Tech is the id of a technology of the tech stack (lower case, digits and _, such as akamai), or empty` };
+    if (tech && !isTechId(tech)) {
+      return { error: `${line}: Tech is the id of a technology of the tech stack (its path in a team's catalog, such as fastly/cdn, or a short id such as akamai), own for what the customer built, or empty` };
     }
     if (note.length > MAX_NOTE) {
       return { error: `${line}: a note has at most ${MAX_NOTE} characters` };
@@ -345,6 +349,38 @@ export function stackFile(drawing, { title = 'Tech stack', keep = '' } = {}) {
     ...kept,
   ];
   return `---\n${yaml.join('\n')}\n---\n\n${stackBody(drawing)}`;
+}
+
+/**
+ * `text` (a stack.md) with the Tech of its parts set from `techs`, `[tech]` in the parts table's
+ * order (null: empty), and nothing else changed: its frontmatter as it is, and its body through
+ * its markdown tree, the Tech column added when it has none. The parts table must parse.
+ */
+export function withPartTech(text, techs) {
+  const m = /^---\r?\n[\s\S]*?\r?\n---[ \t]*(?:\r?\n|$)/.exec(String(text));
+  const head = m ? m[0] : '';
+  const tree = readMarkdown(String(text).slice(head.length), { tasks: false });
+  let section = null;
+  const table = tree.children.find((node) => {
+    if (node.type === 'heading') {
+      section = key(textOf(node));
+    }
+    return section === 'parts' && node.type === 'table';
+  });
+  const { at, rows } = columns(table);
+  let col = at.tech;
+  if (col === undefined) {
+    col = (at.part ?? 0) + 1;
+    table.children.forEach((r, i) => r.children.splice(col, 0, textCell(i ? '' : 'Tech')));
+    if (table.align) {
+      table.align.splice(col, 0, null);
+    }
+  }
+  rows.forEach((r, i) => {
+    // eslint-disable-next-line no-param-reassign
+    r.children[col] = textCell(techs[i] || '');
+  });
+  return `${head}${writeMarkdown(tree)}`;
 }
 
 /**

@@ -109,7 +109,11 @@ describe('shared drafts', () => {
       source: 'slack',
       tenant: 'E1',
       channel_id: 'C1',
-      teams: await teamsOf(e, { team: 'helix', source: 'slack', channel_id: 'C1' }),
+      thread: FOLLOW,
+      teams: await teamsOf(e, {
+        team: 'helix', source: 'slack', channel_id: 'C1', thread: FOLLOW,
+      }),
+      follows: [],
       keys: [ROOT, FOLLOW],
     });
     assert.deepEqual(entry.teams, ['helix', 'other']);
@@ -385,17 +389,14 @@ describe('shared drafts', () => {
     const e = env();
     e.DB.sqlite.prepare('UPDATE threads SET logical_thread = ? WHERE thread = ?').run(ROOT, FOLLOW);
     e.DB.sqlite.prepare('UPDATE messages SET permalink = \'https://s.example/p\' || id').run();
-    e.DB.sqlite.prepare(`INSERT INTO channel_tech (source, tenant, channel_id, tech, p, thread,
-      updated_at) VALUES ('slack', 'E1', 'C1', 'eds', 1, ?, '2026-10-21T10:00:00Z'),
-      ('slack', 'E1', 'C1', 'akamai', 0.9, 'slack:E1:C1:9.1', '2026-10-21T10:00:00Z')`).run(ROOT);
     const open = async () => (await call(e, BO, 'GET', `/api/thread?thread=${ROOT}`)).json();
     let data = await open();
     assert.deepEqual(data.members.map((m) => [m.thread, m.permalink]), [
       [ROOT, 'https://s.example/p1.1'], [FOLLOW, 'https://s.example/p2.1'],
     ]);
-    assert.deepEqual(data.tech.map((t) => t.tech), ['eds', 'akamai']);
-    // Labeled before labels had their technologies: those a member set for the channel.
-    assert.deepEqual(data.thread_tech, [{ tech: 'eds', p: 1 }]);
+    // Nothing at the channel's level: what the members' labels say, and none yet.
+    assert.deepEqual(data.tech, []);
+    assert.deepEqual(data.thread_tech, []);
     // Once a member is labeled again, what the labels say.
     e.DB.sqlite.prepare(`INSERT INTO labels (thread, labeled_through, model, labeled_at, tech)
       VALUES (?, '', 'clef', '', '{"akamai":0.85}'), (?, '', 'clef', '', '{}')`).run(FOLLOW, ROOT);
@@ -484,6 +485,22 @@ describe('shared drafts', () => {
     const connect = async (e, person) => e.DB.sqlite.prepare(`INSERT INTO user_tokens (person,
       platform, user_id, access_token, scope, updated_at) VALUES (?, 'slack', 'U1', ?, 'chat:write',
       '2026-10-21T10:00:00Z')`).run(person, await seal(e, 'xoxp-made-up'));
+
+    it('says whom it mentions who may never see it, with its link', async () => {
+      const e = env();
+      await connect(e, 2);
+      // Eve has never posted: the answer suggests a personal reminder.
+      e.DB.sqlite.prepare(`INSERT INTO identities (source, tenant, user_id, kind, name, person,
+        fetched_at) VALUES ('slack', 'E1', 'U3', 'person', 'Eve', 3, '2026-10-21T10:00:00Z')`).run();
+      const res = await call(e, BO, 'POST', '/api/post', { thread: ROOT, text: 'Can you look, @Eve?', mentions: ['U3'] });
+      const data = await res.json();
+      assert.equal(res.status, 200, JSON.stringify(data));
+      assert.deepEqual(data.reminders.map((r) => [r.name, r.why]), [['Eve', 'quiet']]);
+      assert.equal(data.permalink, 'https://slack.com/archives/C1/p19?thread_ts=1.1&cid=C1');
+      // Nobody mentioned: nothing to say.
+      const plain = await (await call(e, BO, 'POST', '/api/post', { thread: ROOT, text: 'one' })).json();
+      assert.equal(plain.reminders, undefined);
+    });
 
     it('uses up the draft it was written from', async () => {
       const e = env();
@@ -620,6 +637,51 @@ describe('shared drafts', () => {
         const over = (await (await call(again.e, BO, 'PUT', '/api/draft', { thread: ROOT, text: 'theirs', base: own.updated_at })).json()).draft;
         await call(again.e, ADA, 'DELETE', '/api/draft', { thread: ROOT, base: over.updated_at });
         assert.deepEqual(again.e.DB.rows('SELECT * FROM draft_undo'), []);
+      });
+
+      it('offers a manager to let the agent post, after the third of its drafts they sent in the channel', async () => {
+        const BOSS = { ...BO, teams: [{ slug: 'helix', role: 'manager' }] };
+        const { e } = await withDraft();
+        /** Bo sends the agent's next draft (the first is there), and what the post answers. */
+        const sendOne = async (who = BOSS, text = 'Purges take up to 5 minutes.') => {
+          let d = await draftOf(e, who);
+          if (!d) {
+            const mine = { thread: ROOT, text, base: null };
+            const saved = await saveDraft(e, { id: AGENT }, mine, () => true);
+            d = (await saved.json()).draft;
+          }
+          return (await call(e, who, 'POST', '/api/post', { thread: ROOT, text: 'sent', draft: d.updated_at })).json();
+        };
+        // Bo (who manages nothing here) sends two of the agent's drafts, and one of Ada's.
+        assert.equal((await sendOne(BO)).postingOffer, undefined);
+        assert.equal((await sendOne(BO)).postingOffer, undefined);
+        await call(e, ADA, 'PUT', '/api/draft', { thread: ROOT, text: 'mine', base: null });
+        assert.equal((await sendOne(BOSS)).postingOffer, undefined);
+        // The agent's third: still no question, as he may not switch it.
+        assert.equal((await sendOne(BO)).postingOffer, undefined);
+        // As a manager of the channel's team, he is asked.
+        assert.deepEqual((await sendOne()).postingOffer, { channel: 'C1', team: 'helix', sent: 4 });
+        // Not without the platform's bot, nor where the channel or its team has it on already,
+        // nor where the channel was switched off on purpose.
+        const { SLACK_BOT_TOKEN: token } = e;
+        delete e.SLACK_BOT_TOKEN;
+        assert.equal((await sendOne()).postingOffer, undefined);
+        e.SLACK_BOT_TOKEN = token;
+        const sw = (scope, target, on) => e.DB.sqlite.prepare(`INSERT OR REPLACE INTO agent_tool_switches
+          (tool, scope, target, enabled, changed_by, changed_at) VALUES ('post_message', ?, ?, ?, 'Ada',
+          '2026-10-21T10:00:00Z')`).run(scope, target, on);
+        sw('channel', 'C1', 0);
+        assert.equal((await sendOne()).postingOffer, undefined);
+        e.DB.sqlite.exec('DELETE FROM agent_tool_switches');
+        sw('team', 'helix', 1);
+        assert.equal((await sendOne()).postingOffer, undefined);
+        e.DB.sqlite.exec('DELETE FROM agent_tool_switches');
+        assert.equal((await sendOne()).postingOffer.sent, 8);
+        // The admin team is asked too; not once they said no there.
+        const ADMIN = { ...BO, teams: [{ slug: 'helix' }, { slug: 'admin' }] };
+        assert.equal((await sendOne(ADMIN)).postingOffer.channel, 'C1');
+        await call(e, BOSS, 'PUT', '/api/settings', { postingDeclined: ['C1'] });
+        assert.equal((await sendOne()).postingOffer, undefined);
       });
     });
   });

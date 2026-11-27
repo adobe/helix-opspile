@@ -34,10 +34,13 @@ const PEOPLE = [
     key: 'priya', id: 2, name: 'Priya Nair', email: 'priya@example.com', staff: true, title: 'Support engineer',
   },
   {
-    key: 'lena', id: 3, name: 'Lena Berg', email: 'lena@example.com', staff: true,
+    // The mention model gives her odds of an answer under one half (src/reminders.js): a
+    // mention of her says to send a personal reminder.
+    key: 'lena', id: 3, name: 'Lena Berg', email: 'lena@example.com', staff: true, answers: 0.3,
   },
   {
-    key: 'tom', id: 4, name: 'Tom Okafor', email: 'tom@example.com', staff: true,
+    // Away: no post for 23 days, and a mention of him says so.
+    key: 'tom', id: 4, name: 'Tom Okafor', email: 'tom@example.com', staff: true, quiet: 23,
   },
   {
     key: 'sam', id: 5, name: 'Sam Reyes', email: 'sam@acme.example', org: 'acme', staff: false, title: 'Web lead',
@@ -61,6 +64,14 @@ const PEOPLE = [
   },
   {
     key: 'ola', id: 9, name: 'Ola Hansen', email: 'ola@umbrella.example', org: 'umbrella', staff: false,
+  },
+  {
+    // Of no known org (free mail): in a public channel, the card says Community.
+    key: 'kai', id: 11, name: 'Kai Moreno', email: 'kai.moreno@freemail.example', org: null, staff: false,
+  },
+  {
+    // A customer who can use neither Slack nor Teams with Adobe: in the customer portal.
+    key: 'lucius', id: 10, name: 'Lucius Fox', email: 'lucius.fox@wayne.example', org: 'wayne', staff: false, title: 'Head of digital',
   },
 ];
 
@@ -91,6 +102,8 @@ const PARTNERS = new Map([['agency.example', 'Agency Co']]);
 const TEAMS = [
   { slug: 'platform', name: 'Platform ops', members: [1, 2, 3, 4] },
   { slug: 'edge', name: 'Edge ops', members: [1, 3] },
+  // Not Dana's: a channel she asked the agent to move here is no longer hers to work.
+  { slug: 'forms', name: 'Forms ops', members: [2] },
 ];
 
 /**
@@ -105,6 +118,13 @@ const KLICKHAUS = { KLICKHAUS_URL: 'https://klickhaus.example', KLICKHAUS_TEAMS:
 const BOT = {
   kind: 'bot', name: 'Alertmanager', org: null, staff: false,
 };
+/**
+ * A bot of Adobe's own (made up), which an admin said is Adobe's on the admin page's Bots
+ * (src/ourbots.js): staff, so the thread shows it on Adobe's side.
+ */
+const OURBOT = {
+  kind: 'bot', name: 'Provisioning Agent', org: null, staff: true,
+};
 /** The opspile app, which posts what someone sends as it (POST /api/post/app). */
 const APP = {
   kind: 'bot', name: 'opspile', org: null, staff: false,
@@ -116,7 +136,87 @@ const SYSTEM = {
 };
 
 /** The thread agent, which saves shared drafts as this person (src/agent/tools.js). */
-const AGENT = { id: 900, name: 'opspile agent' };
+export const AGENT = { id: 900, name: 'opspile agent' };
+
+/**
+ * The knowledge base's sidebar (ui/kbchat.js) of kb-team-platform, as GET /api/kb/chat answers:
+ * a conversation of yours, the agent's answer with what it changed, and an earlier one.
+ */
+export function kbChats(now = Date.now()) {
+  const at = (minutes) => new Date(now - minutes * 60 * 1000).toISOString();
+  const ask = 'sb_00000000-0000-4000-8000-000000000001';
+  return {
+    'kb-team-platform': [
+      {
+        chat: 'kc_00000000-0000-4000-8000-000000000001',
+        // What the agent asked to have run, a token of yours in it (request_bash).
+        bash: [{
+          id: 'b0000000cdn1',
+          chat: 'kc_00000000-0000-4000-8000-000000000001',
+          command: 'curl -s -H "Fastly-Key: $FASTLY_TOKEN" "https://api.fastly.com/service/$SERVICE/version/active" | jq \'{number, updated_at}\'',
+          reason: 'To see when the shared service\'s configuration last changed: two threads say the purge delay was fixed in October, a later one that it is back.',
+          env: [{ name: 'FASTLY_TOKEN', description: 'A read-only Fastly API token of yours' }, { name: 'SERVICE', description: 'The shared service\'s id' }],
+          timeout: 60,
+          deadline: at(-60 * 24),
+          status: 'pending',
+          created_at: at(8),
+          by: null,
+        }],
+        messages: [
+          {
+            id: ask,
+            role: 'person',
+            state: 'done',
+            reply_to: null,
+            at: at(12),
+            body: 'We keep answering questions about CDN purges taking long. Is that in the knowledge base? If not, add it.',
+          },
+          {
+            id: `${ask}:answer`,
+            role: 'agent',
+            state: 'done',
+            reply_to: ask,
+            at: at(9),
+            body: 'It was not: `issues/` had nothing on purges, and `playbooks/cdn-purge.md` only covers purging by URL.\n\nI read the **6 threads** of the last two months that ask about it ([the latest](https://example.slack.com/archives/C1/p1)), and wrote:\n\n- `issues/cdn-purge-delay.md` (new): purges by surrogate key take up to 10 minutes on the shared CDN; what to tell the customer, and when to escalate. Sources: 4 threads.\n- `playbooks/cdn-purge.md`: a section on purging by key, linked to the issue.\n\nTwo threads said the delay was fixed in October, and a later one says it is back, so I kept it as a known issue rather than *resolved*.',
+          },
+        ],
+      },
+      {
+        chat: 'kc_00000000-0000-4000-8000-000000000002',
+        messages: [
+          {
+            id: 'sb_00000000-0000-4000-8000-000000000002',
+            role: 'person',
+            state: 'done',
+            reply_to: null,
+            at: at(60 * 26),
+            body: 'Who on the team knows the most about forms?',
+          },
+          {
+            id: 'sb_00000000-0000-4000-8000-000000000002:answer',
+            role: 'agent',
+            state: 'done',
+            reply_to: 'sb_00000000-0000-4000-8000-000000000002',
+            at: at(60 * 26 - 2),
+            body: 'Lena Berg: her profile (`contacts/lena-berg.md`) lists forms, and she answered 9 of the 12 forms threads this quarter.',
+          },
+        ],
+      },
+    ],
+  };
+}
+
+/**
+ * The made-up model of the preview's translations (GET /api/translate, scripts/dev-ui.mjs): the
+ * Japanese thread's messages in English. Anything else in Japanese is marked, not translated.
+ */
+export const TRANSLATIONS = {
+  'お世話になっております。プレビューの `/products` ページが今朝から **404** になっています。ご確認いただけますか？':
+    'Thank you for your support. The preview `/products` page has been returning **404** since this morning. Could you take a look?',
+  'ご連絡ありがとうございます。確認いたします。': 'Thank you for letting us know. We will look into it.',
+  'リダイレクトの設定を修正しました。もう一度お試しください。': 'We fixed the redirect configuration. Please try again.',
+  '直りました。ありがとうございます！ :pray:': 'It works now. Thank you! :pray:',
+};
 
 /**
  * Channels: where a thread lives. `org` and `team` are what the rules would file it under.
@@ -131,8 +231,8 @@ const CHANNELS = {
     team: 'platform',
     members: ['kira'],
     appPosting: true,
-    // The channel's tech stack (channel_tech), for the Tech stack filter, and the key parts of
-    // ACME's stack beside its heading in the list by customer.
+    // What the fake channel's threads show, for the Tech stack filter (the key parts beside
+    // ACME's heading come from its stack.md, scripts/dev-ui-kb.mjs).
     tech: ['eds', 'akamai', 'sharepoint', 'github', 'commerce', 'appbuilder', 'analytics', 'consent', 'opspile'],
   },
   aemGlobex: {
@@ -143,6 +243,10 @@ const CHANNELS = {
   },
   aemUmbrella: {
     source: 'slack', channelId: 'C0UMBRELLA', name: 'aem-umbrella', org: 'umbrella', team: 'platform', tech: ['eds', 'ue', 'aemcs'],
+  },
+  // A partner's own channel (an agency that works for ACME, src/threadlinks.js).
+  agencyProjects: {
+    source: 'slack', channelId: 'C0AGENCY01', name: 'agency-projects', org: 'agency', team: 'platform', tech: ['eds', 'github'],
   },
   alerts: {
     source: 'slack',
@@ -178,9 +282,18 @@ const CHANNELS = {
     org: 'globex',
     team: 'edge',
     teamId: 'TEAM-EDGE',
+    // Its Teams team's members are listed (Noor since the Provisioning Agent added her): whoever
+    // else is mentioned (Mateo, say) is "not in team", and a reply that mentions them says so,
+    // with what to ask admin-bot.
+    members: ['kira', 'noor'],
   },
   edgeQ: {
     source: 'slack', channelId: 'C0EDGEQ01', name: 'edge-questions', org: 'opspile', team: 'edge',
+  },
+  // Moved to Forms ops, which Dana is not on, at her asking: she sees it and talks to its agent
+  // (`agent`: it has one), and may not work it (src/shares.js, `maySee`).
+  formsAcme: {
+    source: 'slack', channelId: 'C0FORMSAC1', name: 'aem-forms-acme', org: 'acme', team: 'forms', agent: true,
   },
   // Archived on Slack's side: a reply sent here fails (`rejects` is Slack's error), and shows
   // as not sent, with Retry.
@@ -192,6 +305,39 @@ const CHANNELS = {
     team: 'platform',
     rejects: 'is_archived',
   },
+  // A channel of the customer portal (src/portalsource.js), opened for a customer's lobby: the
+  // inbox posts there as the person, with no account to connect.
+  portal: {
+    source: 'portal', channelId: 'c0wayne0000001', name: 'wayne-enterprises', org: 'wayne', team: 'edge', tech: ['eds', 'ue', 'da'],
+  },
+  // Customers of Dana's personal view she has nothing unread from, for the sections of its
+  // customer column (src/standing.js): Hooli she posts to most (a regular), Stark now and then;
+  // Wonka, Tyrell and Cyberdyne have been quiet for her for more than two weeks (inactive).
+  hooli: {
+    source: 'slack', channelId: 'C0HOOLI001', name: 'hooli-aem', org: 'hooli', team: 'edge',
+  },
+  stark: {
+    source: 'slack', channelId: 'C0STARK001', name: 'stark-edge', org: 'stark', team: 'edge',
+  },
+  wonka: {
+    source: 'slack', channelId: 'C0WONKA001', name: 'wonka-sites', org: 'wonka', team: 'platform',
+  },
+  tyrell: {
+    source: 'slack', channelId: 'C0TYREL001', name: 'tyrell-ops', org: 'tyrell', team: 'platform',
+  },
+  cyberdyne: {
+    source: 'slack', channelId: 'C0CYBER001', name: 'cyberdyne-cdn', org: 'cyberdyne', team: 'edge',
+  },
+  // A customer only Forms ops works, which Dana is not on: she sees its page in Customers, reads
+  // its knowledge base and talks to its agent there, which changes nothing for her.
+  massive: {
+    source: 'slack', channelId: 'C0MASSIVE1', name: 'massive-forms', org: 'massive', team: 'forms',
+  },
+  // An event's channel, public (an org of type `public`, docs/ARCHITECTURE.md "Public
+  // channels"): people of ACME, of the agency and of no known org ask there.
+  workshop: {
+    source: 'slack', channelId: 'C0WORKSHOP1', name: 'aem-workshop-attendees', org: 'public', team: 'edge', tech: ['eds'],
+  },
   // A community server: a forum where every post is a thread.
   forum: {
     source: 'discord', channelId: '1100000000000000001', name: 'community-forum', org: 'opspile', team: 'edge', appPosting: true,
@@ -201,6 +347,19 @@ const CHANNELS = {
 /**
  * A made-up screenshot: a chart with a title, as an SVG, for the messages with attachments.
  */
+/**
+ * A markdown table wider than any bubble: it scrolls sideways inside it.
+ */
+const WIDE_TABLE = [
+  '| path | status | requests | p50 | p95 | p99 | first seen | last seen | cache | note |',
+  '|---|---|---|---|---|---|---|---|---|---|',
+  '| /content/acme/en/products/overview | 503 | 1204 | 41ms | 1203ms | 2.4s | 10:02:11 | 10:58:40 | MISS | content host timed out |',
+  '| /content/acme/de/start/willkommen | 200 | 860 | 38ms | 310ms | 998ms | 10:02:12 | 10:59:02 | HIT | retried once, then served |',
+  '| /content/dam/acme/hero-banner-wide.png | 404 | 77 | 12ms | 40ms | 88ms | 10:04:30 | 10:41:19 | PASS | renamed in the last push |',
+].join('\n');
+/** A file name longer than any bubble is wide, as a pasted URL makes one. */
+const LONG_NAME = 'preview-requests-content-acme-en-products-overview-and-de-start-willkommen-and-dam-hero-banner-wide-since-the-config-push-2026-10-21';
+
 /**
  * A made-up CSV of publish requests (paths, statuses, timings), long enough that its preview
  * scrolls, with a quoted field holding a comma and one holding a quote.
@@ -428,6 +587,8 @@ export function createStore(now = Date.now(), { big = false, admin = false } = {
   const drafts = new Map(); // thread -> its shared draft, as src/drafts.js reads it from D1
   // thread -> the commands its agent asked a person to run, as src/bashrequests.js shapes them
   const bashRequests = new Map();
+  // thread -> the tools its agent asked for in the sidebar (src/toolrequests.js)
+  const toolRequests = new Map();
   // thread -> what the team said to its agent in the sidebar, and its answers (src/sidebar.js)
   const sidebars = new Map();
   // How src/sources.js would show the fixtures' sources: a frame, Markdown; any other, not at all.
@@ -462,12 +623,17 @@ export function createStore(now = Date.now(), { big = false, admin = false } = {
     if (key === 'app') {
       return APP;
     }
+    if (key === 'ourbot') {
+      return OURBOT;
+    }
     if (key === 'system') {
       return SYSTEM;
     }
     const p = byKey.get(key);
+    // A customer's org is their mail domain, as src/lookup.js `toAuthor` has it: the badge on
+    // their picture, which shows their customer's card.
     return {
-      kind: 'person', name: p.name, org: p.org || null, staff: p.staff,
+      kind: 'person', name: p.name, org: p.staff ? null : (p.email || '').split('@')[1] || null, staff: p.staff,
     };
   };
 
@@ -487,14 +653,18 @@ export function createStore(now = Date.now(), { big = false, admin = false } = {
       // A snowflake: ms since Discord's epoch, shifted by 22 bits.
       return String((BigInt(ms) - 1420070400000n) * 4194304n + BigInt(seq));
     }
+    if (source === 'portal') {
+      // The portal's message ids (src/portal/ids.js): the time in base 36, then six digits.
+      return `m${Math.floor(ms).toString(36).padStart(9, '0')}${String(seq).padStart(6, '0')}`;
+    }
     return source === 'slack'
       ? `${Math.floor(ms / 1000)}.${String(seq).padStart(6, '0')}`
       : String(ms + seq);
   }
 
   function threadKey(ch, rootId) {
-    if (ch.source === 'discord') {
-      return `discord:${TENANT}:${ch.channelId}:${rootId}`;
+    if (ch.source === 'discord' || ch.source === 'portal') {
+      return `${ch.source}:${TENANT}:${ch.channelId}:${rootId}`;
     }
     return ch.source === 'slack'
       ? `slack:${TENANT}:${ch.channelId}:${rootId}`
@@ -502,6 +672,10 @@ export function createStore(now = Date.now(), { big = false, admin = false } = {
   }
 
   function permalink(ch, id) {
+    if (ch.source === 'portal') {
+      // The portal is its customers': the inbox keeps no link to it.
+      return null;
+    }
     if (ch.source === 'discord') {
       return `https://discord.example.com/channels/${TENANT}/${ch.channelId}/${id}`;
     }
@@ -551,6 +725,8 @@ export function createStore(now = Date.now(), { big = false, admin = false } = {
       messages: live.filter((m) => m.author.kind !== 'system').length,
       // Re-threaded into another thread's group (src/rethread.js): that group's first thread.
       logical_thread: entry.logical || null,
+      // From the history import (src/history.js): read by everyone, waiting on nobody.
+      imported: entry.imported ? 1 : 0,
       updated_at: new Date(now).toISOString(),
     };
   }
@@ -609,13 +785,20 @@ export function createStore(now = Date.now(), { big = false, admin = false } = {
    * `bash`: the commands the thread's agent asked a person to run, `[{ ago, command, reason,
    * env?, timeout?, open?, status?, by?, exit?, ended? }]`: asked `ago` minutes ago, open for
    * `open` more minutes; `status` (and `by`, a person key) for one that was decided `ended`
-   * minutes ago (2, unless it says).
+   * minutes ago (2, unless it says). `kind: 'codemode'` and `tools` make one a script to run as
+   * the person (src/agent/scriptrequest.js), `command` its code. `asked`: the index in `sidebar`
+   * of the message the agent answered when it asked, which shows it in that conversation.
    * `sidebar`: what someone on the team said to the thread's agent in the inbox's sidebar, and
-   * its answers, `[who, minutesAgo, body]`, `who` a person key or 'agent' (src/sidebar.js).
+   * its answers, `[who, minutesAgo, body]`, `who` a person key or 'agent' (src/sidebar.js); an
+   * answer `[..., { unseen: true }]` its asker has not seen yet (the purple badge).
+   * `tools`: what the agent asked for there (src/toolrequests.js), `[{ asked, ago, kind, name,
+   * title, about, reason, status?, by? }]`: `asked` the index in `sidebar` of the message it
+   * answered, `ago` minutes ago; `status` (and `by`, a person key) for one that was decided.
+   * `imported`: the thread came in through the history import (src/history.js).
    */
   function seed({
     ch, messages, reads = {}, label, facts: threadFacts = [], mentioned = [], draft, bash = [],
-    sidebar = [],
+    sidebar = [], tools = [], imported = false,
   }) {
     const ids = messages.map(([, ago]) => newId(ch.source, now - ago * MIN));
     const rootId = ids[0];
@@ -629,6 +812,7 @@ export function createStore(now = Date.now(), { big = false, admin = false } = {
       }).replace(/\/[^/]+\.md$/, '/'),
       messages: [],
       row: null,
+      imported,
     };
     threads.set(key, entry);
     messages.forEach(([who, ago, body, extra = {}], i) => {
@@ -671,8 +855,11 @@ export function createStore(now = Date.now(), { big = false, admin = false } = {
         topics: label.topics || [],
         // The technologies the thread shows (labels.tech), as JSON; null: labeled before that.
         tech: label.tech ? JSON.stringify(label.tech) : null,
+        // The language Clef read (src/translate.js): the inbox translates it where it is not
+        // the browser's.
+        language: label.language || 'en',
+        language_p: label.language_p ?? 0.97,
         labeled_through: entry.row.any_at,
-        reviewed: [],
       });
     }
     // Clairic's affected page; the rest as the rules found them.
@@ -687,11 +874,21 @@ export function createStore(now = Date.now(), { big = false, admin = false } = {
     if (draft) {
       const p = draft.by === 'agent' ? AGENT : byKey.get(draft.by);
       const at = new Date(now - draft.ago * MIN).toISOString();
+      // Its pictures (src/draftfiles.js), served at /api/draft/file as the uploads are. The
+      // fixtures' are SVG, which a real draft never has (only PNG, JPEG, GIF and WebP).
+      const pictures = (draft.files || []).map(([name, bytes]) => {
+        const id = `df_${String(uploads.size + 1).padStart(8, '0')}-0000-4000-8000-000000000000`;
+        uploads.set(id, { name, type: 'image/svg+xml', bytes });
+        return {
+          id, name, type: 'image/svg+xml', size: bytes.length,
+        };
+      });
       drafts.set(key, {
         thread: key,
         body: draft.body,
         mentions: draft.mentions || [],
         sources: draft.sources || [],
+        files: pictures,
         by: { id: p.id, name: p.name },
         created_at: at,
         updated_at: at,
@@ -699,22 +896,60 @@ export function createStore(now = Date.now(), { big = false, admin = false } = {
     }
     if (sidebar.length) {
       let asked = null;
-      sidebars.set(key, sidebar.map(([who, ago, body], i) => {
+      let asker = null;
+      let followups = 0;
+      sidebars.set(key, sidebar.map(([who, ago, body, opts = {}], i) => {
+        const { unseen = false, followup = false } = opts;
         const p = who !== 'agent' && byKey.get(who);
         const id = `sb_${String(threads.size).padStart(8, '0')}-0000-4000-8000-${String(i).padStart(12, '0')}`;
+        if (p) {
+          followups = 0;
+        }
+        if (followup) {
+          followups += 1;
+        }
         const m = {
-          id: p ? id : `${asked}:answer`,
+          id: p ? id : `${asked}:${followup ? `followup:${followups}` : 'answer'}`,
           role: p ? 'person' : 'agent',
           by: p ? { id: p.id, name: p.name } : null,
           body,
           state: 'done',
           reply_to: p ? null : asked,
           at: new Date(now - ago * MIN).toISOString(),
+          ...(p ? {} : { to: asker, unseen }),
         };
         if (p) {
           asked = id;
+          asker = p.id;
         }
         return m;
+      }));
+    }
+    if (tools.length) {
+      const said = sidebars.get(key) || [];
+      toolRequests.set(key, tools.map((r, i) => {
+        const who = r.by && byKey.get(r.by);
+        const at = now - r.ago * MIN;
+        const decided = r.status ? new Date(at + MIN).toISOString() : null;
+        return {
+          // Twelve hex digits, as src/agent/toolrequest.js makes them.
+          id: (0x4a1c0de51ab0 + threads.size * 0x10000 + i * 0x9e3779b1).toString(16).slice(-12),
+          thread: key,
+          sidebar: said[r.asked].id,
+          kind: r.kind,
+          name: r.name,
+          title: r.title,
+          about: r.about,
+          reason: r.reason,
+          status: r.status || 'pending',
+          created_at: new Date(at).toISOString(),
+          deadline: new Date(at + 24 * 60 * MIN).toISOString(),
+          by: who ? { id: who.id, name: who.name } : null,
+          decided_at: decided,
+          expires_at: r.status === 'granted' ? new Date(at + MIN + 24 * 60 * MIN).toISOString() : null,
+          revoked_by: null,
+          revoked_at: null,
+        };
       }));
     }
     if (bash.length) {
@@ -725,9 +960,12 @@ export function createStore(now = Date.now(), { big = false, admin = false } = {
           // Twelve hex digits, as src/agent/bashrequest.js makes them: the agent names them.
           id: (0x375f59640760 + threads.size * 0x10000 + i * 0x9e3779b1).toString(16).slice(-12),
           thread: key,
+          kind: b.kind || 'bash',
           command: b.command,
           reason: b.reason,
           env: b.env || [],
+          tools: b.tools || [],
+          sidebar: b.asked === undefined ? null : (sidebars.get(key) || [])[b.asked].id,
           timeout: b.timeout || 60,
           deadline: new Date(now + (b.open ?? 23 * 60) * MIN).toISOString(),
           status: b.status || 'pending',
@@ -925,6 +1163,20 @@ export function createStore(now = Date.now(), { big = false, admin = false } = {
   });
 
   // The kinds about people and meetings, not work: a farewell and handover, a call moved.
+  // Before it, a thread with a fact of the admin team's Figma rule (scripts/dev-ui-admin.mjs),
+  // named as the rule labels it: searching for the file's key shows "Figma file" and the key.
+  seed({
+    ch: CHANNELS.aemGlobex,
+    messages: [
+      ['mei', 420, 'Our designers shared the Figma file for the new hero block. Can the block match it on mobile too?'],
+      ['priya', 400, 'I will build it from the file and send a preview link.'],
+    ],
+    reads: { dana: 'latest' },
+    label: {
+      kind: 'request', next_actor: 'us', urgency: 0.6, resolved_p: 0.2, topics: ['frontend'],
+    },
+    facts: [['figma_file', 'Hx7DemoKey2026Blocks'], ['order', 'ORD-204816']],
+  });
   seed({
     ch: CHANNELS.aemGlobex,
     messages: [
@@ -947,6 +1199,75 @@ export function createStore(now = Date.now(), { big = false, admin = false } = {
     },
   });
 
+  // A bot of Adobe's (an admin said so on the admin page's Bots) answers the customer: on
+  // Adobe's side, as a colleague would, not on the customer's.
+  seed({
+    ch: CHANNELS.cdn,
+    messages: [
+      ['mei', 130, 'Could someone add our new developer to this team? Their address is in the ticket.'],
+      ['ourbot', 128, 'Added 1 guest to Globex CDN. They get an invitation by mail within a few minutes.'],
+      ['mei', 110, 'Thanks, they are in.'],
+    ],
+    label: {
+      kind: 'access', next_actor: 'nobody', urgency: 0.2, resolved_p: 0.8, topics: ['auth'],
+    },
+  });
+
+  // Dana raised a limit by hand; Priya asked the agent in the sidebar whether the team has a
+  // runbook for it, and the agent asked Dana for the steps it could not find
+  // (src/questions.js): the question is a thread of Dana's inbox (scripts/dev-ui-admin.mjs).
+  seed({
+    ch: CHANNELS.cdn,
+    messages: [
+      ['mei', 300, 'Preview fails on our product pages since they have more than 200 images. Can the limit go up for globex/www?', { subject: 'Preview fails over 200 images' }],
+      ['dana', 240, 'Raised it to 400 images for globex/www. Please try again.'],
+      ['mei', 200, 'Works now, thanks!'],
+    ],
+    sidebar: [
+      ['priya', 150, 'Do we have a runbook for raising the image limit?'],
+      ['agent', 149, 'Partly: kb-team says it is `limits.maxImages` in the site config, under `limits`, not `features`. It does not say how Dana set it, whether it is per site or per org, or how to undo it. I asked Dana for those three, and will write the runbook once she answers.'],
+    ],
+    label: {
+      kind: 'request', next_actor: 'nobody', urgency: 0.3, resolved_p: 0.9, topics: ['cdn'],
+    },
+  });
+
+  // Dana mentioned Noor, whose name Teams filled in: she was not in the Teams team. The agent
+  // said so in the sidebar, and once the bot had added her, followed up there ("Thread Agent
+  // followed up with you"), unseen: the row has the purple badge.
+  seed({
+    ch: CHANNELS.cdn,
+    messages: [
+      ['mei', 45, 'Purge API calls answer 403 since we rotated the key. Who can look at it?', { subject: 'Purge API 403 after key rotation' }],
+      ['dana', 40, '@Noor Haddad can you take this?'],
+      ['dana', 20, '@Provisioning Agent add nhaddad@example.com'],
+      ['ourbot', 19.5, 'Added nhaddad@example.com to Globex CDN.'],
+    ],
+    sidebar: [
+      ['dana', 30, 'Her name filled in when I mentioned her, so she is in the team, right?'],
+      ['agent', 29.5, 'No: Teams completes a mention from the whole directory, not from the team. Noor is not a member of Globex CDN, so the mention did not reach her.\n\nAsk the Provisioning Agent to add her, with her address: `add nhaddad@example.com`.'],
+      ['agent', 19, 'Noor is in Globex CDN now: the Provisioning Agent added her a moment ago. Mention her again so she sees Mei\'s question; your first mention did not reach her.', { followup: true, unseen: true }],
+    ],
+    label: {
+      kind: 'incident', next_actor: 'us', urgency: 0.9, resolved_p: 0.05, topics: ['cdn'],
+    },
+  });
+
+  // A case Adobe opened with Initech, a vendor: Initech asked for headers, Dana sent them a day
+  // and a half ago, and it has said nothing since. It waits on the vendor, too long: chase them.
+  seed({
+    ch: CHANNELS.initech,
+    messages: [
+      ['dana', 60 * 40, 'Our purge of `/products` did not clear the Frankfurt edge. Can you check what happened there?'],
+      ['jonas', 60 * 38, 'Looking into it. Can you send the response headers of a stale hit?'],
+      ['dana', 60 * 36, 'Here they are: `x-cache: HIT`, `age: 5402`, served by the FRA edge after the purge returned 200.'],
+    ],
+    reads: { dana: 'latest' },
+    label: {
+      kind: 'incident', next_actor: 'vendor', urgency: 1.2, resolved_p: 0.1, topics: ['cdn'],
+    },
+  });
+
   seed({
     ch: CHANNELS.initech,
     messages: [
@@ -955,6 +1276,19 @@ export function createStore(now = Date.now(), { big = false, admin = false } = {
       ['jonas', 185, 'Thanks, the staging host resolves again.'],
     ],
     mentioned: ['dana'],
+  });
+
+  // From the history import: over before the inbox began, so read and quiet, though the customer
+  // spoke last and mentioned Dana.
+  seed({
+    ch: CHANNELS.initech,
+    messages: [
+      ['jonas', 60 * 24 * 40, 'Do we need to rotate the CDN keys before the migration?'],
+      ['tom', 60 * 24 * 40 - 30, 'Not before, the new keys come with it.'],
+      ['jonas', 60 * 24 * 40 - 45, 'Great, Dana, can you confirm the date?'],
+    ],
+    mentioned: ['dana'],
+    imported: true,
   });
 
   seed({
@@ -996,6 +1330,23 @@ export function createStore(now = Date.now(), { big = false, admin = false } = {
   seed({
     ch: CHANNELS.initech,
     messages: [['priya', 17 * 60, 'Purges are tracked in https://teams.microsoft.com/l/channel/CH-CDN/CDN%20tickets?groupId=TEAM-EDGE&tenantId=T-FAKE, the release dates in [the release channel](https://teams.microsoft.com/l/channel/CH-RELEASE/Release%20train?groupId=TEAM-PLATFORM&tenantId=T-FAKE).']],
+  });
+
+  // A thread in Japanese (Clef reads its language): the inbox shows it translated into the
+  // browser's language (GET /api/translate, scripts/dev-ui.mjs), with the bar above it.
+  seed({
+    ch: CHANNELS.aemGlobex,
+    messages: [
+      ['mei', 240, 'お世話になっております。プレビューの `/products` ページが今朝から **404** になっています。ご確認いただけますか？'],
+      ['priya', 230, 'ご連絡ありがとうございます。確認いたします。'],
+      ['mei', 225, 'Thanks, the URL is https://main--site--globex.aem.page/products'],
+      ['priya', 200, 'リダイレクトの設定を修正しました。もう一度お試しください。'],
+      ['mei', 190, '直りました。ありがとうございます！ :pray:'],
+    ],
+    reads: { dana: 230 },
+    label: {
+      kind: 'incident', next_actor: 'nobody', urgency: 0.8, resolved_p: 0.9, topics: ['urls'], language: 'ja',
+    },
   });
 
   // Emoji in other platforms' names and spellings (Discord's `facepalm`, `thumbs-up`, a
@@ -1057,6 +1408,37 @@ export function createStore(now = Date.now(), { big = false, admin = false } = {
     mentioned: [['dana', 180], ['dana', 50], ['dana', 15]],
   });
 
+  // Asked in the sidebar whether another thread answered this already: the agent sees only its
+  // own channel, so it asks to run a script as Dana, which reads the inbox as she may.
+  seed({
+    ch: CHANNELS.aemGlobex,
+    messages: [
+      ['mei', 95, 'A new article does not show up on any of the blog cards, on the homepage or on /research/, though it is published.'],
+      ['tom', 80, 'cc @Dana Whitfield, I think the ops channel had this last week.'],
+    ],
+    reads: { dana: 'latest' },
+    sidebar: [
+      ['dana', 20, 'Is this already answered in another recent thread?'],
+      ['agent', 19, 'Not in this channel: none of its threads has it. Tom points at the ops channel, which I cannot read, so I asked to run a script as you that searches your inbox for it: here it is, for you to read and run.'],
+    ],
+    bash: [{
+      ago: 19,
+      asked: 0,
+      kind: 'codemode',
+      tools: ['search_threads', 'get_thread'],
+      command: `const { threads } = await tools.search_threads({ query: 'article missing from blog cards', limit: 5 });
+for (const t of threads.filter((x) => x.customer === 'globex')) {
+  const { messages } = await tools.get_thread({ thread: t.thread, limit: 5 });
+  text(\`\${t.title} (\${t.channel}, \${t.link})\`);
+  for (const m of messages) text(\`  \${m.from}: \${m.text.slice(0, 300)}\`);
+}`,
+      reason: 'Looks for a thread of Globex\'s about blog cards that miss an article, in the channels you can see, and prints the latest messages of each it finds.',
+    }],
+    label: {
+      kind: 'incident', next_actor: 'us', urgency: 1, resolved_p: 0.1,
+    },
+  });
+
   // Labeled "us", but Adobe asked last: not waiting on us, whatever the label says.
   seed({
     ch: CHANNELS.aemAcme,
@@ -1065,8 +1447,33 @@ export function createStore(now = Date.now(), { big = false, admin = false } = {
       ['priya', 500, 'Sure. Which branch should it build from?'],
     ],
     reads: { priya: 500, dana: 'latest' },
+    // Dana asked the agent in the sidebar and went on to another thread before it answered: read,
+    // but its answer to her waits, so the row has the purple badge until she opens it.
+    sidebar: [
+      ['dana', 498, 'Do we have a quota for preview environments on their plan?'],
+      ['agent', 497, 'Yes: their plan has **two** preview environments, and they use one (`main`). A second one for the campaign fits, no change to the contract needed.\n\nI left the draft as it is. Nothing went to the channel.', { unseen: true }],
+    ],
     label: {
       kind: 'request', next_actor: 'us', urgency: 0.8, resolved_p: 0.1,
+    },
+  });
+
+  // Moved to Forms ops at Dana's asking, in the sidebar: not in her inbox any more, and she still
+  // sees it (from a link, ?t=…) and talks to its agent, though she may not work it. The sidebar
+  // says who sees it; the reply box is not hers.
+  seed({
+    ch: CHANNELS.formsAcme,
+    messages: [
+      ['sam', 140, 'The contact form stopped sending submissions to our CRM since this morning.'],
+    ],
+    sidebar: [
+      ['dana', 130, 'Does this channel belong to us or to Forms?'],
+      ['agent', 129.5, 'It is filed under Platform ops: the `aem-` prefix rule puts it there. It is about AEM Forms, so Forms ops may be the better owner. Should I ask the admin team to move it?'],
+      ['dana', 129, 'move.'],
+      ['agent', 128.5, 'I filed a request to move the channel to Forms ops. The admin team confirms or declines it in its inbox.'],
+    ],
+    label: {
+      kind: 'incident', next_actor: 'us', urgency: 1.2, resolved_p: 0.1,
     },
   });
 
@@ -1187,23 +1594,106 @@ export function createStore(now = Date.now(), { big = false, admin = false } = {
       ['sam', 90, 'The site config we push, and what preview logs right after:\n\n```\n{\n  "source": {\n    "type": "markup",\n    "url": "https://content.example.com/acme",\n    "retries": 3,\n    "paused": false\n  },\n  "owner": "acme",\n  "repo": "acme-web"\n}\n```\n\n```\n2026-10-21 10:02:11.204 *ERROR* [preview-7] content.Source Failed to fetch /en/index: 503\n2026-10-21 10:02:12.380 *WARN* [preview-7] content.Source Retrying (1 of 3)\n```', { subject: 'Preview fails after the config push' }],
       ['dana', 85, 'Thanks. Can you run this and send what it prints?\n\n```\ncurl -sS -H "Authorization: Bearer $TOKEN" https://admin.example.com/status/acme/acme-web/main/en/index | jq .preview\n```'],
       ['sam', 80, 'Our rewrite does this, in case it matters:\n\n```js\n// Maps legacy paths before the CDN asks the origin.\nexport function rewrite(url) {\n  const path = url.pathname.replace(/^\\/content\\/acme/, \'\');\n  return path.endsWith(\'.html\') ? path.slice(0, -5) : path;\n}\n```'],
+      // A table and a file whose name is longer than the bubble is wide, a customer's and a
+      // staff member's: the bubble stays in its column (the name is cut, the table wraps), on
+      // the right as on the left; a narrow window shows it.
+      ['sam', 79, `What preview answered per path since the push:\n\n${WIDE_TABLE}\n\nAttachments:\n- [${LONG_NAME}.csv](${upload(`${LONG_NAME}.csv`, 'text/csv', new TextEncoder().encode(publishCsv()))})`],
+      ['dana', 78, `And what the content host answered for the same requests:\n\n${WIDE_TABLE}\n\nAttachments:\n- [${LONG_NAME}.log](${upload(`${LONG_NAME}.log`, 'text/plain', new TextEncoder().encode('10:02:11 503 /en/index\n'))})`],
     ],
     reads: { dana: 85 },
     label: {
       kind: 'incident', next_actor: 'us', urgency: 1.1, resolved_p: 0.2, topics: ['publishing'],
     },
-    // Lena asked the thread's agent in the sidebar, before Sam's rewrite came in: folded in the
-    // thread, between Dana's question and Sam's answer. Dana asked it after that: a second
-    // conversation, under the thread. A wide screen shows both in the panel beside the thread.
+    // Lena asked the thread's agent in the sidebar, before Sam's rewrite came in; Dana joined the
+    // conversation after it: one line, Lena's and hers, under the thread, where it was last
+    // talked in. A wide screen shows it in the panel beside the thread.
     sidebar: [
       ['lena', 84, 'Have we seen `content.Source` 503s after a config push before?'],
+      ['lena', 83.8, `These are the paths that failed:\n\n${WIDE_TABLE}\n\nAttachments:\n- [${LONG_NAME}.log](${upload(`${LONG_NAME}.log`, 'text/plain', new TextEncoder().encode('10:02:11 503 /en/index\n'))})`],
       ['agent', 83.5, 'Yes, twice for ACME this year (*preview-503-after-config-push* in their knowledge base). Both times the content source was set to `paused` by the push, and preview answered 503 until it was resumed.\n\nHere it says `"paused": false`, so it is not that. The retries in the log point at the content host itself.'],
       ['lena', 82, 'So it could be their rewrite?'],
       ['agent', 81.5, 'Possibly: if it strips `/content/acme` before preview asks the content host, the paths would not resolve. I asked Sam for the rewrite in the draft. Nothing went to the channel.'],
       ['dana', 64, 'Does the rewrite Sam sent explain it?'],
       ['agent', 63.5, 'It does: `rewrite` drops `/content/acme`, and the content source\'s `url` ends in `/acme`, so preview asks the content host for `/en/index` under the wrong root.\n\nI put that in the draft, with the one-line fix. Nothing went to the channel.'],
+      ['dana', 62, 'Can you check what preview answers for `/en/index` right now?'],
+      ['agent', 61.5, 'Not from here: this channel gives me no browser. I asked for one, below. Once someone grants it, I load the preview page and tell you what it answers.'],
     ],
+    // The agent asked for a tool its channel does not have, in answer to Dana: it waits for
+    // someone on the team to grant or deny it.
+    tools: [{
+      asked: 6,
+      ago: 61.5,
+      kind: 'server',
+      name: 'global:fluffyjaws',
+      title: 'MCP server FluffyJaws',
+      about: 'FluffyJaws\' MCP server, Adobe\'s internal support assistant: searches its knowledge (FluffyPack), product documentation, Slack, the wiki, Jira, GitHub code and support tickets, and answers questions about them',
+      reason: 'Dana asked whether the content host has had 503s for other customers this week. FluffyJaws has the support tickets, so I can tell her, instead of asking around.',
+    }],
   });
+
+  // The customer portal: the welcome that opened the channel, and the customer's first question.
+  seed({
+    ch: CHANNELS.portal,
+    messages: [
+      ['lena', 300, 'Welcome to Adobe Enterprise Support, Wayne Enterprises! This is your channel with the Edge ops team. Start a new thread for each question, and we answer you here.'],
+      ['lucius', 280, 'Thank you. We are glad to have a line to you at last.'],
+    ],
+    reads: { dana: 'latest' },
+    label: {
+      kind: 'other', next_actor: 'nobody', urgency: 0.1, resolved_p: 0.9,
+    },
+  });
+  seed({
+    ch: CHANNELS.portal,
+    messages: [
+      // With what he attached in the portal: an image and a log, by their addresses there.
+      ['lucius', 42, 'Universal Editor shows a blank canvas for our press releases\nPages under `/press` open in Universal Editor with nothing on the canvas. Everything else is fine, and the pages are live.\n\n'
+        + 'Attachments:\n![canvas.png](https://portal.example.com/api/file/f0wayne000000001a/canvas.png "1280x720")\n\n'
+        + '- [editor.log](https://portal.example.com/api/file/f0wayne000000002b/editor.log)'],
+      ['lena', 35, 'Is `/press` a folder of its own in Document Authoring, with its own component filter?'],
+      ['lucius', 20, 'Yes: it has a `component-filters.json` of its own, added last week.'],
+    ],
+    label: {
+      kind: 'question', next_actor: 'us', urgency: 0.6, resolved_p: 0.1,
+    },
+  });
+
+  // The customers Dana has read everything of (CHANNELS.hooli and after): one she posts to
+  // most, one now and then, and three she has neither posted to nor been mentioned in for weeks.
+  const DAY = 24 * 60;
+  const quiet = (ch, ago, title, reply, more = []) => seed({
+    ch,
+    messages: [['lena', ago + 30, title], ['dana', ago, reply], ...more],
+    reads: { dana: 'latest' },
+    label: {
+      kind: 'question', next_actor: 'nobody', urgency: 0.2, resolved_p: 0.9,
+    },
+  });
+  quiet(CHANNELS.hooli, 2 * DAY, 'Hooli asks whether the new redirects can go live with Friday\'s release.', 'They can: the redirects are in the release branch.', [
+    ['lena', 2 * DAY - 20, 'Thanks, I will tell them.'],
+    ['dana', 2 * DAY - 25, 'Tell them to purge `/promo` after it.'],
+  ]);
+  quiet(CHANNELS.hooli, 4 * DAY, 'Hooli\'s preview builds take twice as long since Monday.', 'The code bus was slow for everyone on Monday; it is back to normal.', [
+    ['dana', 4 * DAY - 10, 'Their builds are back under a minute.'],
+    ['dana', 4 * DAY - 12, 'Closing this one.'],
+  ]);
+  quiet(CHANNELS.hooli, 6 * DAY, 'Can Hooli get a second CDN property for the campaign?', 'Yes, I set it up this morning.', [
+    ['dana', 6 * DAY - 5, 'It is `campaign.hooli.example`.'],
+  ]);
+  quiet(CHANNELS.stark, 5 * DAY, 'Stark\'s sitemap lists pages that are gone.', 'It is rebuilt every night: tomorrow\'s will not have them.');
+  quiet(CHANNELS.wonka, 18 * DAY, 'Wonka\'s forms post to an endpoint that answers 404.', 'Their forms service moved: the form config needs the new URL.');
+  quiet(CHANNELS.tyrell, 26 * DAY, 'Tyrell wants to know when the old author host goes away.', 'At the end of the quarter; they have a reminder.');
+  seed({
+    ch: CHANNELS.massive,
+    messages: [
+      ['priya', 3 * DAY + 30, 'Massive Dynamic\'s survey form drops the file upload field on submit.'],
+      ['priya', 3 * DAY, 'The upload limit was 2 MB; raised to 10 MB, and their test submission went through.'],
+    ],
+    label: {
+      kind: 'question', next_actor: 'nobody', urgency: 0.2, resolved_p: 0.9,
+    },
+  });
+  quiet(CHANNELS.cyberdyne, 40 * DAY, 'Cyberdyne sees mixed content warnings on the product pages.', 'Two images still had http URLs; fixed in the content.');
 
   seed({
     ch: CHANNELS.forum,
@@ -1285,6 +1775,37 @@ export function createStore(now = Date.now(), { big = false, admin = false } = {
       ['dana', 3990, 'Staging only, ask Tom for access.'],
     ],
     reads: { dana: 3990 },
+    // The agent's draft, in a channel where it does not post itself: sending it (with --manager
+    // or --admin) asks whether it may (src/postoffer.js; scripts/dev-ui.mjs counts the rest).
+    draft: {
+      by: 'agent',
+      ago: 30,
+      body: 'Tom gave you access to staging: the new rule set is there, on `waf-staging`.',
+    },
+  });
+
+  // The agent's draft with a screenshot it took on its computer (the browser image): it shows on
+  // the draft's line, and goes with the reply when it is sent.
+  seed({
+    ch: CHANNELS.edgeQ,
+    messages: [
+      ['lena', 70, 'On phones the sticky banner\'s background stops at the container: is that our CSS or yours?'],
+    ],
+    reads: { dana: 'latest' },
+    label: {
+      kind: 'question', next_actor: 'us', urgency: 0.5, resolved_p: 0.1,
+    },
+    draft: {
+      by: 'agent',
+      ago: 20,
+      body: 'It is the banner block\'s CSS: its background is set on the inner wrapper, which is capped at '
+        + 'the container width. Moving it to `.banner` itself fixes it; the screenshot shows the page at '
+        + '390 pixels with that change.',
+      files: [
+        ['banner-390.png', screenshot('Banner at 390 px, with the fix', '#0ea5e9', [110, 110, 110, 110, 110], 390, 640)],
+        ['banner-1280.png', screenshot('Banner at 1280 px', '#0ea5e9', [80, 80, 80, 80, 80, 80, 80, 80, 80, 80, 80, 80], 1280, 720)],
+      ],
+    },
   });
 
   // Three unread mentions of the viewer: the red badge in the personal view's customer column,
@@ -1445,14 +1966,63 @@ export function createStore(now = Date.now(), { big = false, admin = false } = {
     ? [...TEAMS, { slug: 'admin', name: 'Admin', members: [1] }]
     : TEAMS;
 
+  // Linked across a partner and its customers (src/threadlinks.js): the agency's own thread about
+  // ACME's preview after a repository move, possibly the 503s ACME reported in its channel, where
+  // Ravi of the agency posts too.
+  const agencyMove = seed({
+    ch: CHANNELS.agencyProjects,
+    messages: [
+      ['ravi', 95, 'After we moved the preview repository to the new GitHub org, the preview still serves the old code.'],
+      ['priya', 80, 'Which org does the code sync point at now? It may still be the old one.'],
+      ['ravi', 30, 'The new one, as far as we can tell. The 503s started after the move as well.'],
+    ],
+    label: {
+      kind: 'incident', next_actor: 'us', urgency: 1.6, resolved_p: 0.1, topics: ['publishing'], tech: { eds: 1, github: 0.9 },
+    },
+    facts: [['site', 'acme/acme-preview']],
+  });
+  // A public channel's thread: Sam of ACME, Ravi of the agency and Kai of no known org.
+  const workshop = seed({
+    ch: CHANNELS.workshop,
+    messages: [
+      ['kai', 70, 'In the workshop exercise, my preview shows a 404 after I add the block. What did I miss?'],
+      ['sam', 55, 'Same for me. The block folder name and the class name have to match, I think?'],
+      ['ravi', 40, 'They do, and the block needs both a `.js` and a `.css` file of that name.'],
+    ],
+    label: {
+      kind: 'question', next_actor: 'us', urgency: 0.6, resolved_p: 0.2, tech: { eds: 1 },
+    },
+  });
+  const threadOrgs = [
+    {
+      thread: workshop, org: 'acme', name: 'ACME', icon: 'acme.example', role: 'customer', p: 1, via: ['posters'],
+    },
+    {
+      thread: workshop, org: 'agency', name: 'Agency Co', icon: 'agency.example', role: 'partner', p: 1, via: ['posters'],
+    },
+    {
+      thread: agencyMove, org: 'acme', name: 'ACME', icon: 'acme.example', role: 'about', p: 0.92, via: ['facts', 'clef'],
+    },
+    {
+      thread: preview503, org: 'agency', name: 'Agency Co', icon: 'agency.example', role: 'partner', p: 1, via: ['posters'],
+    },
+  ];
+  const threadLinks = [{
+    a: agencyMove, b: preview503, score: 0.87, p: 0.81, via: ['owner', 'clef'],
+  }];
+
   return {
     now,
     me: {
-      ...people.get(1), teams: teams.map(({ slug, name }) => ({ slug, name })), admin: false,
+      ...people.get(1),
+      teams: teams.filter((t) => t.members.includes(1)).map(({ slug, name }) => ({ slug, name })),
+      admin: false,
     },
     teams,
     klickhaus: KLICKHAUS,
     partners: PARTNERS,
+    threadOrgs,
+    threadLinks,
     people,
     members: MEMBERS,
     threads,
@@ -1464,6 +2034,7 @@ export function createStore(now = Date.now(), { big = false, admin = false } = {
     appPosts,
     drafts,
     bashRequests,
+    toolRequests,
     sidebars,
     sourceViews,
     sourcePage,

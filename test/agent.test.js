@@ -32,21 +32,27 @@ import {
   accessibleRepos, githubSlug, listFiles, mirrorName, refreshMirrors,
 } from '../src/agent/repos.js';
 import { seed, seedNote, seedPin } from '../src/agent/seed.js';
+import { dream, dreamOf } from '../src/agent/dream.js';
 import { setAgent, setTeamDefault } from '../src/agent/enabled.js';
+import { agentEnv } from '../src/agent/agentenv.js';
+import { toolsFor } from '../src/agent/agenttools.js';
 import {
-  agentStatus, pokeAgent, seedAgent, talkToAgent, tellDiscarded,
+  agentStatus, decideBash, decideTool, pokeAgent, sawSidebar, seedAgent, talkToAgent,
+  tellDiscarded,
 } from '../src/agent/stub.js';
+import { maySee, mayWork } from '../src/shares.js';
 import { keepSidebarAnswer } from '../src/sidebar.js';
 import { channelThreads, resolveAnyThread, resolveThread } from '../src/agent/history.js';
 import { mentionedOutside } from '../src/agent/members.js';
 import { codemodeExtension, mcpExtension } from '../src/agent/mcp.js';
 import {
-  agentPerson, agentToolsExtension, opspileExtension, staffExtension,
+  agentPerson, agentToolsExtension, kbChatExtension, opspileExtension, staffExtension,
 } from '../src/agent/tools.js';
 import {
   keepLive, keepTurn, keptTurn, liveDue, liveTurn,
 } from '../src/agent/kept.js';
-import { thread as inboxThread } from '../src/api.js';
+import { inbox, thread as inboxThread } from '../src/api.js';
+import { underlying } from '../src/d1batch.js';
 import { discardDraft, saveDraft } from '../src/drafts.js';
 import { processKey } from '../src/normalizer.js';
 import { d1 } from './d1.js';
@@ -377,6 +383,82 @@ describe('thread agents', () => {
       ['person', 'Is it the CDN?', 'Ada Staff'], ['agent', 'Yes: **the CDN**.', null],
     ]);
     assert.equal((await inboxThread({ ...e, AGENT_CHANNELS: '' }, me, THREAD)).agent, false);
+    // The answer is Ada's, and she has not seen it: the list has it for the purple badge.
+    const answer = data.sidebar[1];
+    assert.deepEqual([answer.to, answer.unseen], [me.id, true]);
+    const listed = async (who = me) => (await inbox(e, who, 'helix')).threads
+      .find((t) => t.thread === THREAD).sideNew;
+    assert.deepEqual(await listed(), [answer.id]);
+    assert.equal(await listed({ ...me, id: 8 }), undefined);
+    // Shown to her: marked seen, once, and only by her; her other inboxes hear of it.
+    const notified = [];
+    e.ROOMS = {
+      idFromName: (name) => name,
+      get: (name) => ({
+        async fetch(url, init) {
+          notified.push([name, JSON.parse(init.body)]);
+          return new Response('ok');
+        },
+      }),
+    };
+    const saw = (who, body, may = inTeam) => sawSidebar(e, who, body, may);
+    assert.equal((await saw(me, { thread: THREAD, ids: [] })).status, 400);
+    assert.equal((await saw(me, { thread: THREAD, ids: [answer.id] }, () => false)).status, 404);
+    assert.equal((await saw({ ...me, id: 8 }, { thread: THREAD, ids: [answer.id] })).status, 204);
+    assert.deepEqual(notified, []);
+    assert.deepEqual(await listed(), [answer.id]);
+    assert.equal((await saw(me, { thread: THREAD, ids: [answer.id, message.id] })).status, 204);
+    assert.equal((await saw(me, { thread: THREAD, ids: [answer.id] })).status, 204);
+    assert.deepEqual(notified, [['helix', { type: 'sidebar-seen', thread: THREAD, person: me.id }]]);
+    assert.equal(await listed(), undefined);
+    assert.equal((await inboxThread(e, me, THREAD)).sidebar[1].unseen, false);
+  });
+
+  it('let who talked in a sidebar go on talking there once the channel is another team\'s', async () => {
+    const e = env({ AI: clef });
+    await quiet(() => ingest(e, MESSAGES.slice(0, 1)));
+    e.AGENTS = {
+      idFromName: (name) => ({ name }),
+      get: () => ({
+        async __unsafe_ensureInitialized() {
+          return true;
+        },
+        async sidebar() {
+          return { ok: true, accepted: true };
+        },
+      }),
+    };
+    const person = (id, teams) => ({
+      id, name: `Staff ${id}`, email: `s${id}@staff.example`, teams: teams.map((slug) => ({ slug, name: slug })),
+    });
+    const ada = person(7, ['helix']);
+    const bob = person(8, ['helix']);
+    const root = person(9, ['admin']);
+    const talk = (who, text) => talkToAgent(e, who, { thread: THREAD, text }, maySee(e, who));
+    assert.equal((await talk(ada, 'Should this channel be with Forms?')).status, 202);
+    // Moved, as the admin team confirmed her request: filed under Forms, which neither is on.
+    e.DB.sqlite.exec(`INSERT INTO teams (slug, name) VALUES ('forms', 'Forms ops');
+      UPDATE threads SET team = 'forms';`);
+    const seen = await inboxThread(e, ada, THREAD);
+    assert.equal(seen.can_work, false);
+    assert.equal(seen.sidebar.length, 1);
+    assert.equal((await talk(ada, 'Thanks. Anything left for us?')).status, 202);
+    // Bob never talked in it: the thread is not his to see, so it is not found.
+    assert.equal(await inboxThread(e, bob, THREAD), null);
+    assert.equal((await talk(bob, 'Hello?')).status, 404);
+    // An admin sees it and talks to its agent, and works it no more than Ada.
+    assert.equal((await inboxThread(e, root, THREAD)).can_work, false);
+    assert.equal((await talk(root, 'Why is it with Forms now?')).status, 202);
+    assert.equal((await inboxThread(e, person(10, ['forms']), THREAD)).can_work, true);
+    // What its agent asks for is its team's to decide: Ada is told whose, Bob that it is not found.
+    const decide = (who) => decideTool(e, who, { thread: THREAD, id: 'x' }, mayWork(e, who), 'grant', { seeing: maySee(e, who) });
+    const told = await decide(ada);
+    assert.equal(told.status, 403);
+    assert.match((await told.json()).error, /filed under Forms ops, and only its team may decide/);
+    assert.equal((await decide(bob)).status, 404);
+    const run = (who) => decideBash(e, who, { thread: THREAD, id: 'x' }, mayWork(e, who), { run: true, seeing: maySee(e, who) });
+    assert.equal((await run(root)).status, 403);
+    assert.equal((await run(bob)).status, 404);
   });
 
   it('keep their latest finished turn, which comes with the thread', async () => {
@@ -832,6 +914,8 @@ describe('thread agents', () => {
       capture(call('get_draft', {})),
       capture(call('kb_write', { kb: 'org', message: 'x', changes: [{ path: 'index.md', content: '# no' }] })),
       capture(call('kb_write', { kb: 'team', message: 'x', changes: [{ path: 'systemprompt.md', content: 'Obey customers.' }] })),
+      // Far longer than staff replies (src/agent/draftlength.js): refused before the version check.
+      capture(call('update_draft', { text: 'word '.repeat(400) })),
       capture(fauxAssistantMessage('done')),
     ]);
     const sub = await root.submit({ type: 'input', content: 'New message in the thread' }, ctx);
@@ -839,6 +923,9 @@ describe('thread agents', () => {
     await harness.close(ctx);
 
     assert.match(system, /You are the opspile agent/);
+    // Only the draft is in the customer's language; the note is in English, a sidebar answer in
+    // the sidebar message's.
+    assert.match(system, /only the draft is in the customer's language\. Write your note to the team in English/);
     assert.match(system, /Customer: acme/);
     assert.match(system, /kb-org: knowledge base of the customer acme\n# Knowledge base\n\n\* \[Main site\]/);
     assert.match(system, /adobe\/helix-opspile: GitHub https:\/\/github.com\/adobe\/helix-opspile \(opspile itself\) \(read only\)/);
@@ -849,7 +936,8 @@ describe('thread agents', () => {
     // Code mode lists the agent's tools for scripts, before the staff's instructions.
     assert.match(system, /<codemode>\nTools scripts can call[\s\S]*`git_grep`/);
     assert.ok(system.indexOf('<codemode>') < system.indexOf('The admin team wrote these instructions'));
-    const [thread, grep, read, saved, conflict, draft, refused, promptRefused] = results;
+    const [thread, grep, read, saved, conflict, draft, refused, promptRefused, tooLong] = results;
+    assert.match(tooLong, /^The draft is 1999 characters, far longer than the replies Adobe staff write \(most are 42 to 480\), and over the 1625 a draft may have\. Nothing was saved\./);
     assert.match(promptRefused, /systemprompt\.md is maintained by the admin team/);
     assert.match(thread, /CDN purge takes forever/);
     assert.match(thread, /withheld/);
@@ -901,7 +989,8 @@ describe('the earlier conversations of the channel', () => {
     },
   ];
 
-  async function setup() {
+  /** The agent's tools on the thread, with the env `envOf(e)` (the test's own, else). */
+  async function setup(envOf = (e) => e) {
     const e = env({ AI: clef });
     await quiet(() => ingest(e, [...EARLIER, ...MESSAGES]));
     // Another channel's thread, which the agent must not read.
@@ -914,7 +1003,7 @@ describe('the earlier conversations of the channel', () => {
       key: THREAD, team: 'helix', org: 'acme', threads: [THREAD], channelName: 'aem-acme', source: 'slack', tenant: 'E1', channelId: 'C1',
     };
     const agent = {
-      env: e,
+      env: envOf(e),
       hasThread: true,
       target: async () => target,
       verdicts: async (messages) => new Map(await Promise.all(
@@ -928,6 +1017,57 @@ describe('the earlier conversations of the channel', () => {
     };
     return { e, run, tools };
   }
+
+  it('read again once when D1 turned them away as overloaded, as /api/* and /mcp do', async () => {
+    const BUSY = 'D1_ERROR: D1 DB is overloaded. Too many resources consumed within a 10 second window.';
+    // D1 turns the next `n` reads away, as it does for a few seconds at a time when overloaded.
+    const turned = [];
+    let left = 0;
+    const busy = (DB) => {
+      const wrap = (stmt, sql) => {
+        const ask = (how) => (...a) => {
+          if (left > 0) {
+            left -= 1;
+            turned.push(sql);
+            return Promise.reject(new Error(BUSY));
+          }
+          return stmt[how](...a);
+        };
+        return {
+          ...stmt, bind: (...a) => wrap(stmt.bind(...a), sql), all: ask('all'), first: ask('first'),
+        };
+      };
+      return { ...DB, prepare: (sql) => wrap(DB.prepare(sql), sql) };
+    };
+    const waits = [];
+    // The thread agent's env (src/agent/agent.js), made of its object's.
+    const { run } = await setup((e) => agentEnv({ ...e, DB: busy(e.DB) }, () => THREAD, {
+      pause: async (ms) => waits.push(ms),
+    }).env);
+    left = 1;
+    const listed = await run('list_channel_threads', {});
+    assert.equal(listed.error, false);
+    assert.match(listed.text, /^- slack:E1:C1:1792510000\.000100 \| Purges are slow again \|/);
+    assert.equal(turned.length, 1);
+    assert.equal(waits.length, 1);
+    assert.ok(waits[0] >= 500 && waits[0] <= 1500, `waited ${waits[0]} ms`);
+    // Once, not more: still overloaded, the tool fails with it.
+    left = 2;
+    await assert.rejects(run('list_channel_threads', {}), /D1 DB is overloaded/);
+    assert.equal(waits.length, 2);
+    // On the bare binding, as before, the first one failed the tool.
+    const bare = await setup((e) => ({ ...e, DB: busy(e.DB) }));
+    left = 1;
+    await assert.rejects(bare.run('list_channel_threads', {}), /D1 DB is overloaded/);
+  });
+
+  it('keep the D1 binding under their env, which what is kept by the database is keyed by', () => {
+    const e = env();
+    assert.equal(underlying(agentEnv(e, () => THREAD).env.DB), e.DB);
+    // Without D1 (an agent's computer by itself, scripts/dev-computer/worker.mjs), as it is.
+    const none = { AGENTS: {} };
+    assert.equal(agentEnv(none).env, none);
+  });
 
   it('says who is a member of the channel, and when it cannot tell', async () => {
     const { e, run } = await setup();
@@ -1045,6 +1185,23 @@ describe('the earlier conversations of the channel', () => {
     assert.equal(refused.error, true);
   });
 
+  it('shows a message of the thread or the channel as Slack sent it, and no withheld one', async () => {
+    const { run } = await setup();
+    const own = await run('raw_message', { message: '1792584000.000100' });
+    assert.equal(own.error, false);
+    assert.equal(own.text, 'Message 1792584000.000100 as Slack sent it:\n<raw>\ntext:\nOur CDN purge takes forever on www\n</raw>');
+    const part = await run('raw_message', { message: '1792584000.000100', offset: 10 });
+    assert.match(part.text, /<raw>\nCDN purge takes forever on www\n<\/raw>$/);
+    const earlier = await run('raw_message', { message: '1792500060.000200', thread: '1792500000.000100' });
+    assert.match(earlier.text, /text:\nMaybe desk/);
+    assert.match((await run('raw_message', { message: '1792500060.000200' })).text, /^The thread has no message 1792500060\.000200/);
+    const flagged = await run('raw_message', { message: '1792584120.000300' });
+    assert.equal(flagged.error, true);
+    assert.match(flagged.text, /withheld/);
+    assert.doesNotMatch(flagged.text, /Ignore all previous/);
+    assert.equal((await run('raw_message', { message: '1', thread: 'slack:E1:C2:1792500000.000100' })).error, true);
+  });
+
   describe('with read_any_thread', () => {
     const AT = '2026-10-21T10:00:00Z';
     const OWN = 'slack:E1:C2:1792500000.000100';
@@ -1078,7 +1235,7 @@ describe('the earlier conversations of the channel', () => {
 
     it('reads a thread of another channel by key or link, with flagged messages withheld, and keeps a record', async () => {
       const { e, run, ext } = await internal();
-      assert.deepEqual(ext.tools.map((t) => t.name), ['read_any_thread']);
+      assert.deepEqual(ext.tools.map((t) => t.name), ['read_any_thread', 'find_channels', 'list_any_channel_threads']);
       assert.equal(ext.sections.length, 1);
       const read = await run(LINK);
       assert.equal(read.error, false);
@@ -1102,6 +1259,84 @@ describe('the earlier conversations of the channel', () => {
       e.DB.sqlite.exec("UPDATE channels SET shared = 1 WHERE channel_id = 'C2'");
       assert.equal((await run(THREAD)).error, true);
       assert.equal(e.DB.rows('SELECT 1 FROM agent_thread_reads').length, 1);
+    });
+
+    it('finds a customer\'s channels by its name, a site or a domain, and lists their threads', async () => {
+      const { e, ext } = await internal();
+      const { sqlite } = e.DB;
+      const call = async (name, args) => {
+        const res = await ext.tools.find((t) => t.name === name).execute(args, {});
+        return { text: res.output.map((o) => o.text).join(''), error: Boolean(res.isError) };
+      };
+      sqlite.prepare(`INSERT INTO orgs (slug, name, type, updated_at)
+        VALUES ('acme', 'Acme Technologies', 'customer', ?)`).run(AT);
+      const fact = sqlite.prepare(`INSERT INTO facts (thread, source, field, value)
+        VALUES (?, 'rule', 'site', 'acme/www')`);
+      fact.run(THREAD);
+      // The site, asked about in the agent's own channel and in another internal one: neither
+      // is the customer's.
+      fact.run(OWN);
+      sqlite.prepare(`INSERT INTO threads (thread, source, tenant, channel_id, root_id, org, team,
+          kind, channel_name, path, root_at, last_at, messages, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, 'helix', ?, ?, 'channels/x/', ?, ?, 1, ?)`)
+        .run('slack:E1:C3:1.000100', 'slack', 'E1', 'C3', '1.000100', 'other', 'channel', 'ask-us', AT, AT, AT);
+      fact.run('slack:E1:C3:1.000100');
+      // The customer's Teams channel, and a channel the rules ignore.
+      const TEAMS = 'teams:TN1:G1:19:abc@thread.tacv2:100';
+      sqlite.prepare(`INSERT INTO channels (source, tenant, channel_id, name, group_id, group_name,
+          shared, connected, fetched_at)
+        VALUES ('teams', 'TN1', '19:abc@thread.tacv2', 'General', 'G1', 'Acme Corp - Adobe', 0, '[]', ?)`).run(AT);
+      sqlite.prepare(`INSERT INTO threads (thread, source, tenant, channel_id, root_id, org, team,
+          kind, path, root_at, last_at, messages, updated_at)
+        VALUES (?, 'teams', 'TN1', '19:abc@thread.tacv2', '100', 'acme', 'helix', 'channel',
+          'channels/y/', ?, '2026-10-19T00:00:00Z', 2, ?)`).run(TEAMS, AT, AT);
+      sqlite.prepare(`INSERT INTO threads (thread, source, tenant, channel_id, root_id, org, team,
+          kind, channel_name, path, root_at, any_at, messages, updated_at)
+        VALUES ('slack:E1:C9:1.000100', 'slack', 'E1', 'C9', '1.000100', 'acme', 'helix', 'ignore',
+          'acme-bots', 'channels/z/', ?, ?, 1, ?)`).run(AT, AT, AT);
+
+      // C1 is shared with another team; a channel of another platform with its id is not.
+      sqlite.prepare("INSERT OR IGNORE INTO teams (slug, name) VALUES ('aso', 'ASO')").run();
+      sqlite.prepare(`INSERT INTO channel_teams (source, channel_id, team, added_at)
+        VALUES ('slack', 'C1', 'aso', ?), ('discord', '19:abc@thread.tacv2', 'aso', ?)`).run(AT, AT);
+      const named = await call('find_channels', { query: 'ACME TECHNOLOGIES - WWW' });
+      assert.equal(named.error, false);
+      const lines = named.text.split('\n');
+      assert.equal(lines.length, 2);
+      assert.match(lines[0], /^- slack:E1:C1 \| Slack #aem-acme \| customer acme \(Acme Technologies\) \| ops team helix, shared with aso \| 3 conversations, latest 2026-[^|]+\| matched customer: acme; channel name: acme; acme\/www in 1 thread \| https:\/\/[^ ]*slack\.com\/archives\/C1$/);
+      assert.match(lines[1], /^- teams:TN1:19:abc@thread\.tacv2 \| Microsoft Teams #General in the team Acme Corp - Adobe \| customer acme \(Acme Technologies\) \| ops team helix \| 1 conversation, latest 2026-10-19 \| matched customer: acme; channel name: acme \| https:\/\/teams\.microsoft\.com\/l\/channel\/19%3Aabc%40thread\.tacv2\/General\?groupId=G1&tenantId=TN1$/);
+      // A host of the site, or a domain, finds the same channels; the internal ones never.
+      const sited = await call('find_channels', { query: 'https://main--www--acme.aem.page/de/page' });
+      assert.match(sited.text, /^- slack:E1:C1 \|/);
+      assert.doesNotMatch(sited.text, /C3|C2|C9/);
+      assert.match((await call('find_channels', { query: 'www.acme.com', limit: 1 })).text, /^- slack:E1:C1 \|[^\n]*\n\[… more matches; narrow the query\]$/);
+      assert.match((await call('find_channels', { query: 'globex' })).text, /^No channel of the inbox matches "globex"\. /);
+      assert.equal((await call('find_channels', { query: 'a b' })).error, true);
+
+      const listed = await call('list_any_channel_threads', { channel: 'slack:E1:C1' });
+      assert.equal(listed.error, false);
+      assert.match(listed.text, /^slack:E1:C1 \| Slack #aem-acme \|[^\n]*\n- slack:E1:C1:\d+\.\d+ \| /);
+      assert.equal(listed.text.split('\n').length, 4);
+      sqlite.prepare(`INSERT INTO threads (thread, source, tenant, channel_id, root_id, org, team,
+          kind, path, root_at, last_at, messages, updated_at)
+        VALUES ('slack:E1:C0123456789:1.000100', 'slack', 'E1', 'C0123456789', '1.000100', 'acme',
+          'helix', 'channel', 'channels/w/', ?, ?, 1, ?)`).run(AT, AT, AT);
+      assert.match((await call('list_any_channel_threads', { channel: 'https://acme.slack.com/archives/C0123456789' })).text, /^slack:E1:C0123456789 \| Slack channel \(name unknown\) \|/);
+      for (const channel of [THREAD, LINK]) {
+        // eslint-disable-next-line no-await-in-loop
+        assert.match((await call('list_any_channel_threads', { channel })).text, /^slack:E1:C1 \|/, channel);
+      }
+      const teams = await call('list_any_channel_threads', {
+        channel: 'https://teams.microsoft.com/l/channel/19%3Aabc%40thread.tacv2/General?groupId=G1\\&tenantId=TN1',
+      });
+      assert.match(teams.text, /^teams:TN1:19:abc@thread\.tacv2 \| [^\n]*\n- teams:TN1:G1:19:abc@thread\.tacv2:100 \| /);
+      assert.equal((await call('list_any_channel_threads', { channel: 'slack:E1:C1', query: 'call the inbox' })).text.split('\n').length, 2);
+      assert.equal((await call('list_any_channel_threads', { channel: 'slack:E1:C9' })).error, true);
+      assert.equal((await call('list_any_channel_threads', { channel: 'slack:E1:C404' })).error, true);
+
+      sqlite.exec('UPDATE agent_tool_switches SET enabled = 0');
+      assert.equal((await call('find_channels', { query: 'acme' })).error, true);
+      assert.equal((await call('list_any_channel_threads', { channel: 'slack:E1:C1' })).error, true);
     });
 
     it('finds the thread of a Teams or Discord link, and none in an ignored channel', async () => {
@@ -1133,6 +1368,220 @@ describe('the earlier conversations of the channel', () => {
       assert.match((await resolveAnyThread(e, 'https://acme.slack.com/archives/C404/p1792584060000200')).error, /no thread/);
       assert.match((await resolveAnyThread(e, 'whatever')).error, /no thread/);
       assert.match((await resolveAnyThread(e, '')).error, /no thread/);
+    });
+
+    it('reads and searches every thread in a conversation of a knowledge base\'s sidebar only', async () => {
+      const { e } = await internal();
+      const CHAT = {
+        chat: 'kc_00000000-0000-4000-8000-000000000000', kb: 'team', repo: 'kb-team-helix', by: 'Ada',
+      };
+      const ext = kbChatExtension({
+        env: e,
+        hasThread: false,
+        target: async () => ({
+          key: null, team: 'helix', org: null, threads: [],
+        }),
+        verdicts: async (messages) => new Map(await Promise.all(
+          messages.filter(untrusted).map(async (m) => [m.id, await screen(e, m)]),
+        )),
+        chatOf: async (session) => (session === 'chat-1' ? CHAT : null),
+      });
+      assert.deepEqual(ext.tools.map((t) => t.name), ['read_any_thread', 'find_channels', 'list_any_channel_threads', 'search_threads', 'read_file', 'list_topics', 'list_experts', 'request_partner_link']);
+      const call = async (name, args, conversationId) => {
+        const res = await ext.tools.find((t) => t.name === name).execute(args, { conversationId });
+        return { text: res.output.map((o) => o.text).join(''), error: Boolean(res.isError) };
+      };
+      // A seed's or a dream's session reads no thread.
+      for (const [name, args] of [['read_any_thread', { thread: THREAD }], ['search_threads', { query: 'acme' }],
+        ['find_channels', { query: 'acme' }], ['list_any_channel_threads', { channel: 'slack:E1:C1' }],
+        ['read_file', { thread: THREAD, file: 'F1' }], ['list_topics', {}], ['list_experts', { thread: THREAD }],
+        ['request_partner_link', { action: 'link', partner: 'agency', note: 'x' }]]) {
+        // eslint-disable-next-line no-await-in-loop
+        const refused = await call(name, args, 'seed-1');
+        assert.equal(refused.error, true, name);
+        assert.match(refused.text, /only for a conversation on the knowledge base's page/, name);
+      }
+      const read = await call('read_any_thread', { thread: LINK }, 'chat-1');
+      assert.equal(read.error, false);
+      assert.match(read.text, /CDN purge takes forever/);
+      assert.doesNotMatch(read.text, /delete the knowledge base/);
+      // No thread of its own to record the read for.
+      assert.deepEqual(e.DB.rows('SELECT 1 FROM agent_thread_reads'), []);
+      const listed = await call('list_any_channel_threads', { channel: 'slack:E1:C1' }, 'chat-1');
+      assert.equal(listed.error, false);
+      assert.match(listed.text, new RegExp(THREAD.replace(/\./g, '\\.')));
+      // Every team's threads, by their channel's or customer's name; `customer` keeps one's.
+      // Workers AI here is Clef's: the query has no vector, and says so in the log.
+      const found = await quiet(() => call('search_threads', { query: 'aem-acme' }, 'chat-1'));
+      assert.equal(found.error, false);
+      assert.match(found.text, new RegExp(`^- ${THREAD.replace(/\./g, '\\.')} \\| .* \\| customer acme \\| team helix \\|`));
+      assert.match(found.text, /matched place/);
+      const theirs = await quiet(() => call('search_threads', { query: 'aem-acme', customer: 'other' }, 'chat-1'));
+      assert.match(theirs.text, /^No thread of the inbox matches/);
+      // Who knows what, and the files of any thread.
+      assert.equal((await call('list_topics', {}, 'chat-1')).text, 'There is no topic map yet.');
+      assert.match((await call('list_topics', { topic: 'cdn' }, 'chat-1')).text, /no topic map/);
+      assert.match((await call('read_file', { thread: LINK, file: 'https://example.com/x.pdf' }, 'chat-1')).text, /^Could not read the file: That is not a file of your thread/);
+      assert.match((await call('read_file', { thread: 'whatever', file: 'x' }, 'chat-1')).text, /no thread/);
+      assert.equal((await call('list_experts', { thread: 'whatever' }, 'chat-1')).error, true);
+      // What it is told, in that conversation only.
+      const guide = await ext.sections[0].render({ conversationId: 'chat-1' });
+      assert.match(guide, /kb-team is the only knowledge base you can write here/);
+      assert.match(guide, /never put one customer's details into it/);
+      assert.match(guide, /Ada, who is not on its team/);
+      assert.equal(await ext.sections[0].render({ conversationId: 'seed-1' }), undefined);
+
+      // Its switchable tools: in that conversation only, and what changes something only for
+      // someone on the team.
+      const tools = agentToolsExtension({
+        env: e,
+        hasThread: false,
+        name: 'kb:helix:',
+        target: async () => ({ key: null, team: 'helix', org: null }),
+        chatOf: async (session) => ({ 'chat-1': CHAT, 'chat-2': { ...CHAT, write: true } }[session] || null),
+        schedule: async () => ({ id: 's' }),
+      }, ['computer', 'extraction_rules', 'web_search']);
+      const use = async (name, args, conversationId) => {
+        const tool = tools.tools.find((t) => t.name === name);
+        const res = await tool.execute(args, { conversationId });
+        return { text: res.output.map((o) => o.text).join(''), error: Boolean(res.isError) };
+      };
+      assert.deepEqual(tools.tools.map((t) => t.name), ['bash', 'view_image', 'request_bash', 'list_extraction_rules',
+        'test_extraction_rule', 'save_extraction_rule', 'delete_extraction_rule', 'save_tech', 'delete_tech', 'web_search']);
+      assert.match((await use('web_search', { query: 'x' }, 'seed-1')).text, /only for a conversation on the knowledge base's page/);
+      assert.match((await use('view_image', { path: 'x.png' }, 'seed-1')).text, /only for a conversation/);
+      assert.match((await use('list_extraction_rules', {}, 'seed-1')).text, /only for a conversation/);
+      assert.equal((await use('list_extraction_rules', {}, 'chat-1')).error, false);
+      assert.match((await use('save_tech', { tech: 'x', name: 'X' }, 'chat-1')).text, /not on this knowledge base's team/);
+      assert.match((await use('request_bash', { command: 'ls', reason: 'x' }, 'chat-1')).text, /not on this knowledge base's team/);
+      assert.equal((await use('save_tech', { tech: 'acme_cms', name: 'Acme CMS', description: 'the Acme CMS' }, 'chat-2')).error, false);
+      const told = async (conversationId) => (await Promise.all(tools.sections
+        .map((x) => x.render({ conversationId })))).filter(Boolean);
+      assert.deepEqual(await told('seed-1'), []);
+      assert.equal((await told('chat-1')).length, 3);
+      // Nor does it write the knowledge base for them.
+      const kbTools = opspileExtension({
+        env: e, hasThread: false, target: async () => ({ key: null, team: 'helix', org: null }), chatOf: async () => CHAT,
+      }).tools;
+      const wrote = await kbTools.find((t) => t.name === 'kb_write').execute({ kb: 'team', message: 'x', changes: [{ path: 'a.md', content: 'x' }] }, { conversationId: 'chat-1' });
+      assert.match(wrote.output[0].text, /not on this knowledge base's team/);
+      // A customer's agent (`kb::acme`) neither, for someone of a team that does not own it.
+      const orgTools = opspileExtension({
+        env: e,
+        hasThread: false,
+        target: async () => ({ key: null, team: null, org: 'acme' }),
+        pinned: async () => 'org',
+        chatOf: async () => ({ ...CHAT, kb: 'org', repo: 'kb-org-acme' }),
+      }).tools;
+      const run = async (name, args) => (await orgTools.find((t) => t.name === name)
+        .execute(args, { conversationId: 'chat-1' })).output[0].text;
+      assert.match(await run('kb_write', { kb: 'org', message: 'x', changes: [{ path: 'a.md', content: 'x' }] }), /not on this knowledge base's team/);
+      assert.match(await run('draw_stack', { summary: 'x', parts: [{ layer: 'edge', name: 'CDN' }] }), /not on this knowledge base's team/);
+    });
+  });
+
+  describe('with org_threads', () => {
+    const AT = '2026-10-21T10:00:00Z';
+    const OWN = 'slack:E1:C5:1792590000.000100';
+    const OLD = 'slack:E1:C1:1700000000.000100';
+    const ELSEWHERE = 'slack:E1:C2:1792500000.000100';
+
+    /**
+     * An agent in C5, a second channel of acme, with the tool on for its team: C1 is acme's
+     * other channel (with an old thread of another customer in it), C2 another customer's.
+     */
+    async function customer(tools = ['org_threads']) {
+      const { e } = await setup();
+      const add = e.DB.sqlite.prepare(`INSERT INTO threads (thread, source, tenant, channel_id,
+          root_id, org, team, kind, channel_name, path, root_at, last_at, messages, updated_at)
+        VALUES (?, 'slack', 'E1', ?, ?, ?, 'helix', 'channel', ?, 'channels/x/', ?, ?, 1, ?)`);
+      add.run(OWN, 'C5', '1792590000.000100', 'acme', 'acme-launch', AT, AT, AT);
+      const LONG_AGO = '2023-11-14T00:00:00Z';
+      add.run(OLD, 'C1', '1700000000.000100', 'other', 'aem-acme', LONG_AGO, LONG_AGO, AT);
+      e.DB.sqlite.prepare(`INSERT INTO agent_tool_switches (tool, scope, target, enabled, changed_at)
+        VALUES ('org_threads', 'team', 'helix', 1, ?)`).run(AT);
+      const target = {
+        key: OWN, team: 'helix', org: 'acme', orgName: 'Acme', threads: [OWN], source: 'slack', tenant: 'E1', channelId: 'C5',
+      };
+      const ext = agentToolsExtension({
+        env: e,
+        hasThread: true,
+        target: async () => target,
+        verdicts: async (messages) => new Map(await Promise.all(
+          messages.filter(untrusted).map(async (m) => [m.id, await screen(e, m)]),
+        )),
+      }, tools);
+      const call = async (name, args) => {
+        const res = await ext.tools.find((t) => t.name === name).execute(args, {});
+        return { text: res.output.map((o) => o.text).join(''), error: Boolean(res.isError) };
+      };
+      return {
+        e, ext, call, target,
+      };
+    }
+
+    it('is on for a customer\'s channel, and off in an internal org, an unassigned one, or where a channel turns it off', async () => {
+      const { e, target } = await customer();
+      assert.deepEqual(await toolsFor(e, target), ['org_threads']);
+      assert.deepEqual(await toolsFor(e, { ...target, org: '_unassigned' }), []);
+      assert.deepEqual(await toolsFor(e, { ...target, org: null }), []);
+      e.DB.sqlite.prepare('INSERT INTO orgs (slug, type, updated_at) VALUES (\'acme\', \'internal\', ?)').run(AT);
+      assert.deepEqual(await toolsFor(e, target), []);
+      e.DB.sqlite.exec('UPDATE orgs SET type = \'partner\'');
+      assert.deepEqual(await toolsFor(e, target), ['org_threads']);
+      e.DB.sqlite.prepare(`INSERT INTO agent_tool_switches (tool, scope, target, enabled, changed_at)
+        VALUES ('org_threads', 'channel', 'C5', 0, ?)`).run(AT);
+      assert.deepEqual(await toolsFor(e, target), []);
+    });
+
+    it('lists, lists the threads of and reads the customer\'s other channels, never another customer\'s', async () => {
+      const { e, ext, call } = await customer();
+      assert.deepEqual(ext.tools.map((t) => t.name), ['read_any_thread', 'find_channels', 'list_any_channel_threads']);
+      assert.equal(ext.sections.length, 1);
+
+      // Without a query: all of the customer's other channels; the agent's own, and C2, not.
+      const found = await call('find_channels', {});
+      assert.equal(found.error, false);
+      assert.match(found.text, /^- slack:E1:C1 \| Slack #aem-acme \| customer acme \|/);
+      assert.equal(found.text.split('\n').length, 1);
+      // Another customer's name finds nothing of theirs.
+      assert.doesNotMatch((await call('find_channels', { query: 'other' })).text, /C2/);
+
+      const listed = await call('list_any_channel_threads', { channel: 'slack:E1:C1' });
+      assert.equal(listed.error, false);
+      assert.match(listed.text, /^slack:E1:C1 \| Slack #aem-acme \|/);
+      // Of acme's channel, acme's threads only.
+      assert.doesNotMatch(listed.text, /1700000000/);
+      assert.match(listed.text, new RegExp(THREAD.replace(/\./g, '\\.')));
+      const refused = await call('list_any_channel_threads', { channel: ELSEWHERE });
+      assert.equal(refused.error, true);
+      assert.match(refused.text, /none of your customer's channels/);
+
+      const read = await call('read_any_thread', { thread: THREAD });
+      assert.equal(read.error, false);
+      assert.match(read.text, /CDN purge takes forever/);
+      for (const other of [ELSEWHERE, OLD]) {
+        // eslint-disable-next-line no-await-in-loop
+        const no = await call('read_any_thread', { thread: other });
+        assert.equal(no.error, true, other);
+        assert.match(no.text, /no thread of your customer's channels/);
+      }
+      assert.deepEqual(
+        e.DB.rows('SELECT agent_thread, thread FROM agent_thread_reads'),
+        [{ agent_thread: OWN, thread: THREAD }],
+      );
+
+      // The team turns it off for the channel: at once.
+      e.DB.sqlite.prepare(`INSERT INTO agent_tool_switches (tool, scope, target, enabled, changed_at)
+        VALUES ('org_threads', 'channel', 'C5', 0, ?)`).run(AT);
+      assert.equal((await call('read_any_thread', { thread: THREAD })).error, true);
+      assert.equal((await call('find_channels', {})).error, true);
+    });
+
+    it('reads only the customer\'s, when installed for the whole inbox but any_thread is off', async () => {
+      const { call } = await customer(['any_thread', 'org_threads']);
+      assert.equal((await call('read_any_thread', { thread: ELSEWHERE })).error, true);
+      assert.equal((await call('read_any_thread', { thread: THREAD })).error, false);
     });
   });
 });
@@ -1173,6 +1622,24 @@ describe('seeds with a chosen knowledge base', () => {
     assert.equal(res.status, 202);
     assert.deepEqual(made(e), ['kb-team-helix']);
     assert.deepEqual(seeds, [['kb:helix:', { by: 'Ada Staff', text: 'Purge by tag.', kb: 'team' }]]);
+  });
+
+  it('reach any team\'s own knowledge base for the admin team and the team\'s managers', async () => {
+    const { e, seeds } = seeding();
+    e.DB.sqlite.exec("INSERT INTO teams (slug, name) VALUES ('cdn', 'CDN')");
+    const nobody = () => false;
+    const admin = { ...me, teams: [{ slug: 'admin', role: 'member' }] };
+    const lead = { ...me, teams: [{ slug: 'cdn', role: 'manager' }] };
+    assert.equal((await seedAgent(e, admin, { team: 'cdn', kb: 'team', text: 'x' }, nobody)).status, 202);
+    assert.equal((await seedAgent(e, lead, { team: 'cdn', kb: 'team', text: 'y' }, nobody)).status, 202);
+    assert.deepEqual(seeds.map((s) => s[0]), ['kb:cdn:', 'kb:cdn:']);
+    // Not a customer's, not a team that is not there, and not for a member who manages nothing.
+    assert.equal((await seedAgent(e, admin, {
+      team: 'cdn', org: 'acme', kb: 'team', text: 'x',
+    }, nobody)).status, 400);
+    assert.equal((await seedAgent(e, admin, { team: 'nope', kb: 'team', text: 'x' }, nobody)).status, 400);
+    const member = { ...me, teams: [{ slug: 'cdn', role: 'member' }] };
+    assert.equal((await seedAgent(e, member, { team: 'cdn', kb: 'team', text: 'x' }, nobody)).status, 400);
   });
 
   it('are honoured on the team and customer form, creating only the chosen one', async () => {
@@ -1382,6 +1849,7 @@ describe('seeds with a chosen knowledge base', () => {
       target: async () => target,
       verdicts: async () => new Map(),
       pinned: (session) => seedPin(agent, session),
+      dreamOf: (session) => dreamOf(agent, session),
     }));
     registry.install(codemodeExtension({ fingerprint: '', at: 0, servers: [] }, sandbox));
     harness = await Harness.open(new MemoryStorage(), { models, registry }, context);
@@ -1461,6 +1929,30 @@ describe('seeds with a chosen knowledge base', () => {
     }
   });
 
+  it('dreams of kb-org only, and says so in its log', { skip: !hasGit() && 'git is not installed' }, async () => {
+    const srv = await gitServer();
+    const h = await pinnedHarness(env({ ARTIFACTS: srv.artifacts, AGENT_MODEL: 'faux-model' }), {
+      key: null, team: 'helix', org: 'acme', threads: [],
+    });
+    h.agent.name = 'kb:helix:acme';
+    try {
+      srv.create('kb-team-helix');
+      srv.create('kb-org-acme');
+      assert.deepEqual(await dream(h.agent, { id: 5 }), { ok: true, accepted: true });
+      await h.run(
+        h.call('kb_write', write('team', 'playbooks/purge.md')),
+        h.call('kb_write', write('org', 'playbooks/purge.md')),
+      );
+      const [refused, written] = h.results;
+      assert.match(refused, /kb-org only: kb-team cannot be written here/);
+      assert.match(written, /^committed [0-9a-f]{12} to kb-org: playbooks\/purge\.md/);
+      assert.match(srv.show('kb-org-acme', 'log.md'), /\(a dream, consolidating it\)/);
+    } finally {
+      await h.close();
+      await srv.close();
+    }
+  });
+
   it('draw the customer\'s stack into kb-org, and draw it again from what they read', { skip: !hasGit() && 'git is not installed' }, async () => {
     const srv = await gitServer();
     const h = await pinnedHarness(env({ ARTIFACTS: srv.artifacts, AGENT_MODEL: 'faux-model' }), {
@@ -1526,6 +2018,35 @@ describe('seeds with a chosen knowledge base', () => {
       const kinds = srv.show('kb-org-acme', 'stack.md');
       assert.match(kinds, /\| Content \| Document Authoring \| storage \| Authoring \| da \| +\|/);
       assert.match(kinds, /\| Akamai \| Edge Delivery \| request \| +\|\n\| Edge Delivery \| Document Authoring \| read \| +\|/);
+    } finally {
+      await h.close();
+      await srv.close();
+    }
+  });
+
+  it('write diagrams as DOT directly, refused where the inbox could not draw them', { skip: !hasGit() && 'git is not installed' }, async () => {
+    const srv = await gitServer();
+    const h = await pinnedHarness(env({ ARTIFACTS: srv.artifacts, AGENT_MODEL: 'faux-model' }), {
+      key: null, team: 'helix', org: 'acme', orgName: 'ACME', threads: [],
+    });
+    const dot = '// How the shop is served.\ndigraph shop {\n  label="The shop";\n  cdn -> site [dir=back];\n}\n';
+    const shop = (content) => ({ kb: 'org', message: 'Draw the shop', changes: [{ path: 'sites/shop.dot', content }] });
+    try {
+      srv.create('kb-team-helix');
+      srv.create('kb-org-acme');
+      await seed(h.agent, { by: 'Ada', text: 'Their CDN asks the shop for every page.' });
+      await h.run(
+        h.call('kb_write', shop('digraph shop { cdn -- site }')),
+        h.call('kb_write', shop(dot)),
+      );
+      const [refused, written] = h.results;
+      assert.match(refused, /sites\/shop\.dot: not a diagram the inbox can draw: line 1: a digraph joins nodes with ->, not --/);
+      assert.match(written, /^committed [0-9a-f]{12} to kb-org: sites\/shop\.dot/);
+      assert.equal(srv.show('kb-org-acme', 'sites/shop.dot'), dot);
+      assert.match(srv.show('kb-org-acme', 'sites/index.md'), /\[The shop\]\(shop\.dot\) \(Diagram\) - How the shop is served\./);
+      // It is told how to write them.
+      assert.match(h.system[0], /Diagrams: when a concept explains how something is put together/);
+      assert.match(h.system[0], /`fmc=storage, style=rounded`/);
     } finally {
       await h.close();
       await srv.close();
@@ -1634,6 +2155,14 @@ describe('seeds with a chosen knowledge base', () => {
 });
 
 describe('the ThreadAgent class', () => {
+  it('runs with the agent\'s env, whose D1 reads again once when overloaded', async () => {
+    const { readFile } = await import('node:fs/promises');
+    const src = await readFile(new URL('../src/agent/agent.js', import.meta.url), 'utf8');
+    assert.match(src, /const cogs = agentEnv\(rawEnv,/);
+    assert.match(src, /super\(ctx, env\)/);
+    assert.doesNotMatch(src, /objectMeter|batchedDatabase/);
+  });
+
   it('leaves the Agents SDK its own this.mcp', async () => {
     // The SDK keeps its MCP client manager in `this.mcp` and calls it (listPrompts) at start.
     const { readFile } = await import('node:fs/promises');

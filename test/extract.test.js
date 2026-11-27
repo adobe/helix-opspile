@@ -15,11 +15,12 @@ import { describe, it } from 'node:test';
 import { AGENT_TOOLS } from '../src/agent/agenttools.js';
 import { agentToolsExtension } from '../src/agent/tools.js';
 import {
-  checkRule, extract, GLOBAL_TEAM, nestedRepeat, rulesFor, runScript, saveRule, saveTech, techFor,
-  techNames, testRule,
+  checkRule, extract, factLabels, GLOBAL_TEAM, nestedRepeat, rulesFor, runScript, saveRule,
+  saveTech, techFor, techNames, testRule,
 } from '../src/extract.js';
+import { vocab } from '../src/label.js';
 import { kbAdmin } from '../src/kbadmin.js';
-import { ADMIN_TEAM } from '../src/review.js';
+import { ADMIN_TEAM } from '../src/roles.js';
 import { d1 } from './d1.js';
 import { quiet } from './fakes.js';
 
@@ -56,7 +57,7 @@ async function call(e, me, method, path, body) {
 }
 
 describe('the admin team\'s extraction rules', () => {
-  it('is the admin team of src/review.js', () => {
+  it('is the admin team of src/roles.js', () => {
     assert.equal(GLOBAL_TEAM, ADMIN_TEAM);
   });
 
@@ -99,7 +100,7 @@ describe('the admin team\'s extraction rules', () => {
 });
 
 describe('a team\'s rules and tech stack', () => {
-  it('apply to its channels, on top of the admin team\'s, and a team\'s technology replaces the admin team\'s', async () => {
+  it('apply to its channels, on top of the admin team\'s; a team\'s technology replaces the others\' there and is asked everywhere', async () => {
     const e = env();
     const { rule } = await saveRule(e, 'helix', {
       name: 'Order ids', field: 'order', pattern: '\\bORD-(\\d{6})\\b', value: '$1',
@@ -123,7 +124,9 @@ describe('a team\'s rules and tech stack', () => {
     assert.equal(edge.find((t) => t.tech === 'akamai').description, 'Akamai as CDN (Property Manager, EdgeWorkers)');
     assert.ok(!helix.some((t) => t.tech === 'gdrive'));
     assert.ok(edge.some((t) => t.tech === 'gdrive'));
-    assert.ok(helix.some((t) => t.tech === 'sitecore') && !edge.some((t) => t.tech === 'sitecore'));
+    // The union: a team's own technology is asked in every channel, with its aliases merged
+    // into the admin team's where both have it.
+    assert.ok(helix.some((t) => t.tech === 'sitecore') && edge.some((t) => t.tech === 'sitecore'));
     assert.equal(helix.find((t) => t.tech === 'sitecore').product, 'Content sources');
     // The names it also goes by: trimmed, each once (migration 0057 seeds the admin team's).
     await saveTech(e, 'helix', { tech: 'sitecore', aliases: ' Sitecore XM ,sitecore xm,  XM Cloud ' }, 'Bo');
@@ -146,6 +149,37 @@ describe('a team\'s rules and tech stack', () => {
     assert.equal((await techNames(e)).eds, 'Edge Delivery');
     // A technology nobody has needs its name and description.
     assert.match((await saveTech(e, 'helix', { tech: 'nothing_yet' }, 'Bo')).error, /name/);
+  });
+
+  it('name the facts they write: the team\'s label, else the admin team\'s (migration 0108), else the field', async () => {
+    const e = env();
+    // The admin team's rules of migration 0043 have the labels the inbox showed for them.
+    const labels = await factLabels(e);
+    assert.deepEqual(Object.fromEntries(['site', 'case', 'url', 'aemcs_env'].map((f) => [f, labels[f]])), {
+      site: 'Site', case: 'Support case', url: 'URL', aemcs_env: 'AEM environment',
+    });
+    const { rule } = await saveRule(e, 'helix', {
+      name: 'Order ids', field: 'order', label: '  Order   id ', pattern: '\\bORD-\\d{6}\\b',
+    }, 'Bo');
+    assert.equal(rule.label, 'Order id');
+    await saveRule(e, 'helix', {
+      name: 'Sites, ours', field: 'site', label: 'Helix site', pattern: '\\bhx-\\w+',
+    }, 'Bo');
+    const helix = await factLabels(e, 'helix');
+    assert.deepEqual([helix.order, helix.site], ['Order id', 'Helix site']);
+    // Another team's channels: the admin team's label of a field, and another team's of its own.
+    const edge = await factLabels(e, 'edge');
+    assert.deepEqual([edge.order, edge.site], ['Order id', 'Site']);
+    // Taken off, and on a rule that detects a technology, there is none.
+    assert.equal((await saveRule(e, 'helix', { id: rule.id, label: '' }, 'Bo')).rule.label, '');
+    assert.equal((await factLabels(e, 'helix')).order, undefined);
+    const tech = await saveRule(e, 'helix', {
+      id: rule.id, target: 'tech', field: 'orders', label: 'Orders',
+    }, 'Bo');
+    assert.equal(tech.rule.label, '');
+    // In the vocabulary the inbox gets, with Clairic's, which no rule writes.
+    const names = await vocab(e, 'helix');
+    assert.deepEqual([names.facts.site, names.facts.problem, names.facts.go_live], ['Helix site', 'Problem', 'Go-live']);
   });
 
   it('are checked: a pattern that is no regular expression, matches nothing, or names no field', () => {
@@ -280,10 +314,13 @@ describe('the agent\'s extraction tools', () => {
       name: 'Order ids', field: 'order', pattern: 'ORD-\\d+', text: 'ORD-7',
     });
     assert.match(tested.output[0].text, /"value": "ORD-7"/);
-    const saved = await tools.save_extraction_rule.execute({ name: 'Order ids', field: 'order', pattern: 'ORD-\\d+' });
+    const saved = await tools.save_extraction_rule.execute({
+      name: 'Order ids', field: 'order', label: 'Order', pattern: 'ORD-\\d+',
+    });
     assert.equal(saved.isError, undefined);
     const [rule] = (await rulesFor(e, 'helix')).filter((r) => r.team === 'helix');
     assert.match(rule.by, /^opspile-agent\//);
+    assert.equal(rule.label, 'Order');
     team = ADMIN_TEAM;
     const refused = await tools.save_tech.execute({ tech: 'x', name: 'X', description: 'x' });
     assert.equal(refused.isError, true);

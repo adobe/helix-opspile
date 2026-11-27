@@ -10,6 +10,8 @@
  * governing permissions and limitations under the License.
  */
 
+import { underlying, UNDERLYING } from './d1batch.js';
+
 const RUNS = new Set(['first', 'all', 'run', 'raw']);
 
 function timedStatement(stmt, timing, originals) {
@@ -36,6 +38,9 @@ function timedDatabase(db, timing) {
   const originals = new WeakMap();
   return new Proxy(db, {
     get(target, prop) {
+      if (prop === UNDERLYING) {
+        return underlying(target);
+      }
       const v = Reflect.get(target, prop);
       if (typeof v !== 'function') {
         return v;

@@ -16,7 +16,7 @@
  * viewer cannot see is left out, preview and all.
  */
 
-import { isAdmin } from './review.js';
+import { isAdmin } from './roles.js';
 import { mayWork, teamsOf } from './shares.js';
 import { slackMessageRefs } from './slackurl.js';
 
@@ -60,7 +60,9 @@ export async function slackMessageLinks(env, me, texts, tenant) {
   const threads = [...new Set(rows.map((r) => r.thread))];
   const allowed = new Map(await Promise.all(threads.map(async (thread) => {
     const row = rows.find((r) => r.thread === thread);
-    const place = { source: 'slack', channel_id: row.channel_id, team: row.team };
+    const place = {
+      source: 'slack', channel_id: row.channel_id, team: row.team, thread,
+    };
     const yes = isAdmin(me) || await mayWork(env, me)(await teamsOf(env, place), place);
     return [thread, yes];
   })));

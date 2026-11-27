@@ -11,11 +11,13 @@
  */
 
 import {
-  GLOBAL_SERVERS, globalConnection, instancesOf, isGlobalServer, setGlobalSwitch, storedTools,
-  storeTools,
-  usableTools,
+  GLOBAL_SERVERS, globalConnection, globalServer, instancesOf, isGlobalServer, setGlobalSwitch,
+  storedTools, storeTools, usableTools,
 } from './agent/globals.js';
 import { probe, serverWithHeaders } from './agent/mcpclient.js';
+import {
+  beginConnect, disconnectGrant, finishConnect, fluffyView, grantForState,
+} from './agent/fluffyjaws.js';
 import {
   beginSignIn, CALLBACK_PATH, disconnect, finishSignIn, grantState, openOauth, revokeGrant,
   serverForState,
@@ -28,10 +30,10 @@ import { json, text } from './http.js';
 import { checkState, makeState, seal } from './post.js';
 import { repoName } from './kb.js';
 import { mayEdit, mayRead } from './kbaccess.js';
-import { isAdmin, managesTeam } from './review.js';
+import { isAdmin, managesTeam } from './roles.js';
 
 /**
- * The knowledge-base editor's API for the MCP servers of the thread agents (migration 0023),
+ * The agents' API (ui/agent.js) for the MCP servers of the thread agents (migration 0023),
  * behind `/api/kb/mcp`. Next to the per-channel switch of the agents: a knowledge base's
  * servers are those of its team (`kb-team-*`) or its customer (`kb-org-*`), and the same
  * people manage them who edit it (the admin team; team managers for their teams).
@@ -58,8 +60,15 @@ import { isAdmin, managesTeam } from './review.js';
  * The global servers (src/agent/globals.js) come with the list, as `globals`: whether each is
  * available, what its last check found, and its switches for this knowledge base's team and
  * channels. `PUT /global { server, team | channel, enabled }` switches one (`enabled: null`
- * hands a channel back to its team's switch), for the admin team and the team's managers;
- * `POST /global/check { server }` connects and lists its tools again.
+ * hands a channel back to its team's switch), for the admin team and the team's managers (one
+ * marked `admins`, `may: false` for them, for the admin team only); `POST /global/check
+ * { server }` connects and lists its tools again.
+ *
+ * FluffyJaws, for the admin team, when it signs in as a person (src/agent/fluffyjaws.js):
+ * `POST /global/connect { server: 'fluffyjaws', repo }` answers with the URL of Okta's sign-in,
+ * which comes back to the same `GET /oauth/callback`, keeps the grant and goes back to `repo`;
+ * `POST /global/disconnect { server: 'fluffyjaws' }` revokes and forgets it. Every agent where
+ * it is on then acts as that person, whom the list shows to everyone.
  *
  * The GitHub App of the github server, for the admin team: `POST /api/kb/github/manifest
  * { org?, name? }` is what the page posts to GitHub to create it, and GitHub sends the admin
@@ -362,6 +371,10 @@ async function globalsView(env, me, owner, only) {
       server: g.server,
       title: g.title,
       description: g.description,
+      // Switched by the admin team only; listed for agents on these platforms only.
+      admins: Boolean(g.admins),
+      may: !g.admins || admin,
+      platforms: g.platforms || null,
       available: instances.length > 0,
       problem,
       instances: instances.map((i, n) => ({
@@ -379,6 +392,9 @@ async function globalsView(env, me, owner, only) {
       channels: Object.fromEntries(rows.filter((r) => r.server === g.server && r.scope === 'channel')
         .map((r) => [r.target, shownSwitch(r)])),
     };
+    if (g.server === 'fluffyjaws') {
+      view.fluffyjaws = await fluffyView(env, { admin });
+    }
     if (g.server === 'github') {
       const app = await currentApp(env).catch(() => null);
       if (admin) {
@@ -409,12 +425,16 @@ export async function channelOwner(env, channel) {
 /**
  * PUT /api/kb/mcp/global `{ server, team | channel, enabled }`: turns a global server on or off
  * for a team, or for a channel (`enabled: null` lets the channel follow its team again). For
- * the admin team and the managers of the team (of the team that owns the channel).
+ * the admin team and the managers of the team (of the team that owns the channel); one marked
+ * `admins` (slack_channels) for the admin team only.
  */
 async function switchGlobal(env, me, body) {
   const server = String(body.server || '');
   if (!isGlobalServer(server)) {
     return bad('no such global server');
+  }
+  if (globalServer(server).admins && !isAdmin(me)) {
+    return json({ error: 'only the admin team switches this server' }, 403);
   }
   const { enabled } = body;
   if (enabled !== null && typeof enabled !== 'boolean') {
@@ -511,7 +531,8 @@ async function checkGlobal(env, me, body) {
 
 /**
  * Cron: checks the global servers whose last check is older than `maxAgeMs` (or that were
- * never checked), so that the tools agents get follow the servers' (GitHub's change).
+ * never checked), so that the tools agents get follow the servers' (GitHub's change). A check of
+ * FluffyJaws refreshes its grant, so the refresh token is used at least once a day.
  */
 export async function refreshGlobalTools(env, { now = Date.now(), maxAgeMs = 24 * 3600_000 } = {}) {
   const out = {};
@@ -530,6 +551,80 @@ export async function refreshGlobalTools(env, { now = Date.now(), maxAgeMs = 24 
     }
   }
   return out;
+}
+
+// ---- FluffyJaws' sign-in -------------------------------------------------------------------
+
+const FLUFFYJAWS_ONLY = 'only FluffyJaws is connected that way';
+
+/** POST /api/kb/mcp/global/connect `{ server, repo }`: where to send the browser (admin team). */
+async function connectGlobal(env, me, body) {
+  if (body.server !== 'fluffyjaws') {
+    return bad(FLUFFYJAWS_ONLY);
+  }
+  if (!isAdmin(me)) {
+    return json({ error: 'the admin team connects FluffyJaws' }, 403);
+  }
+  const owner = body.repo ? await ownerOf(env, me, body.repo, { read: true }) : null;
+  try {
+    const repo = owner ? String(body.repo) : null;
+    const authorizationUrl = await beginConnect(env, me.id, { repo });
+    console.log(JSON.stringify({
+      route: 'kb', mcp: 'global connect', server: body.server, by: me.id,
+    }));
+    return json({ ok: true, authorizationUrl });
+  } catch (e) {
+    return json({ error: e.message }, 409);
+  }
+}
+
+/**
+ * The callback of FluffyJaws' sign-in, `row` its grant: keeps the grant, checks the server, and
+ * goes back to the knowledge base it was started from.
+ */
+async function globalCallback(env, me, url, row) {
+  const back = (repo, q) => new Response(null, {
+    status: 302,
+    headers: {
+      location: `/inbox/admin?${new URLSearchParams({ ...(repo ? { repo } : {}), view: 'mcp', ...q })}`,
+      'cache-control': 'no-store',
+    },
+  });
+  let repo;
+  try {
+    const person = { id: me.id, label: me.email || String(me.id) };
+    repo = await finishConnect(env, row, person, Object.fromEntries(url.searchParams));
+  } catch (e) {
+    console.log(JSON.stringify({
+      route: 'kb', mcp: 'global connect failed', server: row.server, error: String(e.message).slice(0, 200),
+    }));
+    return back(e.repo, { mcp_error: `FluffyJaws: ${e.message}` });
+  }
+  const { instances } = await instancesOf(env, row.server);
+  await checkInstances(env, instances);
+  console.log(JSON.stringify({
+    route: 'kb', mcp: 'global connected', server: row.server, by: me.id,
+  }));
+  return back(repo, { mcp_global_connected: row.server });
+}
+
+/** POST /api/kb/mcp/global/disconnect `{ server, repo? }`: revokes and forgets (admin team). */
+async function disconnectGlobal(env, me, body) {
+  if (body.server !== 'fluffyjaws') {
+    return bad(FLUFFYJAWS_ONLY);
+  }
+  if (!isAdmin(me)) {
+    return json({ error: 'the admin team disconnects FluffyJaws' }, 403);
+  }
+  await disconnectGrant(env);
+  console.log(JSON.stringify({
+    route: 'kb', mcp: 'global disconnected', server: body.server, by: me.id,
+  }));
+  const owner = body.repo ? await ownerOf(env, me, body.repo, { read: true }) : null;
+  return json({
+    ok: true,
+    ...(owner ? { global: (await globalsView(env, me, owner, body.server))[0] } : {}),
+  });
 }
 
 // ---- the GitHub App ----------------------------------------------------------------------
@@ -586,7 +681,7 @@ async function githubCreated(env, me, url) {
   }
   if (!await checkState(env, url.searchParams.get('state'), me.id, 'github-app')) {
     return text('This link expired or was not started here. Start again from the'
-      + ' knowledge-base editor.\n', 400);
+      + ' tools and MCP servers of a team.\n', 400);
   }
   try {
     const app = await createApp(env, url.searchParams.get('code'), me.email || String(me.id));
@@ -636,16 +731,20 @@ async function list(env, me, repo) {
   if (!owner) {
     return json({ error: NO_BASE }, 404);
   }
-  const { results } = await env.DB.prepare(`SELECT * FROM mcp_servers WHERE scope = ? AND slug = ?
-    ORDER BY name`).bind(owner.scope, owner.slug).all();
-  const may = await mayManage(env, me, owner.scope, owner.slug);
-  const servers = await Promise.all((results || []).map((r) => shown(env, r)));
+  // Asked together: /api/* sends the reads of one tick to D1 as one batch (src/d1batch.js).
+  const [servers, may, globals] = await Promise.all([
+    env.DB.prepare(`SELECT * FROM mcp_servers WHERE scope = ? AND slug = ?
+      ORDER BY name`).bind(owner.scope, owner.slug).all()
+      .then(({ results }) => Promise.all((results || []).map((r) => shown(env, r)))),
+    mayManage(env, me, owner.scope, owner.slug),
+    globalsView(env, me, owner),
+  ]);
   return json({
     repo,
     // Whether `me` changes them; a member of the team only looks, at bare URLs.
     may,
     servers: may ? servers : servers.map(readOnly),
-    globals: await globalsView(env, me, owner),
+    globals,
   });
 }
 
@@ -853,14 +952,21 @@ async function oauthStart(env, me, body) {
  */
 async function oauthCallback(env, me, url) {
   const row = await serverForState(env, url.searchParams.get('state'));
+  if (!row) {
+    // The same callback finishes FluffyJaws' sign-in (the one redirect URI of its Okta client).
+    const grant = await grantForState(env, url.searchParams.get('state'));
+    if (grant && isAdmin(me)) {
+      return globalCallback(env, me, url, grant);
+    }
+  }
   if (!row || !await mayManage(env, me, row.scope, row.slug)) {
     return text('This sign-in expired or was not started here. Connect the server again from the'
-      + ' knowledge-base editor.\n', 400);
+      + ' tools and MCP servers of its team or customer.\n', 400);
   }
   const back = (q) => new Response(null, {
     status: 302,
     headers: {
-      location: `/inbox/kb?${new URLSearchParams({ repo: repoName(row.scope, row.slug), view: 'mcp', ...q })}`,
+      location: `/inbox/admin?${new URLSearchParams({ repo: repoName(row.scope, row.slug), view: 'mcp', ...q })}`,
       'cache-control': 'no-store',
     },
   });
@@ -903,6 +1009,8 @@ export async function mcpAdmin(request, env, url, me) {
   switch (`${request.method} ${url.pathname}`) {
     case 'PUT /api/kb/mcp/global': return switchGlobal(env, me, body);
     case 'POST /api/kb/mcp/global/check': return checkGlobal(env, me, body);
+    case 'POST /api/kb/mcp/global/connect': return connectGlobal(env, me, body);
+    case 'POST /api/kb/mcp/global/disconnect': return disconnectGlobal(env, me, body);
     case 'POST /api/kb/github/manifest': return githubManifest(env, me, body);
     case 'GET /api/kb/github/created': return githubCreated(env, me, url);
     case 'PUT /api/kb/github/installation': return githubInstallation(env, me, body);

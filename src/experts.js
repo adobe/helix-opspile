@@ -22,6 +22,8 @@ import { notifyRoom } from './notify.js';
 import {
   ACCOUNTS, learnMembers, NAME, target,
 } from './post.js';
+import { ACTIVITY_DAYS, activityOf, predictMention } from './mention-model.js';
+import { clearMentionModel, mentionModel } from './mentionmodels.js';
 import { findTopic, topicIndex, topicsOfThreads } from './topicindex.js';
 
 /**
@@ -63,9 +65,12 @@ const OUTSIDE = 0.7;
 /** People a list has at most, and people whose response times are worked out. */
 export const MAX_EXPERTS = 8;
 const MAX_MEASURED = 20;
-/** Answered mentions a "typically responds" needs, and how many of them must be answered. */
-export const MIN_ANSWERS = 3;
-const MIN_RATE = 0.5;
+/** Mentions of someone the mention model must have learnt from before anything is said. */
+export const MIN_MENTIONS = 3;
+/** Under these odds of an answer, no time is said; at these, "most" and "nearly all". */
+const FEW = 0.2;
+const MOST = 0.6;
+const NEARLY_ALL = 0.8;
 const WORD_RESULTS = 50;
 const MAX_TITLE = 120;
 /** Suggestions by agents an entry keeps, and the length of a reason. */
@@ -213,44 +218,73 @@ const quietly = (signal, promise) => promise.catch((e) => {
 });
 
 /**
- * How long people took to post in a thread after being mentioned in it, a re-threaded group as
- * one thread: person id to `{ minutes, answered, mentions }` (the median of those answered).
+ * What the mention model (src/mention-model.js) says of mentioning each of `people` in the
+ * entry of `threads`, thread `t`'s, at `now`: person id to `{ odds, minutes, mentions, answered
+ * }`, the odds of an answer in it within a week, the typical minutes until it, and the mentions
+ * of them the model learnt from, answered or not. Their posts are counted as the model counts
+ * them (`activityOf`); nothing without a model yet. `mentioned` is how many are named in the
+ * message together (one, by default), and `opening` whether it starts the thread (by default,
+ * whether the thread is that young).
  */
-export async function responseTimes(env, people, { now = Date.now() } = {}) {
+export async function responseTimes(env, people, {
+  t, threads, now = Date.now(), mentioned = 1, opening = null,
+} = {}) {
   if (!people.length) {
     return new Map();
   }
   const list = JSON.stringify(people);
-  const since = iso(now - WINDOW_DAYS * day);
-  const entry = 'COALESCE(t.logical_thread, t.thread) AS entry';
-  const [{ results: asked }, { results: posts }] = await Promise.all([
-    env.DB.prepare(`SELECT m.person, m.at, ${entry} FROM mentions m
-      JOIN threads t ON t.thread = m.thread
-      WHERE m.person IN (SELECT value FROM json_each(?)) AND m.at >= ?`).bind(list, since).all(),
-    env.DB.prepare(`SELECT x.person, x.at, ${entry} FROM messages x
-      JOIN threads t ON t.thread = x.thread
-      WHERE x.person IN (SELECT value FROM json_each(?)) AND x.at >= ? AND x.deleted = 0`)
-      .bind(list, since).all(),
+  const channel = `${t.source}:${t.tenant}:${t.channel_id}`;
+  const [model, { results: posts }, thread, { results: team }] = await Promise.all([
+    mentionModel(env, now),
+    env.DB.prepare(`SELECT person, MAX(at) AS last, COUNT(*) AS count,
+        SUM(at >= ?3) AS day, SUM(at >= ?4) AS week,
+        SUM(source = ?5 AND tenant = ?6 AND channel_id = ?7) AS here
+      FROM messages WHERE person IN (SELECT value FROM json_each(?1)) AND at >= ?2
+        AND staff = 1 AND counted = 1 AND deleted = 0
+      GROUP BY person`)
+      .bind(
+        list,
+        iso(now - ACTIVITY_DAYS * day),
+        iso(now - day),
+        iso(now - 7 * day),
+        t.source,
+        t.tenant,
+        t.channel_id,
+      ).all(),
+    env.DB.prepare(`SELECT MIN(at) AS first, COUNT(DISTINCT CASE WHEN staff = 1 THEN person END)
+        AS staff
+      FROM messages WHERE thread IN (SELECT value FROM json_each(?)) AND counted = 1
+        AND deleted = 0`).bind(JSON.stringify(threads)).first(),
+    t.team ? env.DB.prepare(`SELECT person FROM team_members
+      WHERE team = ? AND person IN (SELECT value FROM json_each(?))`).bind(t.team, list).all()
+      : { results: [] },
   ]);
-  const seen = new Map();
-  for (const m of asked || []) {
-    const answer = (posts || [])
-      .filter((x) => x.person === m.person && x.entry === m.entry && x.at > m.at)
-      .reduce((first, x) => (!first || x.at < first ? x.at : first), null);
-    const so = seen.get(m.person) || { mentions: 0, took: [] };
-    so.mentions += 1;
-    if (answer) {
-      so.took.push((Date.parse(answer) - Date.parse(m.at)) / 60000);
-    }
-    seen.set(m.person, so);
+  if (!model) {
+    return new Map();
   }
-  return new Map([...seen].map(([person, { mentions, took }]) => {
-    const sorted = took.sort((a, b) => a - b);
-    return [person, {
-      minutes: sorted.length ? Math.round(sorted[Math.floor((sorted.length - 1) / 2)]) : null,
-      answered: sorted.length,
-      mentions,
-    }];
+  const of = new Map((posts || []).map((r) => [r.person, r]));
+  const members = new Set((team || []).map((r) => r.person));
+  return new Map(people.map((person) => {
+    const p = of.get(person);
+    const activity = p ? {
+      since: (now - Date.parse(p.last)) / (60 * 60 * 1000),
+      day: p.day,
+      week: p.week,
+      all: p.count,
+      inChannel: p.here,
+    } : activityOf([], now, channel);
+    const r = predictMention(model, {
+      person,
+      channel,
+      at: now,
+      activity,
+      staff: (thread && thread.staff) || 0,
+      opening: opening ?? (Boolean(thread && thread.first)
+        && now - Date.parse(thread.first) < 6 * 60 * 1000),
+      member: members.has(person),
+      mentioned,
+    });
+    return [person, { ...r, minutes: r.minutes === null ? null : Math.round(r.minutes) }];
   }));
 }
 
@@ -269,9 +303,29 @@ export function roughly(minutes) {
   return `about ${Math.round(hours / 24)} days`;
 }
 
-/** Whether a response time says something: enough mentions, and most of them answered. */
-const reliable = (r) => Boolean(r) && r.answered >= MIN_ANSWERS
-  && r.answered / r.mentions >= MIN_RATE;
+/** Whether the mention model knows enough of someone to say something. */
+export const reliable = (r) => Boolean(r) && r.mentions >= MIN_MENTIONS;
+
+/** How many mentions someone answers, in words. */
+export function share(odds) {
+  if (odds >= NEARLY_ALL) {
+    return 'nearly all';
+  }
+  if (odds >= MOST) {
+    return 'most';
+  }
+  if (odds >= 0.4) {
+    return 'about half of';
+  }
+  return odds >= FEW ? 'about a third of' : 'few';
+}
+
+/** What to say of how someone answers mentions: "answers most mentions, in about 2 hours". */
+function answersOf({ odds, minutes }) {
+  const time = odds < FEW || minutes === null ? ''
+    : `, ${minutes < 5 ? '' : 'in '}${roughly(minutes)}`;
+  return `answers ${share(odds)} mentions${time}`;
+}
 
 /** What to say about someone: `reasons`, the strongest first. */
 export function reasonsOf(e) {
@@ -284,8 +338,7 @@ export function reasonsOf(e) {
     reasons.push(`worked on ${similar} similar ${similar === 1 ? 'thread' : 'threads'}`);
   }
   if (reliable(e.response)) {
-    const { minutes } = e.response;
-    reasons.push(`typically responds ${minutes < 5 ? '' : 'in '}${roughly(minutes)}`);
+    reasons.push(answersOf(e.response));
   }
   if (e.channel) {
     reasons.push('is active in this channel');
@@ -480,7 +533,9 @@ async function rank(env, t, rows, now, { about = null } = {}) {
       },
     };
   }).sort((a, b) => b.score - a.score).slice(0, MAX_MEASURED);
-  const times = await responseTimes(env, ranked.map((e) => e.person), { now });
+  const times = await quietly('response', responseTimes(env, ranked.map((e) => e.person), {
+    t, threads, now,
+  }));
   return { list: ranked.map((e) => ({ ...e, response: times.get(e.person) || null })), topics };
 }
 
@@ -572,7 +627,7 @@ function candidate(e) {
       member: e.member === null || e.member === undefined ? -1 : Number(e.member),
       suggested: Number(Boolean(e.reason)),
       rejected: Number(Boolean(e.rejected)),
-      ...(r ? { mentioned: r.mentions, answered: r.answered } : {}),
+      ...(r ? { mentioned: r.mentions, answered: r.answered, answerOdds: r.odds } : {}),
       ...(r && r.minutes !== null ? { responseMinutes: r.minutes } : {}),
     },
   };
@@ -822,7 +877,46 @@ export async function topicExperts(env, key, name, { me = null, now = Date.now()
   };
 }
 
-/** Forgets the kept lists (tests). */
+/**
+ * The Adobe colleagues who worked the threads of topic `name` (its id, or a word of its label),
+ * for an agent without a thread (a knowledge base's sidebar, src/kbchat.js): `{ topic, people:
+ * [{ person, name, email, threads, last }] }`, the most threads first, of those active in the
+ * last ACTIVE_DAYS; or `{ error }`.
+ */
+export async function topicPeople(env, name, { now = Date.now() } = {}) {
+  const index = await topicIndex(env, { now });
+  if (!index) {
+    return { error: 'there is no topic map yet' };
+  }
+  const topic = findTopic(index, name);
+  if (!topic) {
+    return { error: `no topic is called ${JSON.stringify(String(name || ''))}: list_topics without a topic lists them` };
+  }
+  const all = [...topic.people.keys()];
+  const recent = all.length ? await active(env, all, now) : new Set();
+  const listed = all.filter((p) => recent.has(p))
+    .sort((a, b) => topic.people.get(b).threads - topic.people.get(a).threads
+      || String(topic.people.get(b).last).localeCompare(String(topic.people.get(a).last)))
+    .slice(0, MAX_TOPIC_PEOPLE);
+  const { results } = listed.length ? await env.DB.prepare(`SELECT id, name, email FROM people
+    WHERE id IN (SELECT value FROM json_each(?)) AND staff = 1`).bind(JSON.stringify(listed)).all()
+    : { results: [] };
+  const who = new Map((results || []).map((r) => [r.id, r]));
+  return {
+    topic: {
+      id: topic.id, label: topic.label, theme: topic.theme, size: topic.size,
+    },
+    people: listed.filter((p) => who.has(p)).map((p) => ({
+      person: p,
+      name: who.get(p).name || who.get(p).email,
+      email: who.get(p).email,
+      ...topic.people.get(p),
+    })),
+  };
+}
+
+/** Forgets the kept lists and the mention model (tests). */
 export function clearExpertLists() {
   cache.clear();
+  clearMentionModel();
 }

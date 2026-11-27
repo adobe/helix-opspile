@@ -13,11 +13,22 @@
 import {
   AGENT_EMAIL, ENTRY_ROW, entryFields, entryOf,
 } from '../drafts.js';
-import { requestOf } from '../bashrequests.js';
+import { chatRequests, requestOf } from '../bashrequests.js';
 import { json } from '../http.js';
+import { managesTeam } from '../roles.js';
 import { ensureKnowledgeBase, repoName } from '../kb.js';
 import { notifyRoom } from '../notify.js';
-import { addSidebarMessage, MAX_SIDEBAR, sidebarId } from '../sidebar.js';
+import {
+  addSidebarMessage, MAX_SIDEBAR, seeSidebar, sidebarId,
+} from '../sidebar.js';
+import {
+  denyToolRequest, grantToolRequest, revokeToolRequest, toolRequestOf,
+} from '../toolrequests.js';
+import { denyText, grantText } from './toolrequest.js';
+import {
+  addChatMessage, chatAgentName, chatId, chatMessageId, chatMessages, chatsOf, dropChatMessage,
+  isChatOf, latestChat, MAX_CHAT, waiting,
+} from '../kbchat.js';
 import { switchedOn } from './enabled.js';
 import { liveTurn } from './kept.js';
 
@@ -89,9 +100,25 @@ async function threadTarget(env, key) {
 }
 
 /**
+ * The answer to someone who sees thread entry `entry` but may not work it, and asked to `what`
+ * (a 403, which names the team the thread is filed under): a thread that moved to another team
+ * is not "not found" to them, as they still see it.
+ */
+async function notTheirs(env, entry, what) {
+  const row = entry.team
+    ? await env.DB.prepare('SELECT name FROM teams WHERE slug = ?').bind(entry.team).first() : null;
+  const owner = (row && row.name) || entry.team;
+  return json({
+    error: owner ? `the thread is filed under ${owner}, and only its team may ${what}`
+      : `only the thread's team may ${what}`,
+  }, 403);
+}
+
+/**
  * POST /api/agent/seed `{ thread, text }` or `{ team, org, text }`: shares knowledge with the
  * thread's agent, or with the knowledge-base agent of a team and customer, which files it in
- * the knowledge bases. Only members of the team.
+ * the knowledge bases. Only members of the team; a team's own knowledge base alone (`kb: 'team'`,
+ * no customer) also whoever may change it, the admin team and the team's managers.
  *
  * `kb` (`team` or `org`, on either form) chooses the knowledge base, and the agent cannot write
  * the other one (src/agent/seed.js). `{ team, kb: 'team', text }` needs no customer. Only the
@@ -139,7 +166,11 @@ export async function seedAgent(env, me, body, inTeam) {
       return json({ error: 'kb "org" needs a customer slug' }, 400);
     }
     const orgFits = org ? repoName('org', org) : kb === 'team';
-    if (!repoName('team', team) || !orgFits || !await inTeam(team)) {
+    // A team's own knowledge base alone: also whoever may change it (the admin team, the team's
+    // managers), on the team or not, as they may in the editor (src/kbaccess.js).
+    const manages = kb === 'team' && !org && Array.isArray(me.teams) && managesTeam(me, team)
+      && Boolean(await env.DB.prepare('SELECT 1 FROM teams WHERE slug = ?').bind(team).first());
+    if (!repoName('team', team) || !orgFits || !(manages || await inTeam(team))) {
       return json({ error: 'give a thread, or one of your teams and a customer slug (only kb "team" goes without one)' }, 400);
     }
     name = `kb:${team}:${org}`;
@@ -161,10 +192,11 @@ export async function seedAgent(env, me, body, inTeam) {
  * POST /api/agent/sidebar `{ thread, text }`: a person on the team talks to the thread's agent in
  * the inbox's sidebar (src/sidebar.js). The message goes into the thread's sidebar and into the
  * agent's conversation, and nowhere else: never to the platform. The agent answers it when it is
- * done with what it is doing; the inboxes of the thread's teams hear of both. Only who may work
- * the thread. Answers 202 with the message.
+ * done with what it is doing; the inboxes of the thread's teams hear of both. Only who may see
+ * the thread (`maySee`, src/shares.js: who may work it, admins, and who talked in its sidebar
+ * before), `canSee`. Answers 202 with the message.
  */
-export async function talkToAgent(env, me, body, inTeam) {
+export async function talkToAgent(env, me, body, canSee) {
   const text = String((body && body.text) || '').trim();
   if (!text || text.length > MAX_SIDEBAR) {
     return json({ error: `write what to ask the agent (up to ${MAX_SIDEBAR} characters)` }, 400);
@@ -176,7 +208,7 @@ export async function talkToAgent(env, me, body, inTeam) {
     return json({ error: 'agents are not configured' }, 503);
   }
   const t = await threadTarget(env, body.thread);
-  if (!t || !await inTeam(t.entry.teams, t.entry)) {
+  if (!t || !await canSee(t.entry.teams, t.entry)) {
     return json({ error: 'not found' }, 404);
   }
   if (!t.enabled) {
@@ -196,6 +228,158 @@ export async function talkToAgent(env, me, body, inTeam) {
   }
   await notifyRoom(env, t.entry.teams, { type: 'sidebar', thread: t.entry.key });
   return json({ message }, 202);
+}
+
+/**
+ * GET /api/kb/chat?repo=&chat=: the conversation of `me` in the sidebar of knowledge base `base`
+ * (`{ repo, kind, slug }`, src/kbchat.js), for whoever may read it (the caller checked): `chat`,
+ * the one they ask for or the one they talked in last (null before the first), its `messages`,
+ * the commands its agent asked them to run there (`bash`, src/bashrequests.js), their earlier
+ * conversations (`chats`), whether they may talk there (`may`: this deployment has agents, and
+ * they are not viewing as someone else) and have it changed (`write`, src/kbaccess.js
+ * `mayWrite`), and, while the latest message waits for its answer, what the agent is doing
+ * (`working`, asked of the agent, which keeps the answers it finished first). Only their own: a
+ * conversation of anyone else is none.
+ */
+export async function kbChatView(env, me, base, { chat = null, write = false } = {}) {
+  const talks = Boolean(env.AGENTS && !me.readonly);
+  const out = {
+    repo: base.repo,
+    may: talks,
+    write: Boolean(talks && write),
+    chat: null,
+    messages: [],
+    bash: [],
+    chats: [],
+    working: null,
+  };
+  if (!talks || !me.id) {
+    return json(out);
+  }
+  const asked = chat && await isChatOf(env, base.repo, me.id, chat) ? chat : null;
+  const [current, chats] = await Promise.all([
+    asked || latestChat(env, base.repo, me.id),
+    chatsOf(env, base.repo, me.id),
+  ]);
+  let messages = await chatMessages(env, base.repo, me.id, current);
+  let working = null;
+  if (waiting(messages)) {
+    const state = await agentStub(env, chatAgentName(base))
+      .then((agent) => agent.chatState({ chat: current }))
+      .catch((e) => ({ working: 'Working', error: e.message }));
+    working = state.working || null;
+    // An answer the agent kept as it was asked.
+    messages = await chatMessages(env, base.repo, me.id, current);
+    if (!waiting(messages)) {
+      working = null;
+    }
+  }
+  return json({
+    ...out, chat: current, messages, bash: await chatRequests(env, current), chats, working,
+  });
+}
+
+/**
+ * POST /api/kb/chat/bash `{ repo, chat, id, run, env? }`: `me` runs (`run: true`, with the values
+ * it asks for, `env`) or denies a command the knowledge-base agent of `base` asked for in their
+ * conversation `chat` (request_bash, src/agent/bashrequest.js). Only their own conversation, and
+ * only who may write the knowledge base (the caller checked). Answers as the inbox's does:
+ * `202` (ran) or `200` (denied) with the request.
+ */
+export async function decideKbChatBash(env, me, base, body = {}) {
+  if (!env.AGENTS) {
+    return json({ error: 'agents are not configured' }, 503);
+  }
+  if (me.readonly) {
+    return json({ error: 'read-only while viewing as someone else' }, 403);
+  }
+  const name = chatAgentName(base);
+  const request = await requestOf(env, body.id);
+  if (!request || !request.chat || request.chat !== body.chat || request.thread !== name
+    || !await isChatOf(env, base.repo, me.id, body.chat)) {
+    return json({ error: 'not found' }, 404);
+  }
+  const by = { id: me.id, name: me.name || me.email || 'staff' };
+  const agent = await agentStub(env, name);
+  const run = body.run === true;
+  const res = run
+    ? await agent.runBash({ id: request.id, values: body.env || {}, by })
+    : await agent.denyBash({ id: request.id, by });
+  const { status, ...rest } = res;
+  return json(rest, status || (run ? 202 : 200));
+}
+
+/**
+ * POST /api/kb/chat `{ repo, text, chat?, fresh? }`: `me` talks to the knowledge-base agent of
+ * `base` in its sidebar (src/kbchat.js), in their conversation `chat`, else the one they talked
+ * in last, or a new one (`fresh`, or their first). The message goes into the conversation and
+ * into the agent's session of it, and nowhere else. Whoever may read the knowledge base (the
+ * caller checked); `write`, whether they may have it changed (src/kbaccess.js `mayWrite`), which
+ * the agent is told with the message. Answers 202 with the conversation and the message.
+ */
+export async function talkInKbChat(env, me, base, body, { write = false } = {}) {
+  const text = String((body && body.text) || '').trim();
+  if (!text || text.length > MAX_CHAT) {
+    return json({ error: `write what to ask the agent (up to ${MAX_CHAT} characters)` }, 400);
+  }
+  if (me.readonly) {
+    return json({ error: 'read-only while viewing as someone else' }, 403);
+  }
+  if (!env.AGENTS) {
+    return json({ error: 'agents are not configured' }, 503);
+  }
+  let chat = null;
+  if (body.fresh) {
+    chat = chatId();
+  } else if (body.chat) {
+    if (!await isChatOf(env, base.repo, me.id, body.chat)) {
+      return json({ error: 'no such conversation' }, 404);
+    }
+    chat = body.chat;
+  } else {
+    chat = (await latestChat(env, base.repo, me.id)) || chatId();
+  }
+  const by = me.name || me.email || 'staff';
+  // Written first: the agent's answer is kept only for a message the conversation has.
+  const message = await addChatMessage(env, {
+    id: chatMessageId(), repo: base.repo, chat, person: me.id, text,
+  });
+  const res = await agentStub(env, chatAgentName(base)).then((agent) => agent.chat({
+    id: message.id,
+    chat,
+    by,
+    person: me.id,
+    write: Boolean(write),
+    text,
+    kb: base.kind,
+    repo: base.repo,
+  })).catch((e) => ({ error: e.message }));
+  if (res.error) {
+    await dropChatMessage(env, message.id);
+    return json({ error: res.error }, 503);
+  }
+  return json({ chat, message }, 202);
+}
+
+/**
+ * POST /api/agent/sidebar/seen `{ thread, ids }`: the person was shown the agent's answers `ids`
+ * to them in the sidebar of thread `thread` (src/sidebar.js, seeSidebar), so the inbox marks it
+ * no more. Their other inboxes hear of it (`sidebar-seen`, with the person), and only they act on
+ * it. Only who may talk in it (`canSee`, as talkToAgent). Answers 204.
+ */
+export async function sawSidebar(env, me, body, canSee) {
+  const ids = body && body.ids;
+  if (!Array.isArray(ids) || !ids.length) {
+    return json({ error: 'name the answers seen' }, 400);
+  }
+  const t = await threadTarget(env, body.thread);
+  if (!t || !await canSee(t.entry.teams, t.entry)) {
+    return json({ error: 'not found' }, 404);
+  }
+  if (await seeSidebar(env, me.id, ids)) {
+    await notifyRoom(env, t.entry.teams, { type: 'sidebar-seen', thread: t.entry.key, person: me.id });
+  }
+  return new Response(null, { status: 204 });
 }
 
 /**
@@ -225,21 +409,43 @@ export async function tellDiscarded(env, me, key, result) {
 }
 
 /**
+ * Run, on a script request (src/agent/scriptrequest.js): the agent's object runs the script,
+ * and each tool it calls comes back here, over RPC (`call`), to run as `me`, with their
+ * permissions: `inboxTools(env, me)` (src/mcp.js, `inboxCall`), only the tools the request
+ * names. The object answers once the script has ended, so this does too, with 200.
+ */
+async function runScriptAs(env, me, request, by, inboxTools) {
+  if (!inboxTools) {
+    return json({ error: 'scripts are not configured' }, 503);
+  }
+  const asMe = inboxTools(env, me);
+  const call = async (name, args) => (request.tools.includes(name)
+    ? asMe(name, args) : { error: `${name} is not one of the tools this script may call` });
+  const agent = await agentStub(env, request.thread);
+  const { status, ...rest } = await agent.runScript({ id: request.id, by, call });
+  return json(rest, status || 200);
+}
+
+/**
  * POST /api/bash/run `{ thread, id, env }` and POST /api/bash/deny `{ thread, id }`: a person
  * runs, with the values they filled in for its variables (`env`: `{ NAME: value }`), or denies
  * a command the thread's agent asked for (src/agent/bashrequest.js). Only who may work the
  * thread. The agent that asked decides the rest, in its own object: whether the request can
  * still be run, and the run itself, on its computer; `run` answers 202 once the command has
  * started, and the inbox hears how it ended through the team's room. The values go to the
- * agent's object and from there to the shell, and are neither kept nor logged.
+ * agent's object and from there to the shell, and are neither kept nor logged. Who only sees
+ * the thread (`seeing`, `maySee`) is told whose it is, with a 403. A script request runs as the
+ * person who clicks (`runScriptAs`), with the inbox's tools `inboxTools` gives.
  */
-export async function decideBash(env, me, body, inTeam, { run }) {
+export async function decideBash(env, me, body, inTeam, { run, seeing = null, inboxTools = null }) {
   if (!env.AGENTS) {
     return json({ error: 'agents are not configured' }, 503);
   }
   const entry = await entryOf(env, body && body.thread);
   if (!entry || !await inTeam(entry.teams, entry)) {
-    return json({ error: 'not found' }, 404);
+    return entry && seeing && await seeing(entry.teams, entry)
+      ? notTheirs(env, entry, 'run the commands its agent asks for')
+      : json({ error: 'not found' }, 404);
   }
   const request = await requestOf(env, body.id);
   // Of this entry: one of its member threads asked (a thread folded into a group since).
@@ -247,12 +453,94 @@ export async function decideBash(env, me, body, inTeam, { run }) {
     return json({ error: 'not found' }, 404);
   }
   const by = { id: me.id, name: me.name || me.email || 'staff' };
+  if (run && request.kind === 'codemode') {
+    return runScriptAs(env, me, request, by, inboxTools);
+  }
   const agent = await agentStub(env, request.thread);
   const res = run
     ? await agent.runBash({ id: request.id, values: body.env || {}, by })
     : await agent.denyBash({ id: request.id, by });
   const { status, ...rest } = res;
   return json(rest, status || (run ? 202 : 200));
+}
+
+/** Why tool request `r` can no longer be decided as asked. */
+function toolDecided(r) {
+  const by = (p) => (p && p.name) || 'Someone';
+  return {
+    granted: `${by(r.by)} granted it already`,
+    denied: `${by(r.by)} denied it already`,
+    revoked: `${by(r.revoked_by)} ended it already`,
+    expired: 'Nobody decided before its deadline: the agent can ask again',
+    ended: 'Its day is over: the agent can ask again',
+    pending: 'It was not granted yet',
+  }[r.status] || 'It was decided already';
+}
+
+/**
+ * POST /api/agent/tools/grant, …/deny and …/revoke `{ thread, id }`: a person decides on a tool
+ * the thread's agent asked for in its sidebar (src/agent/toolrequest.js), or ends a grant. Only
+ * who may work the thread. A grant or a denial is said to the agent in the sidebar, as the
+ * person's sidebar message (`grantText`, `denyText`), and the agent answers it there; it has a
+ * granted tool from that message on, as its tools are read before each one. Ended early, the
+ * agent goes without it from its next message. Answers with the request, and the sidebar
+ * message when there is one. Who only sees the thread (`seeing`, `maySee`) is told whose it is,
+ * with a 403.
+ */
+export async function decideTool(env, me, body, inTeam, action, { seeing = null } = {}) {
+  if (me.readonly) {
+    return json({ error: 'read-only while viewing as someone else' }, 403);
+  }
+  if (!env.AGENTS) {
+    return json({ error: 'agents are not configured' }, 503);
+  }
+  const t = await threadTarget(env, body && body.thread);
+  if (!t || !await inTeam(t.entry.teams, t.entry)) {
+    return t && seeing && await seeing(t.entry.teams, t.entry)
+      ? notTheirs(env, t.entry, 'decide on the tools its agent asks for')
+      : json({ error: 'not found' }, 404);
+  }
+  const request = await toolRequestOf(env, body.id);
+  // The agent that asked is the one that gets it: the entry's.
+  if (!request || request.thread !== t.entry.key) {
+    return json({ error: 'not found' }, 404);
+  }
+  if (action !== 'revoke' && !t.enabled) {
+    return json({ error: 'this thread has no agent', request }, 409);
+  }
+  const by = me.name || me.email || 'staff';
+  const change = {
+    grant: grantToolRequest, deny: denyToolRequest, revoke: revokeToolRequest,
+  }[action];
+  if (!await change(env, request.id, me.id)) {
+    const now = await toolRequestOf(env, request.id);
+    return json({ error: toolDecided(now), request: now }, 409);
+  }
+  const decided = await toolRequestOf(env, request.id);
+  console.log(JSON.stringify({
+    route: 'agent', action: `tool_${action}`, id: request.id, kind: request.kind, name: request.name,
+  }));
+  const agent = await agentStub(env, t.entry.key);
+  if (action === 'revoke') {
+    // At once where the agent is at work; else at its next message, which reads them anyway.
+    await Promise.all([agent.syncTools(), agent.syncMcp()]).catch(() => {});
+    await notifyRoom(env, t.entry.teams, { type: 'sidebar', thread: t.entry.key });
+    return json({ request: decided });
+  }
+  const text = action === 'grant' ? grantText(decided) : denyText(decided);
+  const message = await addSidebarMessage(env, t.entry.key, {
+    id: sidebarId(), person: me.id, name: by, text,
+  });
+  const res = await agent.sidebar({ id: message.id, by, text })
+    .catch((e) => ({ error: e.message }));
+  if (res.error) {
+    // Decided all the same: the agent has a granted tool at its next message.
+    await env.DB.prepare('DELETE FROM sidebar_messages WHERE id = ?').bind(message.id).run();
+    await notifyRoom(env, t.entry.teams, { type: 'sidebar', thread: t.entry.key });
+    return json({ request: decided, error: `the agent was not told: ${res.error}` });
+  }
+  await notifyRoom(env, t.entry.teams, { type: 'sidebar', thread: t.entry.key });
+  return json({ request: decided, message }, 202);
 }
 
 /**

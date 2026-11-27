@@ -91,3 +91,36 @@ export async function prunePostKeys(env, now = new Date()) {
   const res = await env.DB.prepare('DELETE FROM post_keys WHERE at < ?').bind(before).run();
   return { deleted: res.meta.changes };
 }
+
+/**
+ * One log line a post, how it ended: who, where (the inbox entry, or the channel and root), its
+ * key, the status, the platform's message id or error, and how long it took. Never the text. A
+ * reply that seems lost is traced from here: did the platform take it, and what did it call it.
+ */
+export async function logPost(me, body, files, res, { how, ms, again = false } = {}) {
+  let answer = {};
+  try {
+    answer = await res.clone().json();
+  } catch {
+    // not JSON: the status says enough
+  }
+  console.log(JSON.stringify({
+    route: 'post',
+    action: 'sent',
+    how,
+    person: me.id,
+    thread: body.thread || undefined,
+    channel: body.thread ? undefined : body.channel,
+    root: body.root === undefined ? undefined : String(body.root),
+    key: usable(body.key) ? body.key : undefined,
+    files: files.length || undefined,
+    status: res.status,
+    ok: res.ok,
+    again: again || undefined,
+    platform: answer.platform,
+    id: answer.id || undefined,
+    error: res.ok ? undefined : answer.error,
+    unknown: answer.unknown || undefined,
+    ms,
+  }));
+}
