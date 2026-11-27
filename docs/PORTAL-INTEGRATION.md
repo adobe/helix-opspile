@@ -376,6 +376,10 @@ What it changes, for a member of an individual channel:
 - Support may add a member of the same channel to a thread (`addToThread` of the portal's
   platform binding); they then see it, and their feed says `added` (theirs only).
 
+Support's side: the thread agent of an individual channel learns about each end user into a
+knowledge base of their own, not the organization's, and reads only that person's threads
+(docs/ARCHITECTURE.md, "An end user's knowledge base").
+
 The standalone portal's channels can be individual too: each person sees their threads only (the
 list, a thread, its status and who writes there, its files, reactions, replies, and whom they can
 mention). Its lobby (who is in it, invitations, its logo) stays the company's.
