@@ -753,6 +753,12 @@ export function normalizePortal(key, event) {
       name: a.name || null,
       email: a.email || null,
       avatar: portalAvatar(a),
+      // An embedded account's verified address: one person's accounts are one by it, and only
+      // that (src/lookup.js keeps it apart from `email`).
+      ...(!a.email && a.verifiedEmail ? {
+        mergeEmail: String(a.verifiedEmail).toLowerCase(),
+        ...(a.verifiedAt ? { mergeAt: String(a.verifiedAt) } : {}),
+      } : {}),
     };
   if (e.type === 'reaction') {
     const r = e.reaction || {};

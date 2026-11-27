@@ -636,13 +636,21 @@ const channelInfo = async (env, channel) => ({
 /**
  * An account as an event names it. `avatar`: the address of the picture the inbox gave for one
  * of its people; `picture`: the version of one the person uploaded here, which the inbox asks
- * the portal for.
+ * the portal for; `verifiedEmail`: an embedded account's merge key.
  */
 const authorInfo = (u) => ({
   id: u.id,
   name: u.name || (u.email ? nameFromMail(u.email) : null),
   email: u.email || null,
   kind: u.kind,
+  // An embedded account's provider-verified address (portal migration 0009): a merge key for
+  // the inbox, never a mail address it signs in with or is staff by.
+  ...(!u.email && u.kind === 'customer' && u.verified_email ? {
+    verifiedEmail: u.verified_email,
+    // When it was last verified (Unix seconds kept), for the inbox's window.
+    ...(Number.isFinite(u.verified_at)
+      ? { verifiedAt: new Date(u.verified_at * 1000).toISOString() } : {}),
+  } : {}),
   ...(/^https:\/\//.test(u.avatar || '') ? { avatar: u.avatar } : {}),
   ...(u.avatar_key ? { picture: pictureVersion(u.avatar_key) } : {}),
 });

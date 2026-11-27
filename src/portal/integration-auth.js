@@ -13,10 +13,13 @@
 import { accessClaims, signedClaims } from '../access.js';
 import { hostIdentity, tokenUser, UpstreamError } from './integration-identity.js';
 import { captureAccess, pruneAccess } from './integration-requests.js';
-import { autoEnroll } from './integration-auto.js';
+import { autoEnroll, verifiedEmail } from './integration-auto.js';
 
 export const BASE = '/integrations/portal/v1';
 export const WEEK = 7 * 24 * 60 * 60;
+const DAY = 24 * 60 * 60;
+/** How recently two profiles must both have verified an address to be one person. */
+export const MERGE_DAYS = 30;
 const id = (s) => typeof s === 'string' && s.trim().length > 0 && s.length <= 256;
 
 export class IntegrationError extends Error {
@@ -79,6 +82,44 @@ async function userToken(identity, host, jwt, scope, options, invalid) {
   };
 }
 
+/**
+ * Who member `m` is, as their events and the reads of an individual channel take it, for caller
+ * `c`: `verified`, the address the provider (or the host's signed assertion) verified on this call,
+ * kept on their account as a merge key (portal migration 0009) until another is verified; and
+ * `people`, the actors that are them in their channel: theirs, and in an individual channel those
+ * of its active members whose account the same verified address was kept for. One end user with
+ * two profiles (two subjects, one verified address) then reads their threads from either, while
+ * both of them verified it in the last `MERGE_DAYS` (`verified_at`): an address given to someone
+ * new after its owner left joins them to the former owner's profile no longer than that, and
+ * revoking a member who leaves (`active = 0`) ends it at once. An address alone admits nobody,
+ * and nothing here enrolls.
+ */
+async function samePerson(db, m, c, sec) {
+  const email = verifiedEmail(c);
+  const write = Boolean(email) && (email !== m.seen_email || !(sec - m.seen_at < DAY));
+  if (write) {
+    await db.prepare(`UPDATE users SET verified_email = ?, verified_at = ? WHERE id = ?
+      AND kind = 'customer' AND email IS NULL`).bind(email, sec, m.actor).run();
+  }
+  const recent = sec - MERGE_DAYS * DAY;
+  const verified = email || m.seen_email || null;
+  // When it was last verified, as stored (which the inbox applies the same window by,
+  // src/individual.js): the same on every message of a day, so the inbox's lookup stays cached.
+  const verifiedAt = write ? sec : m.seen_at || null;
+  // One person only while both still verify it: the caller now or lately, the others lately.
+  const mine = email || (m.seen_at > recent ? m.seen_email : null);
+  if (m.audience !== 'individual' || !mine) {
+    return { verified, verifiedAt, people: [m.actor] };
+  }
+  const { results } = await db.prepare(`SELECT m.actor FROM integration_members m
+      JOIN users u ON u.id = m.actor
+    WHERE m.channel = ? AND m.active = 1 AND u.kind = 'customer' AND u.email IS NULL
+      AND u.verified_email = ? AND u.verified_at > ? ORDER BY m.actor LIMIT 20`)
+    .bind(m.channel, mine, recent).all();
+  const people = [...new Set([m.actor, ...(results || []).map((r) => r.actor)])];
+  return { verified, verifiedAt, people };
+}
+
 /** Only Access's signed service identity selects the host and therefore how it names users. */
 export async function authorize(request, env, scope, options = {}) {
   const aud = env.PORTAL_INTEGRATION_AUD;
@@ -114,7 +155,8 @@ export async function authorize(request, env, scope, options = {}) {
   // channel when its tenant is the channel's or one it lists, or, for a member a caught domain
   // placed, with its verified address (checked below). An assertion's subject is the tenant's.
   const find = () => env.DB.prepare(`SELECT c.channel, c.name AS channelName,
-      m.actor, m.cursor_key, a.verified_email, u.name, COALESCE((SELECT audience
+      m.actor, m.cursor_key, a.verified_email, u.name, u.verified_email AS seen_email, u.verified_at AS seen_at,
+      COALESCE((SELECT audience
         FROM channel_audiences WHERE channel = c.channel), 'shared') AS audience
     FROM integration_customers c
     JOIN integration_members m ON m.channel = c.channel
@@ -176,8 +218,8 @@ export async function authorize(request, env, scope, options = {}) {
     }
     fail(429, 'rate_limited');
   }
-  // Who the member is, as the reads of an individual channel take it: the accounts that are them.
-  return { ...member, people: [member.actor], topics: JSON.parse(host.topics) };
+  const person = await samePerson(env.DB, member, c, now);
+  return { ...member, ...person, topics: JSON.parse(host.topics) };
 }
 
 /** Opaque, authenticated continuation of one collection for one enrolled viewer. */

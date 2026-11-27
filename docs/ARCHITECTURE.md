@@ -562,7 +562,11 @@ account's name again once the link is taken back.
 **A customer's people with two accounts.** The customers' people are no person of D1, so the
 customers' overviews and the topic map count them by account. The accounts of one mail address
 are one person there (on Slack Connect, a guest account in Adobe's workspace and the one of their
-own workspace that takes over). Two accounts outside Adobe of different mail addresses, named the
+own workspace that takes over), and so are the embedded portal accounts of one address their
+identity provider verified (two IMS profiles of one end user: `identities.merge_email`, migration
+0114, [One person, several profiles](PORTAL-INTEGRATION.md#one-person-several-profiles)), which is
+a merge key only: it is not their `email`, links them to no person of D1 and makes nobody staff
+by its domain. Two accounts outside Adobe of different mail addresses, named the
 same (without accents, case or punctuation), of which both posted, may be one person too: a new
 job, the agency's address and the customer's, a second address. A name alone merges nobody, so
 each such pair is a thread of the admin team's inbox ("Requests as threads", below; kind

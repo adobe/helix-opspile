@@ -400,6 +400,29 @@ INSERT OR IGNORE INTO thread_members(root, user, added_by, at)  -- add a member 
   VALUES (:root, :actor, :admin_email, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'));
 ```
 
+### One person, several profiles
+
+An IMS user often has several profiles (an Enterprise ID of their employer, a personal Adobe ID),
+each with its own user ID and so its own subject and member. When the provider (or a host's signed
+assertion, `email` with `email_verified: true`) verifies the same address for two of them, they are
+one person:
+
+- The portal keeps the address on each member's account as a **merge key** (`users.verified_email`,
+  portal migration 0009), written on an admitted call that presents it verified, and kept until
+  another is. It is never the account's mail address: nothing signs in with it, it enrolls and
+  admits nobody (enrollment, and the alias binding of a domain-caught member, are as before), and
+  an unverified address is never kept.
+- In an individual channel, a member reads the threads of every active member of the same channel
+  with the same merge key: their threads from either profile. Never across channels or hosts, and
+  only while both profiles verified the address in the last 30 days (`users.verified_at`): an
+  address given to someone new after its owner left stops joining them to the former owner's
+  profile. Revoke a member who leaves (`integration_members.active = 0`) to end it at once.
+- The inbox hears it with each message (`author.verifiedEmail`, only for an account without a mail
+  address, and `author.verifiedAt`, when it was last verified) and keeps it apart from the account's mail address (`identities.merge_email`): the
+  accounts of one address are one person in the customers' overviews and the topic map, and the
+  admin team is not asked whether they are ("one person?"). It never links them to a person of the
+  inbox nor makes them staff, whatever its domain: an embedded account is the customer's side.
+
 A channel's audience is not its organization's type: a channel filed under an internal
 organization, whose end users are each their own customer, is individual, and its organization
 stays internal in the inbox.
