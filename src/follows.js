@@ -87,6 +87,35 @@ const followedEntries = (techs) => `SELECT COALESCE(x.logical_thread, x.thread)
 const inFollowed = (alias, techs) => `(${alias}.thread IN (${followedEntries(techs)})
     OR ${alias}.logical_thread IN (${followedEntries(techs)}))`;
 
+/**
+ * SQL: the entry of `thread_orgs` row `alias` (its `thread`) is a public org's now. A row of role
+ * `customer` counts only then: the link job writes them for public threads, and an org retyped
+ * since, or a channel filed under another org, keeps them until the thread is linked again.
+ * By the threads' key and the orgs' slug.
+ */
+export const PUBLIC_NOW = (alias) => `EXISTS (SELECT 1 FROM threads pt JOIN orgs po ON po.slug = pt.org
+    WHERE pt.thread = ${alias}.thread AND po.type = 'public')`;
+
+/**
+ * SQL: thread row `alias` is in a public thread (an org of type `public`) whose people include a
+ * customer's of those `orgs` selects: `thread_orgs` of role `customer` (src/threadlinks.js), by
+ * entry key, not dismissed, of a thread public now (`PUBLIC_NOW`). By index (`thread_orgs_org`).
+ */
+const inPublic = (alias, orgs) => {
+  const entries = `SELECT x.thread FROM thread_orgs x WHERE x.role = 'customer'
+      AND x.dismissed_at IS NULL AND x.org IN (${orgs}) AND ${PUBLIC_NOW('x')}`;
+  return `(${alias}.thread IN (${entries}) OR ${alias}.logical_thread IN (${entries}))`;
+};
+
+/**
+ * SQL: the customers team `param` follows (an SQL parameter, a slug), or (`many`) any of the
+ * teams `param` has (a JSON array of slugs): its follow rules of field `org`, `^<slug>$`
+ * (src/rules.js `orgPattern`).
+ */
+const teamOrgs = (param, many = false) => `SELECT SUBSTR(r.pattern, 2, LENGTH(r.pattern) - 2)
+    FROM rules r WHERE r.target = 'follow' AND r.field = 'org'
+      AND r.value ${many ? `IN (SELECT value FROM json_each(${param}))` : `= ${param}`}`;
+
 /** What a team follows besides technologies (migration 0105); customers are follow rules. */
 export const TEAM_FOLLOW_KINDS = ['area'];
 
@@ -96,13 +125,16 @@ const inAreas = (alias, areas) => inEntries(alias, `SELECT a.thread FROM thread_
 
 /**
  * SQL: thread row `alias` is in an entry team `param` (an SQL parameter, a slug) follows: one that
- * shows a technology it follows, or one Clef puts in an area it follows (thread_areas).
+ * shows a technology it follows, one Clef puts in an area it follows (thread_areas), or a public
+ * thread the people of a customer it follows posted in (its customers' own channels are shared
+ * with it by the follow rules).
  */
 export const followedByTeam = (alias, param) => `(${inFollowed(
   alias,
   `SELECT tech FROM team_follows WHERE team = ${param}`,
 )}
-  OR ${inAreas(alias, `SELECT target FROM team_follows_by WHERE team = ${param} AND kind = 'area'`)})`;
+  OR ${inAreas(alias, `SELECT target FROM team_follows_by WHERE team = ${param} AND kind = 'area'`)}
+  OR ${inPublic(alias, teamOrgs(param))})`;
 
 /** SQL: as `followedByTeam`, for any of the teams `param` (a JSON array of slugs) has. */
 export const followedByTeams = (alias, param) => `(${inFollowed(
@@ -110,11 +142,13 @@ export const followedByTeams = (alias, param) => `(${inFollowed(
   `SELECT tech FROM team_follows WHERE team IN (SELECT value FROM json_each(${param}))`,
 )}
   OR ${inAreas(alias, `SELECT target FROM team_follows_by
-      WHERE team IN (SELECT value FROM json_each(${param})) AND kind = 'area'`)})`;
+      WHERE team IN (SELECT value FROM json_each(${param})) AND kind = 'area'`)}
+  OR ${inPublic(alias, teamOrgs(param, true))})`;
 
 /**
  * SQL: thread row `alias` is in an entry person `param` (an SQL parameter, an id) follows: one
- * that shows a technology they follow, a conversation of a customer they follow, one a person
+ * that shows a technology they follow, a conversation of a customer they follow (or a public one
+ * its people posted in), one a person
  * (or an account) they follow posted in, one Clef puts in an area they follow (thread_areas), or
  * one they follow itself. Each by index: an account's messages by `messages_author`.
  */
@@ -123,6 +157,7 @@ export const followedByPerson = (alias, param) => `(${inFollowed(
   `SELECT tech FROM (${COUNTED_PERSON_FOLLOWS}) WHERE person = ${param}`,
 )}
   OR (${alias}.kind = 'channel' AND ${alias}.org IN (${followedBy(param, 'org')}))
+  OR (${alias}.kind = 'channel' AND ${inPublic(alias, followedBy(param, 'org'))})
   OR ${inEntries(alias, `SELECT m.thread FROM messages m WHERE m.deleted = 0
       AND m.person IN (SELECT CAST(target AS INTEGER) FROM (${followedBy(param, 'person')}))`)}
   OR ${inEntries(alias, `SELECT m.thread FROM messages m WHERE m.deleted = 0
@@ -139,22 +174,27 @@ const ENTRY_TECH = `WITH k AS (SELECT COALESCE(logical_thread, thread) AS g FROM
     JOIN thread_tech g ON g.thread = x.thread`;
 
 /**
- * SQL, `?1` a thread: why teams have its entry, `(team, tech, area)`: each technology it shows
- * that a team follows (`area` null), and each area Clef puts it in that a team follows (`tech`
- * null). Conversations only.
+ * SQL, `?1` a thread: why teams have its entry, `(team, tech, area, org)`: each technology it
+ * shows that a team follows, each area Clef puts it in that a team follows, and of a public
+ * thread each customer whose people posted in it that a team follows (the others null).
+ * Conversations only.
  */
 const ENTRY_TEAM_FOLLOWS = `WITH k AS (SELECT COALESCE(logical_thread, thread) AS g
       FROM threads WHERE thread = ?1),
     x AS (SELECT t.thread FROM k JOIN threads t ON (t.thread = k.g OR t.logical_thread = k.g)
       WHERE t.kind = 'channel')
-  SELECT f.team, f.tech, NULL AS area FROM x JOIN thread_tech g ON g.thread = x.thread
+  SELECT f.team, f.tech, NULL AS area, NULL AS org FROM x JOIN thread_tech g ON g.thread = x.thread
     JOIN team_follows f ON f.tech = g.tech
-  UNION SELECT f.team, NULL, f.target FROM x JOIN thread_areas a ON a.thread = x.thread
-    JOIN team_follows_by f ON f.kind = 'area' AND f.target = a.area`;
+  UNION SELECT f.team, NULL, f.target, NULL FROM x JOIN thread_areas a ON a.thread = x.thread
+    JOIN team_follows_by f ON f.kind = 'area' AND f.target = a.area
+  UNION SELECT r.value, NULL, NULL, o.org FROM x JOIN thread_orgs o ON o.thread = x.thread
+      AND o.role = 'customer' AND o.dismissed_at IS NULL AND ${PUBLIC_NOW('o')}
+    JOIN rules r ON r.target = 'follow' AND r.field = 'org'
+      AND r.pattern = '^' || o.org || '$'`;
 
 /**
  * The teams that follow inbox entry `thread` (any of its members' keys): a technology it shows,
- * or an area Clef puts it in.
+ * an area Clef puts it in, or (a public thread) a customer whose people posted in it.
  */
 export async function followingTeams(env, thread) {
   if (!env.DB || !thread) {
@@ -167,16 +207,21 @@ export async function followingTeams(env, thread) {
 
 /**
  * Why the teams that follow inbox entry `thread` have it: `[{ team, tech }]` for each technology
- * of the entry's that a team follows, `[{ team, area }]` for each area, by team.
+ * of the entry's that a team follows, `[{ team, area }]` for each area, `[{ team, org }]` for
+ * each customer of a public thread's, by team.
  */
 export async function entryFollows(env, thread) {
   if (!env.DB || !thread) {
     return [];
   }
-  const { results } = await env.DB.prepare(`SELECT team, tech, area FROM (${ENTRY_TEAM_FOLLOWS})
-    ORDER BY team, tech IS NULL, tech, area`).bind(String(thread)).all();
-  return (results || []).map((r) => (r.tech ? { team: r.team, tech: r.tech }
-    : { team: r.team, area: r.area }));
+  const { results } = await env.DB.prepare(`SELECT team, tech, area, org FROM (${ENTRY_TEAM_FOLLOWS})
+    ORDER BY team, tech IS NULL, tech, area IS NULL, area, org`).bind(String(thread)).all();
+  return (results || []).map((r) => {
+    if (r.tech) {
+      return { team: r.team, tech: r.tech };
+    }
+    return r.area ? { team: r.team, area: r.area } : { team: r.team, org: r.org };
+  });
 }
 
 /**
@@ -196,8 +241,9 @@ export async function entryFollowers(env, thread) {
 }
 
 /**
- * Which of `people` (ids) follow inbox entry `thread`: a technology it shows, its customer, a
- * person (or an account) who posted in it, an area it is in, or the entry itself. A Set of ids.
+ * Which of `people` (ids) follow inbox entry `thread`: a technology it shows, its customer (or,
+ * a public thread, a customer whose people posted in it), a person (or an account) who posted in
+ * it, an area it is in, or the entry itself. A Set of ids.
  */
 export async function followersOf(env, people, thread) {
   const ids = [...new Set([].concat(people || []).filter(Boolean))];
@@ -216,6 +262,9 @@ export async function followersOf(env, people, thread) {
           WHERE person IN (SELECT value FROM json_each(?2)))
       SELECT DISTINCT f.person AS who FROM f WHERE
         (f.kind = 'org' AND f.target IN (SELECT org FROM x))
+        OR (f.kind = 'org' AND f.target IN (SELECT o.org FROM thread_orgs o
+          WHERE o.thread IN (SELECT thread FROM x) AND o.role = 'customer'
+            AND o.dismissed_at IS NULL AND ${PUBLIC_NOW('o')}))
         OR (f.kind = 'area' AND f.target IN (SELECT a.area FROM thread_areas a WHERE a.thread IN (SELECT thread FROM x)))
         OR (f.kind = 'person' AND CAST(f.target AS INTEGER) IN (SELECT m.person FROM messages m
           WHERE m.thread IN (SELECT thread FROM x) AND m.deleted = 0))

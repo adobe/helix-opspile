@@ -11,7 +11,9 @@
  */
 
 import { isStaffDomain } from './lookup.js';
-import { partnerDomains, partnerOf } from './partners.js';
+import {
+  customerDomains, customerOf, partnerDomains, partnerOf,
+} from './partners.js';
 
 export { partnerOf };
 
@@ -26,6 +28,10 @@ export { partnerOf };
  * - `partner`: their mail domain (or a parent domain) is a partner's (src/partners.js)
  * - `customer`: any other person
  * - `bot`: a bot account
+ *
+ * A customer's person whose mail domain is a customer's own (src/partners.js `customerDomains`)
+ * has that customer as `customer` (`{ org, name }`): in a public channel, where people of many
+ * orgs post, the card names whose they are, and calls the others the community.
  *
  * Emails stay on the server; the card gets the mail domain only.
  */
@@ -50,7 +56,7 @@ const splitKey = (key) => {
 
 /**
  * Cards for the given identity keys: `{ [key]: { name, avatar, platform, kind, title,
- * company, domain, relation, partner, teams } }`. Unknown keys are left out.
+ * company, domain, relation, partner, customer, teams } }`. Unknown keys are left out.
  */
 export async function profiles(env, keys) {
   const wanted = [...new Set((keys || []).filter(Boolean))];
@@ -58,7 +64,7 @@ export async function profiles(env, keys) {
     return {};
   }
   // The partner domains do not depend on who is asked about: ask D1 for both at once.
-  const [{ results: rows }, partners] = await Promise.all([
+  const [{ results: rows }, partners, customers] = await Promise.all([
     env.DB.prepare(`WITH k AS (
       SELECT json_extract(value, '$[0]') AS s, json_extract(value, '$[1]') AS t,
         json_extract(value, '$[2]') AS u FROM json_each(?))
@@ -69,6 +75,7 @@ export async function profiles(env, keys) {
     FROM k JOIN identities i ON i.source = k.s AND i.tenant = k.t AND i.user_id = k.u
     LEFT JOIN people p ON p.id = i.person`).bind(JSON.stringify(wanted.map(splitKey))).all(),
     partnerDomains(env),
+    customerDomains(env),
   ]);
   if (!rows || !rows.length) {
     return {};
@@ -86,6 +93,7 @@ export async function profiles(env, keys) {
     const domain = domainOf(r.email);
     const relation = relationOf(env, r, partners);
     const partner = relation === 'partner' ? partnerOf(domain, partners) : null;
+    const customer = relation === 'customer' ? customerOf(domain, customers) : null;
     return [`${r.source}:${r.tenant}:${r.user_id}`, {
       name: r.name || null,
       avatar: r.avatar || null,
@@ -96,6 +104,7 @@ export async function profiles(env, keys) {
       domain,
       relation,
       partner: partner ? partner.name : null,
+      customer: customer ? { org: customer.org, name: customer.name } : null,
       teams: (r.person && teamsOf.get(r.person)) || [],
     }];
   }));

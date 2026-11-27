@@ -50,7 +50,8 @@
  * with the customers they post for, as a team member's; those who post only in customers'
  * channels follow them. The page says its name where it would say "its" ("Valtech's channels").
  * A customer's lists its partners (`p.partners`), each a link to its page, with what links them,
- * since when, and its former partners last (`until`, tagged Former).
+ * since when, and its former partners last (`until`, tagged Former), and the public channels its
+ * people posted in (`p.public`).
  *
  * Everything in it is a name, a number or a picture, written escaped.
  */
@@ -513,6 +514,23 @@ globalThis.CustomerView = (() => {
   }
 
   /**
+   * The public channels a customer's people posted in (`p.public`: a community's, an event's;
+   * src/orgprofile.js), by their mail domain; none where they posted in none.
+   */
+  function publicChannels(p) {
+    const rows = (p.public || []).map((c) => ({
+      n: c.threads,
+      count: `${plural(c.threads, 'thread')} with their people`,
+      name: `<span>${esc(c.name ? `#${c.name}` : 'A channel')}</span>`,
+      sub: esc([PLATFORM[c.source] || c.source, c.last ? ago(c.last) : ''].filter(Boolean).join(', ')),
+    }));
+    if (!rows.length) return '';
+    return `<section class="tv-sec" aria-labelledby="cvPublic"><h2 id="cvPublic">In public channels <span class="sub">${esc(plural(rows.length, 'channel'))}</span></h2>
+      <p class="sub">Community and event channels where people of ${esc(nameOf(p))}'s mail domains posted in these weeks. Their threads are in the inbox of whoever follows ${esc(nameOf(p))}.</p>
+      ${ranked(rows, p.weeks.length)}</section>`;
+  }
+
+  /**
    * A partner's people who post only in customers' channels, after the cards: a face and name
    * each, with the icons of the customers they post for.
    */
@@ -645,6 +663,7 @@ globalThis.CustomerView = (() => {
       ${p.partner ? `<div class="tv-two">${partnerCustomers(p, ctx)}${partnerWaiting(p)}</div>` : ''}
       ${people(p, ctx)}
       ${p.partners ? customerPartners(p, ctx) : ''}
+      ${publicChannels(p)}
       <div class="tv-two">${staff(p, ctx)}${teams(p, ctx)}</div>
       <div class="tv-two">${areas(p, ctx)}${channels(shown)}</div>
       ${tech(p, ctx, 'all')}

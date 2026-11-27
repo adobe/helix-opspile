@@ -147,6 +147,10 @@ tr.left td { opacity: .55; }
 .pair .side { min-width: 0; }
 .pair .chans, .asks, .dups { margin: var(--spectrum-spacing-100) 0 0; padding-left: var(--spectrum-spacing-300); }
 @media (max-width: 699px) { .pair { grid-template-columns: 1fr; } }
+/* The review's queues (ui/admin.js, "review"): a pair as a link, its two icons (the second over
+   the first's edge), then its names; a fold's button above the rows it shows. */
+.qpair, .qicons { display: inline-flex; align-items: center; }
+.qfold { margin: 0 0 var(--spectrum-spacing-300); }
 /* Who follows a customer: you, then the teams, each a row with its Follow toggle; a channel's
    teams on a customer's page, one per line. */
 ul.teams { margin: 0; padding: 0; list-style: none; }
@@ -297,6 +301,9 @@ body main.instant :is(#list, #detail) { transition: none; }
 /* An org's icon: a thumbnail, rounded as a nested object is. */
 .spectrum .ico { width: var(--spectrum-workflow-icon-size-75); height: var(--spectrum-workflow-icon-size-75); border-radius: var(--spectrum-corner-radius-75); }
 .spectrum .ico.none { background: var(--spectrum-gray-200); }
+.spectrum .qpair { gap: var(--spectrum-text-to-visual-100); }
+.spectrum .qpair .ico + .ico { margin-inline-start: calc(-1 * var(--spectrum-spacing-75)); box-shadow: 0 0 0 var(--spectrum-border-width-200) var(--content); }
+.spectrum .qpair .sep { color: var(--spectrum-neutral-subdued-content-color-default); }
 /* Checkbox, small, with its label. */
 .spectrum label.only {
   gap: var(--spectrum-text-to-visual-75);

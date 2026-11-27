@@ -394,11 +394,14 @@ function spreads(orgs) {
  * The pairs of orgs whose signals add up to `CANDIDATE`, strongest first, at most
  * `MAX_CANDIDATES`: `[{ a, b, signals, score }]`, `a` before `b`. Orgs of two types (a customer
  * and its partner, vendor, or Adobe) share people, mail domains and Slack Connect teams because
- * one works for the other: only alike names make them a candidate.
+ * one works for the other: only alike names make them a candidate. A public org is none.
  */
 export function candidates({ orgs, members }) {
   const spread = spreads(orgs);
-  const list = [...orgs.values()].sort((x, y) => x.slug.localeCompare(y.slug));
+  // A public org (a community's or an event's channels) is where people of every org meet: it
+  // shares people and domains with all of them, and is none of them.
+  const list = [...orgs.values()].filter((o) => o.type !== 'public')
+    .sort((x, y) => x.slug.localeCompare(y.slug));
   const out = [];
   for (let i = 0; i < list.length; i += 1) {
     for (let j = i + 1; j < list.length; j += 1) {
@@ -419,7 +422,7 @@ export function candidates({ orgs, members }) {
 // ---- Clef ------------------------------------------------------------------------------------
 
 const INTRO = 'An ops inbox at Adobe files Slack, Teams and Discord channels under organizations:'
-  + ' customers, partners, vendors, or Adobe itself (internal). A channel name is usually'
+  + ' customers, partners, vendors, Adobe itself (internal), or public channels. A channel name is usually'
   + ' <product>-<organization> (aem-acme, workfront-acme), and the organization\'s slug comes from'
   + ' it, so one organization can end up under two slugs. Two of them, A and B, may be the same.'
   + ' Partners and agencies work for several customers at once: the same agency\'s people, mail'
@@ -756,6 +759,30 @@ export async function orgDuplicates(env, me, { pair = '', fresh = false } = {}) 
     requests,
     ...(admin ? { merges } : {}),
   });
+}
+
+/**
+ * How many pairs of orgs wait for `me`, from what is kept only (no candidates found, no Clef
+ * asked): those Clef found likely that nobody dismissed, and those asked to be merged, of the
+ * customers `me` sees (every org, for the admin team). The Customers sidebar has its Review entry
+ * from its first paint by it (`review` of GET /api/admin/orgs, ui/review.js): an estimate, as the
+ * kept verdicts may be of pairs that are no candidates any more; the list itself is
+ * `orgDuplicates`.
+ */
+export async function likelyPairCount(env, me) {
+  const admin = isAdmin(me);
+  const [likely, asked, merges, owned] = await Promise.all([
+    rows(env, 'SELECT a, b FROM org_pairs WHERE p >= ?1 AND dismissed_at IS NULL', LIKELY),
+    rows(env, 'SELECT slug AS a, into_slug AS b FROM org_merge_requests WHERE status = \'open\''),
+    rows(env, 'SELECT slug FROM org_merges'),
+    admin ? null : ownedCustomers(env, (me.teams || []).map((t) => t.slug)),
+  ]);
+  const merged = new Set(merges.map((m) => m.slug));
+  const sees = (slug) => admin || owned.has(slug);
+  const pairs = new Set([...likely, ...asked]
+    .filter((x) => x.a !== x.b && !merged.has(x.a) && !merged.has(x.b) && (sees(x.a) || sees(x.b)))
+    .map((x) => pairKey(x.a, x.b)));
+  return pairs.size;
 }
 
 /**
