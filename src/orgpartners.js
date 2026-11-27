@@ -21,6 +21,10 @@ import {
 } from './partnerrequests.js';
 import { platformName } from './platforms.js';
 import { isAdmin } from './roles.js';
+import {
+  byThread, factThreads, md, namedIn, postedFrom, quoteLines, threadSection, threadsOf,
+  whoCouldKnow, withQuotes,
+} from './requestevidence.js';
 import { UNASSIGNED } from './rules.js';
 
 /**
@@ -368,9 +372,11 @@ export function spanOf(c, p, ev, ctx) {
 
 /**
  * Why partner `p` may work for customer `c` (both orgs of the duplicates' facts), each
- * `{ kind, weight, n, text }`: `n` is how many (threads, people, owners, entries, places,
- * channels), `text` says it, with names for the admin team. `ev` is the evidence, `ctx`
- * `contextOf`'s.
+ * `{ kind, weight, n, text, of }`: `n` is how many (threads, people, owners, entries, places,
+ * channels), `text` says it, with names for the admin team, and `of` is what it found (the mail
+ * domains, owners, knowledge-base paths, places or channels), which a request's evidence
+ * (`partnerEvidence`) and Clef's quotes (`pairQuotes`) look the messages up by. `ev` is the
+ * evidence, `ctx` `contextOf`'s.
  */
 export function partnerSignals(c, p, ev, ctx) {
   const out = [];
@@ -388,6 +394,7 @@ export function partnerSignals(c, p, ev, ctx) {
       n: threads,
       people,
       text: `${plural(people, 'person', 'people')} from ${named(posted.map((r) => r.domain))}, posted in ${plural(threads, 'thread')} of the customer's`,
+      of: posted.map((r) => r.domain),
     });
   }
   // The customer's people, from its usual mail domain, post in the partner's threads.
@@ -402,6 +409,7 @@ export function partnerSignals(c, p, ev, ctx) {
       n: threads,
       people,
       text: `${plural(people, 'person', 'people')} from ${home}, the customer's usual mail domain, posted in ${plural(threads, 'thread')} of the partner's`,
+      of: [home],
     });
   }
   // The partner's people are in the customer's channels.
@@ -413,6 +421,7 @@ export function partnerSignals(c, p, ev, ctx) {
       weight: membersWeight(members),
       n: members,
       text: `${plural(members, 'person', 'people')} from ${listed(inChannels.map(([d]) => d))} ${members === 1 ? 'is' : 'are'} in the customer's channels`,
+      of: inChannels.map(([d]) => d),
     });
   }
   // The same GitHub or aem.live owner in the facts of both, one only a few customers have.
@@ -427,6 +436,7 @@ export function partnerSignals(c, p, ev, ctx) {
       weight: (shared.length >= 2 ? 0.5 : 0) + (only ? 2.5 : 1.5),
       n: shared.length,
       text: `threads of both name the site owner${shared.length === 1 ? '' : 's'} ${listed(shared)}`,
+      of: shared,
     });
   }
   // The partner's knowledge base names the customer's sites, or the customer.
@@ -455,6 +465,7 @@ export function partnerSignals(c, p, ev, ctx) {
         weight: entry ? 3 : 2,
         n: naming.length,
         text: `${plural(naming.length, 'entry', 'entries')} of the partner's knowledge base name${naming.length === 1 ? 's' : ''} the customer or its sites (${listed(naming.map((e) => e.path))})`,
+        of: naming.map((e) => e.path),
       });
     }
   }
@@ -472,6 +483,7 @@ export function partnerSignals(c, p, ev, ctx) {
       weight: others > 2 ? 1 : 2,
       n: common.length,
       text: `channels of both are with the same ${teams ? 'Teams team' : 'Slack Connect team'}${others > 0 ? `, as are channels of ${plural(others, 'other org')}` : ''}`,
+      of: common,
     });
   }
   // A channel named for both: `<partner>-<customer>`.
@@ -487,6 +499,7 @@ export function partnerSignals(c, p, ev, ctx) {
       weight: 3,
       n: both.length,
       text: `${both.length === 1 ? 'a channel is' : `${both.length} channels are`} named for both (${listed(both)})`,
+      of: both,
     });
   }
   return out;
@@ -658,6 +671,137 @@ async function pool(items, n, fn) {
       await fn(queue.shift());
     }
   }));
+}
+
+// ---- what their messages say ----------------------------------------------------------------
+
+/** What a signal found (`of`), or none. */
+const foundBy = (signals, kind) => ((signals || []).find((s) => s.kind === kind) || {}).of || [];
+/** The names a message may call an org by: its display name, and its slug. */
+const callable = (o) => [o.name, o.slug].filter(Boolean);
+
+/**
+ * The messages behind a pair's signals (`signals`, `partnerSignals`'s, of `c` and `p`, `ctx`
+ * `contextOf`'s): the partner's people in the customer's threads (`posters`), the customer's in the
+ * partner's (`guests`), the customer named in the partner's threads (`customer`) and the partner
+ * in the customer's (`partner`). Each a list of messages (src/requestevidence.js).
+ */
+async function pairMessages(env, c, p, signals, ctx, { limit } = {}) {
+  const domains = [...new Set([...foundBy(signals, 'posters'), ...(ctx.partnerMail.get(p.slug) || [])])];
+  const home = ctx.usual.get(c.slug);
+  const homeIsTheirs = home && domainPartner(ctx.partnerOf, home) === p.slug;
+  const [posters, guests, customer, partner] = await Promise.all([
+    postedFrom(env, { orgs: [c.slug], domains, limit }),
+    home && !homeIsTheirs ? postedFrom(env, { orgs: [p.slug], domains: [home], limit }) : [],
+    namedIn(env, { orgs: [p.slug], names: callable(c), limit }),
+    namedIn(env, { orgs: [c.slug], names: callable(p), limit }),
+  ]);
+  return {
+    posters, guests, customer, partner, domains, home,
+  };
+}
+
+/**
+ * What Clef is shown of the pair's messages beside the signals (`withQuotes`): short quotes of
+ * the messages behind them, without who wrote them (src/requestevidence.js `quoteLines`). None
+ * when they cannot be read: the verdict is asked on the signals alone then.
+ */
+export async function pairQuotes(env, c, p, signals, ctx) {
+  try {
+    const m = await pairMessages(env, c, p, signals, ctx, { limit: 60 });
+    const its = (email) => Boolean(email) && domainPartner(ctx.partnerOf, String(email).split('@')[1]) === p.slug;
+    const who = (x) => {
+      if (x.staff) {
+        return 'Adobe staff';
+      }
+      return its(x.email) ? 'one of P\'s people' : 'someone outside Adobe';
+    };
+    return quoteLines([
+      { where: 'a thread of C', who: () => 'one of P\'s people', messages: m.posters },
+      { where: 'a thread of P', who, messages: m.customer },
+      { where: 'a thread of C', who, messages: m.partner.filter((x) => !its(x.email)) },
+      { where: 'a thread of P', who: () => 'one of C\'s people', messages: m.guests },
+    ]);
+  } catch (e) {
+    console.log(JSON.stringify({ route: 'orgpartners', quotes: 'failed', error: String(e && e.message) }));
+    return [];
+  }
+}
+
+/**
+ * What links customer `customer` and partner `partner`, as the admin team's request of the pair
+ * shows it (src/requestthreads.js): `{ sections, people }` of src/requestevidence.js, the threads
+ * behind each signal and the messages in them, the partner's knowledge-base entries that name the
+ * customer, the channels; and who at Adobe worked those threads. Null when either org is gone.
+ */
+export async function partnerEvidence(env, customer, partner) {
+  const [f, ev, merges] = await Promise.all([
+    orgFacts(env),
+    evidence(env),
+    rows(env, 'SELECT slug FROM org_merges'),
+  ]);
+  const merged = new Set(merges.map((r) => r.slug));
+  const orgs = new Map([...f.orgs].filter(([slug]) => !merged.has(slug)));
+  const c = orgs.get(customer);
+  const p = orgs.get(partner);
+  if (!c || !p) {
+    return null;
+  }
+  const mail = await partnerMailDomains(env, orgs);
+  const ctx = contextOf(orgs, ev, mail.found ? mail.domains : null);
+  const signals = partnerSignals(c, p, ev, ctx);
+  const owners = foundBy(signals, 'owners');
+  const [m, owned] = await Promise.all([
+    pairMessages(env, c, p, signals, ctx),
+    factThreads(env, {
+      orgs: [c.slug, p.slug],
+      fields: ['site', 'repo', 'url'],
+      like: owners,
+      match: (field, value) => owners.includes(ownerOf(field, value)),
+    }),
+  ]);
+  const C = md(c.name || c.slug);
+  const P = md(p.name || p.slug);
+  const its = (email) => Boolean(email) && domainPartner(ctx.partnerOf, String(email).split('@')[1]) === p.slug;
+  const sections = [
+    threadSection(`${P}'s people in ${C}'s threads${m.domains.length ? ` (${md(m.domains.join(', '))})` : ''}`, byThread(m.posters)),
+    threadSection(`${C} named in ${P}'s threads`, byThread(m.customer)),
+    threadSection(`${P} named in ${C}'s threads`, byThread(m.partner.filter((x) => !its(x.email)))),
+    threadSection(`${C}'s people in ${P}'s threads${m.home ? ` (${md(m.home)})` : ''}`, byThread(m.guests)),
+    threadSection('Threads that name the site owners of both', byThread(owned), {
+      note: (x) => (x.thread.fact ? `names \`${String(x.thread.fact.value).replace(/`/g, '')}\`` : null),
+    }),
+  ];
+  const kb = foundBy(signals, 'kb');
+  if (kb.length) {
+    sections.push({
+      head: `${P}'s knowledge base names ${C} or its sites`,
+      items: kb.slice(0, 5).map((path) => ({
+        text: path,
+        href: `/inbox/admin?${new URLSearchParams({
+          tab: 'orgs', org: p.slug, view: 'kb', path,
+        })}`,
+      })),
+      more: Math.max(0, kb.length - 5),
+      threads: [],
+    });
+  }
+  const places = new Set(foundBy(signals, 'place'));
+  const together = [...c.channels, ...p.channels]
+    .filter((x) => (x.places || []).some((y) => places.has(y)));
+  const named = new Set(foundBy(signals, 'channel'));
+  const channels = [
+    ...together.map((x) => ({ text: x.label, note: `with the same ${(x.places || []).some((y) => places.has(y) && y.startsWith('teams:')) ? 'Teams team' : 'Slack Connect team'}` })),
+    ...[...c.channels, ...p.channels].filter((x) => named.has(x.label))
+      .map((x) => ({ text: x.label, note: 'named for both' })),
+  ];
+  if (channels.length) {
+    sections.push({
+      head: 'Channels', items: channels.slice(0, 5), more: Math.max(0, channels.length - 5), threads: [],
+    });
+  }
+  const people = await whoCouldKnow(env, threadsOf({ sections }));
+  return { sections, people };
 }
 
 // ---- the pairs kept --------------------------------------------------------------------------
@@ -855,7 +999,9 @@ async function sync(env, {
   await pool(asking, ASK_PARALLEL, async ({
     pair, state, fingerprint, c,
   }) => {
-    const p = await askPair(env, state, wait);
+    // What their messages say, beside the signals: not part of the fingerprint.
+    const quotes = await pairQuotes(env, orgs.get(c.customer), orgs.get(c.partner), c.signals, ctx);
+    const p = await askPair(env, withQuotes(state, quotes), wait);
     if (p === null) {
       return;
     }
