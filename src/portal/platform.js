@@ -17,7 +17,7 @@ import {
 import {
   declineAccess, enrollAccess, listAccess, reserveAccess,
 } from './integration-requests.js';
-import { listChannels, setAuto } from './integration-auto.js';
+import { listChannels, setAudienceName, setAuto } from './integration-auto.js';
 import {
   addToThread, channelOf, declineLobby, editMessage, ensureBot, ensureUser, openChannel, reactTo,
   resend, setAudience, setTyping, writeMessage,
@@ -203,6 +203,8 @@ export const declineRequest = (env, args = {}, now = Date.now()) => declineAcces
  */
 export const accessChannels = (env, args = {}, now = Date.now()) => listChannels(env, args, now);
 export const autoApprove = (env, args = {}, now = Date.now()) => setAuto(env, args, now);
+/** `{ channel, name, by }`: whom the channel's members are told its customer is. */
+export const audienceName = (env, args = {}, now = Date.now()) => setAudienceName(env, args, now);
 
 /**
  * Individual channels (portal migration 0008): `setChannelAudience({ channel, audience, by })`

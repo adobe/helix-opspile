@@ -120,6 +120,19 @@ async function samePerson(db, m, c, sec) {
   return { verified, verifiedAt, people };
 }
 
+/** The provider's name of a channel's own tenant, when it has none yet. Best effort. */
+async function recordOrgName(db, channel, c) {
+  try {
+    const name = String(await c.organization(c.tenant) || '').trim().slice(0, 200);
+    if (name) {
+      await db.prepare(`UPDATE integration_customers SET org_name = ? WHERE channel = ?
+        AND org_name IS NULL`).bind(name, channel).run();
+    }
+  } catch {
+    console.warn('portal integration: organization name not recorded');
+  }
+}
+
 /** Only Access's signed service identity selects the host and therefore how it names users. */
 export async function authorize(request, env, scope, options = {}) {
   const aud = env.PORTAL_INTEGRATION_AUD;
@@ -157,7 +170,8 @@ export async function authorize(request, env, scope, options = {}) {
   const find = () => env.DB.prepare(`SELECT c.channel, c.name AS channelName,
       m.actor, m.cursor_key, a.verified_email, u.name, u.verified_email AS seen_email, u.verified_at AS seen_at,
       COALESCE((SELECT audience
-        FROM channel_audiences WHERE channel = c.channel), 'shared') AS audience
+        FROM channel_audiences WHERE channel = c.channel), 'shared') AS audience,
+      c.tenant AS channelTenant, c.org_name AS orgName, c.audience_name AS audienceNameSet
     FROM integration_customers c
     JOIN integration_members m ON m.channel = c.channel
     JOIN integration_actors a ON a.channel = m.channel AND a.actor = m.actor
@@ -219,6 +233,10 @@ export async function authorize(request, env, scope, options = {}) {
     fail(429, 'rate_limited');
   }
   const person = await samePerson(env.DB, member, c, now);
+  if (identity && !member.orgName && c.organization && c.tenant === member.channelTenant) {
+    // A channel made by hand, or before its name was readable: the provider names its tenant.
+    options.waitUntil?.(recordOrgName(env.DB, member.channel, c));
+  }
   return { ...member, ...person, topics: JSON.parse(host.topics) };
 }
 

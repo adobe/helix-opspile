@@ -575,6 +575,10 @@ const viaText = (via) => {
   return via.startsWith('domain:') ? `the mail domain ${value}` : `the organization ID ${value}`;
 };
 
+/** Where the name a shared channel's members are told comes from, in words. */
+const nameSource = (c) => (c.orgName
+  ? ', as the identity provider names the organization' : ': no name is known, set one');
+
 const embedKind = {
   list: (env) => listIntegrationChannels(env),
   get: (env, id) => getIntegrationChannel(env, id),
@@ -593,7 +597,7 @@ const embedKind = {
       `- Auto-approval ${auto}`,
       c.audience === 'individual'
         ? `- **Individual customers**: each member sees only the threads they started, wrote in or were added to${c.audienceBy ? `, set by ${md(c.audienceBy)}${c.audienceAt ? ` ${md(c.audienceAt.slice(0, 10))}` : ''}` : ''}; the team sees them all`
-        : '- Shared: every member sees every thread of the channel',
+        : `- Shared: every member sees every thread of the channel; they are told it is **${md(c.shownName || 'your team')}**${c.audienceName ? `, named by ${md(c.audienceNameBy || 'an admin')}` : nameSource(c)}`,
       `- Also catches organization IDs ${list(c.tenants)}; mail domains ${list(c.domains)}`,
     ].join('\n');
     const events = (c.autoApproved || []).filter((x) => x.at).map((x, i) => ({
@@ -656,6 +660,23 @@ const embedKind = {
           body: { channel: c.channel, audience: v.individual ? 'individual' : 'shared' },
         }),
         done: (a) => `#${md((a.channel && a.channel.name) || c.name)} is ${a.audience === 'individual' ? 'individual: each member sees only their own threads' : 'shared: every member sees every thread'}.`,
+      }, {
+        id: 'audience-name',
+        label: 'Set customer name',
+        off: bound ? null : 'The customer portal is not connected to this inbox yet (PORTAL_WORKER).',
+        hint: `Who "everyone" is when the host says who can read a shared channel ("Everyone at ${md(c.shownName || 'Acme')} who uses Support, and Adobe Support"). ${c.orgName ? `Empty: the identity provider's name, ${md(c.orgName)}.` : 'Empty: none, and the host says it in general words.'} Not the channel's name, nor an organization ID.`,
+        fields: [{
+          name: 'name', label: 'Customer name, as its people know it', type: 'text', max: 120, value: c.audienceName || c.orgName || '',
+        }],
+        run: (v) => ({
+          method: 'PUT',
+          path: 'portal/integration/audience-name',
+          body: { channel: c.channel, name: v.name },
+        }),
+        done: (a) => {
+          const shown = a.channel && a.channel.shownName;
+          return shown ? `Its members are told the channel is shared with everyone at ${md(shown)}.` : 'No customer name: the host says it in general words.';
+        },
       }],
     };
   },

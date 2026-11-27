@@ -3,7 +3,8 @@
 A signed-in member of a registered host can start and follow support conversations inside that
 host. The audience is **all approved members of this host's customer and its support staff**, or,
 in an [individual channel](#individual-channels), **the member, whoever support adds, and its
-support staff** (`audience` on `GET /threads`). Show that audience before accepting a message. Only send the title, optional public topic and
+support staff** (`audience` on `GET /threads`, and for a shared channel the customer's name,
+`audienceName`, when it is known). Show that audience before accepting a message. Only send the title, optional public topic and
 customer-written body. Don't send private diagnostics, session links, prompts or staff notes.
 
 The host renders its own list, conversation and composer. Its browser calls its **own backend**;
@@ -439,7 +440,7 @@ listed. Strings are text, not HTML. Render public message bodies as text or sani
 | Request | Scope | Response |
 | --- | --- | --- |
 | `POST /threads` `{title,body,topic?}` | `threads:create` | `201 {threadId,channelId,channelName,requestId}`, `Location` for the thread. An enrollment with no channel gets one. |
-| `GET /threads` | `threads:read` | `{items:[{id,title,lastActivity,resolved,unread}],next,unreadThreads,changeCursor,audience}`. Before the first thread: empty list, zero unread and a usable cursor. `audience`: `shared` or `individual` ([Individual channels](#individual-channels)). |
+| `GET /threads` | `threads:read` | `{items:[{id,title,lastActivity,resolved,unread}],next,unreadThreads,changeCursor,audience,audienceName?}`. Before the first thread: empty list, zero unread and a usable cursor. `audience`: `shared` or `individual` ([Individual channels](#individual-channels)). `audienceName`: [whom "shared" means](#the-customers-name). |
 | `GET /threads/{root}` | `threads:read` | `{id,title,resolved,messages:[{id,at,kind,name,body,rev,deleted}],next}`. No implicit read acknowledgement. |
 | `POST /threads/{root}/replies` `{body}` | `threads:reply` | `201 {id,threadId}`. Only a root of the caller's channel is a valid target, and in an individual channel one of the caller's threads. |
 | `PUT /threads/{root}/read` `{through}` | `threads:read` | `{unreadThreads}`. Acknowledge up to that displayed message ID, never a later reply. |
@@ -462,6 +463,31 @@ listed. Strings are text, not HTML. Render public message bodies as text or sani
   show as **Adobe Support**; no upstream identities, emails, agent progress, files or reactions
   are returned. The staff checkmark on the root supplies `resolved`; a deleted message has an
   empty body. The feed contains no message bodies and has no effect on inbox delivery.
+
+### The customer's name
+
+`GET /threads` names the customer a **shared** channel is shared with, so the host can say who
+reads it ("Everyone at Paper Mill who uses Support, and Adobe Support"): `audienceName`, plain
+text, one line, up to 120 characters (200 for a provider's name). It is optional and additive:
+
+- **Present** only when the channel is `shared` and a name is known.
+- **Absent** for an `individual` channel, and when no name is known. Say it in general words then
+  ("Your team and Adobe Support").
+- **Where it comes from:** the name the admin team set on the channel, else the identity
+  provider's name of the channel's own organization (`/ims/organizations/v6`, cached a day). That
+  one is recorded when a request of the organization is approved, or, for a channel made by
+  hand, on a member's call whose token has the `read_organizations` scope. Never the channel's
+  `<product>-<customer>` name, never an organization ID.
+- **Who sets it:** the admin team, on the channel's thread in the inbox (*Integration channels*,
+  *Set customer name*), or with `PUT /api/admin/portal/integration/audience-name` (README). An
+  empty name takes it back to the provider's. An operator can set it with SQL:
+
+  ```sql
+  UPDATE integration_customers SET audience_name = :name, audience_name_by = :admin_email,
+    audience_name_at = unixepoch() WHERE channel = :channel;
+  ```
+
+It is each channel's: another host's channel of the same organization says its own.
 
 ### Keeping the host's UI current
 

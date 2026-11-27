@@ -141,6 +141,13 @@ function shapeChannel(c, catches, members) {
     audience: c.audience || 'shared',
     audienceBy: c.audience_by || null,
     audienceAt: iso(c.audience_at),
+    // Whom "shared" means, as `GET /threads` names it (`audienceName`): the admin team's name,
+    // else the provider's of its tenant, recorded at approval.
+    orgName: c.org_name || null,
+    audienceName: c.audience_name || null,
+    audienceNameBy: c.audience_name_by || null,
+    audienceNameAt: iso(c.audience_name_at),
+    shownName: c.audience_name || c.org_name || null,
     autoApprove: Boolean(c.auto_approve),
     autoBy: c.auto_by || null,
     autoAt: iso(c.auto_at),
@@ -289,5 +296,39 @@ export async function setAuto(env, args = {}, now = Date.now()) {
   console.log(JSON.stringify({
     route: 'portal', integration: 'auto', on: args.on === undefined ? undefined : Boolean(args.on),
   }));
+  return listChannels(env, { channel: c.channel }, now);
+}
+
+/**
+ * `{ channel, name, by }`: the name the channel's customer is shown by to its members (`GET
+ * /threads` `audienceName`, for a shared channel), instead of the provider's name of its tenant;
+ * an empty `name` takes it back. Plain text on one line, up to 120 characters, and neither the
+ * channel's own name nor an organization ID. `{ ok, channel }`.
+ */
+export async function setAudienceName(env, args = {}, now = Date.now()) {
+  const db = env.DB;
+  const by = clean(args.by && args.by.email, 200).toLowerCase();
+  if (!by) {
+    return fail('say who changes it: by { email, name }');
+  }
+  const c = await db.prepare('SELECT channel, name, tenant FROM integration_customers WHERE channel = ?')
+    .bind(clean(args.channel, 20)).first();
+  if (!c) {
+    return fail('no such channel', 404);
+  }
+  const raw = typeof args.name === 'string' ? args.name : '';
+  // Whitespace, line breaks too, is one space; any other control character is refused.
+  const name = raw.replace(/\s+/g, ' ').trim();
+  // eslint-disable-next-line no-control-regex
+  if (name.length > 120 || /[\u0000-\u001f\u007f]/.test(name)) {
+    return fail('a name is one line of plain text, up to 120 characters');
+  }
+  const its = name && (name.toLowerCase() === c.name.toLowerCase() || name === c.tenant);
+  if (its || ORG_ID.test(name)) {
+    return fail('give the customer\'s name as people know it, not the channel\'s name or an organization ID');
+  }
+  await db.prepare(`UPDATE integration_customers SET audience_name = ?, audience_name_by = ?,
+    audience_name_at = ? WHERE channel = ?`).bind(name || null, by, Math.floor(now / 1000), c.channel).run();
+  console.log(JSON.stringify({ route: 'portal', integration: 'audience name', set: Boolean(name) }));
   return listChannels(env, { channel: c.channel }, now);
 }
