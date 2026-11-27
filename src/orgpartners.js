@@ -233,9 +233,28 @@ async function evidence(env, { fresh = false } = {}) {
   return evidenceKept.get(env, loadEvidence, { fresh });
 }
 
-/** Forgets the evidence kept (for tests). */
+/**
+ * The pairs Clef gave no verdict on when a pair's page asked (`onePair`: a timeout, an error), by
+ * `customer\npartner`, when: their pages do not ask again for `UNANSWERED_MS` in the isolate, so
+ * a slow Clef does not slow every view; the next sync asks as ever.
+ */
+const UNANSWERED_MS = 5 * 60 * 1000;
+const unanswered = new Map();
+
+/** When Clef last gave no verdict on the pair (ms), within `UNANSWERED_MS`, or null. */
+function unansweredAt(key, now = Date.now()) {
+  const at = unanswered.get(key);
+  if (at && now - at < UNANSWERED_MS) {
+    return at;
+  }
+  unanswered.delete(key);
+  return null;
+}
+
+/** Forgets the evidence kept, and the pairs Clef did not answer on (for tests). */
 export function forgetEvidence() {
   evidenceKept.forget();
+  unanswered.clear();
 }
 
 // ---- signals ---------------------------------------------------------------------------------
@@ -1077,7 +1096,9 @@ const likely = (x) => Boolean(x.confirmed) || (!x.dismissed && x.p !== null && x
  * evidence the isolate keeps (`evidence`, as the list's: an owner's or a place's spread is every
  * org's), its verdict is the one kept. Clef is asked only of a candidate nobody decided that has
  * no verdict yet, this pair alone, and its row written with the verdict, as `sync` would; a stale
- * verdict is shown as stale, for the next sync to ask again. Without the partner domains it is
+ * verdict is shown as stale, for the next sync to ask again. Where Clef gives none (a timeout, an
+ * error), the isolate keeps that for `UNANSWERED_MS` and the pair's pages do not ask again
+ * meanwhile (`unanswered`: when it did not answer). Without the partner domains it is
  * the row as kept (`skipped`). `{ pairs: [pair], orgs, ctx, unchecked, skipped }`, or null where
  * either org is unknown or merged. `wait` as `sync`'s.
  */
@@ -1130,7 +1151,23 @@ async function onePair(env, customer, partner, { fresh = false, wait = ASK_TIMEO
     const state = pairState(c, p, signals, ctx, others);
     const fingerprint = await fingerprintOf(state);
     x.stale = Boolean(row && row.p !== null && row.fingerprint !== fingerprint);
-    const verdict = x.p === null && env.AI ? await askPair(env, state, wait) : null;
+    const key = keyOf(customer, partner);
+    const failed = unansweredAt(key);
+    const asking = x.p === null && env.AI && !failed;
+    const verdict = asking ? await askPair(env, state, wait) : null;
+    if (asking && verdict === null) {
+      for (const [k, at] of unanswered) {
+        if (Date.now() - at >= UNANSWERED_MS) {
+          unanswered.delete(k);
+        }
+      }
+      unanswered.set(key, Date.now());
+    }
+    const since = unansweredAt(key);
+    if (x.p === null && verdict === null && since) {
+      // Shown as no verdict yet: Clef did not answer, and is not asked again for a while.
+      x.unanswered = new Date(since).toISOString();
+    }
     if (verdict !== null) {
       const now = new Date().toISOString();
       await env.DB.prepare(`INSERT INTO org_partners (customer, partner, score, signals, signals_at,

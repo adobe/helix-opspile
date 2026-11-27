@@ -405,14 +405,15 @@ async function writeOrgs(env, key, role, found, now) {
 
 /**
  * The `about`, `partner` and `customer` rows of entry keys `keys` that are shown: not dismissed,
- * likely. An `about` row and a customer's thread's `partner` row name a pair of a customer and a
- * partner, the row's org and its thread's (`pairable`), with how it stands (`org_partners`,
+ * likely. An `about` row of a partner's thread and a customer's thread's `partner` row name a pair
+ * of a customer and a partner, the row's org and its thread's, by the thread's org type now, as
+ * the link job keeps the roles (`ROLES`; `pairable`), with how it stands (`org_partners`,
  * `pair_*`); a public thread's rows name none: a public org is nobody's customer or partner.
  */
 async function shownOrgs(env, keys) {
   return rows(env, `SELECT x.thread, x.org, x.role, x.p, x.via, o.name, o.icon,
-      (x.role = 'about' OR (x.role = 'partner' AND COALESCE(ot.type, 'customer') = 'customer'))
-        AS pairable,
+      ((x.role = 'about' AND ot.type = 'partner')
+        OR (x.role = 'partner' AND COALESCE(ot.type, 'customer') = 'customer')) AS pairable,
       op.customer AS pair_customer, op.confirmed_at AS pair_confirmed,
       op.dismissed_at AS pair_dismissed, op.until AS pair_until, op.p AS pair_p
     FROM thread_orgs x LEFT JOIN orgs o ON o.slug = x.org

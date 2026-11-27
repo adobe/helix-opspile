@@ -475,6 +475,29 @@ describe('admin: partners', () => {
     assert.deepEqual(requests().map((r) => r.partner).sort(), ['agency', 'studio']);
   });
 
+  it('does not ask Clef again on every view of a pair\'s page after it did not answer', async () => {
+    const e = env();
+    let calls = 0;
+    e.AI = {
+      async run() {
+        calls += 1;
+        throw new Error('timeout');
+      },
+    };
+    const read = () => quiet(() => call(e, BO, 'GET', '/api/admin/org-partners?pair=globex:agency'));
+    const first = await read();
+    assert.equal(calls, 1);
+    assert.equal(first.body.pairs[0].p, null);
+    assert.ok(first.body.pairs[0].unanswered);
+    const again = await read();
+    assert.equal(calls, 1);
+    assert.ok(again.body.pairs[0].unanswered);
+    assert.deepEqual(e.DB.rows('SELECT * FROM org_partners'), []);
+    // The list's sync asks as ever.
+    await quiet(() => call(e, ADA, 'GET', '/api/admin/org-partners'));
+    assert.equal(calls, 2);
+  });
+
   it('lets the admin team dismiss a pair and undo its last decision, directly', async () => {
     const e = env();
     const post = (what, body) => quiet(() => call(e, ADA, 'POST', `/api/admin/org-partners/${what}`, { customer: 'globex', partner: 'agency', ...body }));

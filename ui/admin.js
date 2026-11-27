@@ -4309,7 +4309,9 @@ function drawLink(v) {
   const { pair, orgs } = v;
   const [p, c] = [linkName(pair.partner, orgs), linkName(pair.customer, orgs)];
   const sure = { sure: ': sure', likely: ': likely, though unsure', unsure: ': unsure', unlikely: ': unlikely' }[pair.standing?.status] || '';
-  const clef = pair.p === null ? 'Clef has not been asked yet; it is, the next time the list loads.'
+  let unasked = 'Clef has not been asked yet; it is, the next time the list loads.';
+  if (pair.unanswered) unasked = `No verdict yet: Clef did not answer ${esc(ago(pair.unanswered))}, and is asked again in a few minutes.`;
+  const clef = pair.p === null ? unasked
     : `Clef says ${pct(pair.p)} that ${esc(p)} works for ${esc(c)}${esc(sure)}${pair.stale ? ' (from before what they share changed: it is asked again)' : ''}${pair.checked ? `, asked ${esc(ago(pair.checked))}` : ''}.`;
   // The admin team reads what each signal names; anyone else its counts, in words.
   const said = (x) => (x.text ? x.text : CustomerView.signalWords({ [x.kind]: x.n }, possOf(p), possOf(c))[0]) || x.kind;
