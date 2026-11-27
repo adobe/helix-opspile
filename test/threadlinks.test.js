@@ -512,7 +512,13 @@ describe('what the thread agent is told', () => {
     assert.deepEqual(quietOne.data.with_partners, [{
       partner: 'agency', name: 'Agency Co', partner_link: 'quiet', partner_link_quiet_since: '2026-06-01',
     }]);
-    sql("UPDATE org_partners SET confirmed_at = NULL, p = 0.4, quiet_since = NULL WHERE customer = 'globex'");
+    // An agent saw them working together: said, with the day.
+    sql("UPDATE org_partners SET quiet_since = NULL, seen_at = '2026-11-20T10:00:00Z' WHERE customer = 'globex'");
+    note = await relatedNote(e, target(G1, 'globex', 'customer', { channelId: 'CG', team: 'edge' }));
+    assert.match(note, /confirmed by the admin team; a thread's agent saw them working together on 2026-11-20\./);
+    const seenOne = await TOOLS.find((x) => x.name === 'get_thread').run(e, asMe(BO), { thread: G1 });
+    assert.equal(seenOne.data.with_partners[0].partner_link_seen, '2026-11-20');
+    sql("UPDATE org_partners SET confirmed_at = NULL, p = 0.4, quiet_since = NULL, seen_at = NULL WHERE customer = 'globex'");
     // The list and the thread have it too, and the MCP server's get_thread.
     assert.deepEqual((await linkedOrgsOf(e, [G1])).get(G1).with[0].pair, { status: 'unsure', p: 0.4, until: null });
     sql("UPDATE org_partners SET confirmed_at = '2026-01-01', until = '2026-06' WHERE customer = 'globex'");

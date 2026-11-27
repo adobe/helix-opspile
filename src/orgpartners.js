@@ -17,7 +17,8 @@ import { CLEF, threadMessages } from './label.js';
 import { facts as orgFacts } from './orgmerge.js';
 import { partnerDomainLookup } from './partners.js';
 import {
-  clefRequests, dateOf, openRequestsByPair, pairRequests, requestFor, SETTLES, settleRequests,
+  clefRequests, dateOf, latestActive, openRequestsByPair, pairRequests, requestFor, SETTLES,
+  settleRequests,
 } from './partnerrequests.js';
 import { platformName } from './platforms.js';
 import { isAdmin } from './roles.js';
@@ -736,6 +737,12 @@ function pairOf(r, c = null) {
 
 const decided = (r) => Boolean(r && (r.confirmed_at || r.dismissed_at));
 
+/** The day a thread's agent last saw the pair working together (`x.seen`, a time or `{ at }`). */
+const seenDay = (x) => {
+  const at = x && x.seen && (typeof x.seen === 'string' ? x.seen : x.seen.at);
+  return at ? String(at).slice(0, 10) : null;
+};
+
 /**
  * How a pair stands, as the thread agents, the MCP server and the pages are told it: `{ status,
  * p, until }`. `status` is the admin team's word, `confirmed` (a partner of now), `former`
@@ -759,7 +766,12 @@ export function standingOf(x) {
     status = 'former';
   } else if (x.quiet && (x.confirmed || (p !== null && p >= LIKELY))) {
     return {
-      status: 'quiet', p, until: null, quiet: x.quiet, confirmed: Boolean(x.confirmed),
+      status: 'quiet',
+      p,
+      until: null,
+      quiet: x.quiet,
+      confirmed: Boolean(x.confirmed),
+      ...(seenDay(x) ? { seen: seenDay(x) } : {}),
     };
   } else if (x.confirmed) {
     status = 'confirmed';
@@ -772,11 +784,16 @@ export function standingOf(x) {
   } else if (p >= UNSURE_LOW) {
     status = 'unsure';
   }
-  return { status, p, until: (status === 'former' && x.until) || null };
+  return {
+    status,
+    p,
+    until: (status === 'former' && x.until) || null,
+    ...(seenDay(x) && ['confirmed', 'sure', 'likely'].includes(status) ? { seen: seenDay(x) } : {}),
+  };
 }
 
-/** A pair's standing (`standingOf`) in words, as a thread agent is told it. */
-export function standingWords(s) {
+/** A pair's standing in words, without when it was seen at work (`standingWords`). */
+function standingSaid(s) {
   const pc = s.p === null || s.p === undefined ? '' : ` (${pctOf(s.p)})`;
   switch (s.status) {
     case 'confirmed': return 'confirmed by the admin team';
@@ -793,6 +810,15 @@ export function standingWords(s) {
 }
 
 /**
+ * A pair's standing (`standingOf`) in words, as a thread agent is told it, with the day a thread's
+ * agent last saw them working together (`seen`).
+ */
+export function standingWords(s) {
+  const words = standingSaid(s);
+  return s.seen ? `${words}; a thread's agent saw them working together on ${s.seen}` : words;
+}
+
+/**
  * How each of `pairs` (`[{ customer, partner }]`) stands (`standingOf`), from `org_partners`:
  * `Map<customer\npartner, standing>`.
  */
@@ -802,7 +828,7 @@ export async function pairStandings(env, pairs) {
     return new Map();
   }
   const found = await rows(env, `SELECT x.customer, x.partner, x.confirmed_at, x.dismissed_at, x.until, x.p,
-      x.quiet_since
+      x.quiet_since, x.seen_at
     FROM org_partners x JOIN (SELECT json_extract(value, '$[0]') AS c, json_extract(value, '$[1]') AS p
       FROM json_each(?1)) j ON x.customer = j.c AND x.partner = j.p`, JSON.stringify(list.map((x) => [x.customer, x.partner])));
   const by = new Map(found.map((r) => [keyOf(r.customer, r.partner), r]));
@@ -814,6 +840,7 @@ export async function pairStandings(env, pairs) {
       until: r.until,
       p: r.p,
       quiet: r.quiet_since,
+      seen: r.seen_at,
     } : null)];
   }));
 }
@@ -836,12 +863,12 @@ function takenBack(pairs) {
       }
     }
     if (!x.dismissed && !x.until) {
-      if (x.quiet) {
-        const judged = x.endedFor === x.quiet && x.endedP !== null ? `, ${pctOf(x.endedP)} that it ended` : '';
-        why.set(`${key}\nend`, `Clef does not judge it ended${judged}: its people are only quiet since ${x.quiet}`);
-      } else {
-        why.set(`${key}\nend`, 'Its people are not quiet any more, or a thread showed them still working together');
-      }
+      const judged = x.endedFor === x.quiet && x.endedP !== null ? `, ${pctOf(x.endedP)} that it ended` : '';
+      const reason = x.quiet
+        ? `Clef does not judge it ended${judged}: its people are only quiet since ${x.quiet}`
+        : 'Its people are not quiet any more, or a thread showed them still working together';
+      why.set(`${key}\nend`, reason);
+      why.set(`${key}\nreview`, reason);
     }
   }
   return why;
@@ -985,7 +1012,9 @@ export function conflictOf(x) {
  *   still? (`link`, on what Clef was shown);
  * - a quiet one (`quietOf`: confirmed, or one Clef is sure of) that Clef judges ended, from its
  *   last posts and the customer's latest threads (`endedP` at least `ENDED_P`, given on this
- *   quiet): one no more? (`end`, until its last sign). Quiet alone asks nothing;
+ *   quiet): a confirmed one, one no more? (`end`, until its last sign); one nobody decided, please
+ *   look (`review`: ending it would confirm it too, the admin team's decision). Quiet alone asks
+ *   nothing;
  * - an ended one whose people post again: one again? (`link`).
  */
 export function partnerWants(pairs, orgs, fingerprints) {
@@ -1019,13 +1048,22 @@ export function partnerWants(pairs, orgs, fingerprints) {
         fingerprint: fingerprints.get(key),
       });
     } else if (!x.dismissed && !x.until && judgedEnded(x) && (x.confirmed || x.p > UNSURE_HIGH)) {
-      wants.push({
+      // Confirmed, an end; one nobody decided, a review: ending it would confirm it in the same
+      // step, and that is the admin team's to decide.
+      const judged = `Clef judges ${pctOf(x.endedP)} that ${name(x.partner)} stopped working for ${name(x.customer)}: nobody of it posted in ${poss(x.customer)} threads since ${x.quiet}, its threads went on until ${dayOf(new Date(latest).toISOString())}, and what they say reads as an end.`;
+      wants.push(x.confirmed ? {
         customer: x.customer,
         partner: x.partner,
         action: 'end',
         until: x.quiet,
-        note: `Clef judges ${pctOf(x.endedP)} that ${name(x.partner)} stopped working for ${name(x.customer)}: nobody of it posted in ${poss(x.customer)} threads since ${x.quiet}, its threads went on until ${dayOf(new Date(latest).toISOString())}, and what they say reads as an end.`,
+        note: judged,
         fingerprint: `end:${x.quiet}`,
+      } : {
+        customer: x.customer,
+        partner: x.partner,
+        action: 'review',
+        note: `${judged} Nobody confirmed it: is it a former partner, or none?`,
+        fingerprint: `ended:${x.quiet}`,
       });
     } else if (x.confirmed && x.until && last && last - endOf(x.until) > AGAIN_DAYS * DAY) {
       wants.push({
@@ -1416,6 +1454,13 @@ export async function orgPartners(env, me, { pair = '', fresh = false } = {}) {
   const requests = pair && list.length
     ? (await pairRequests(env, list[0].customer, list[0].partner)).map((r) => requestFor(me, r))
     : null;
+  // Of one pair, the latest that a thread's agent saw them still working together (`active`):
+  // when and who, for everyone who may see the pair; what it says and where, the admin team's.
+  const active = pair && list.length
+    ? await latestActive(env, list[0].customer, list[0].partner) : null;
+  if (active) {
+    list[0].active = admin ? active : { at: active.addedAt, addedBy: active.addedBy };
+  }
   const orgs = {};
   for (const x of list) {
     for (const slug of [x.customer, x.partner]) {

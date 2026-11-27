@@ -152,6 +152,10 @@ function seedPartnerPairs(DB) {
     const evidence = db.prepare(`INSERT INTO org_partner_evidence (customer, partner, request, thread, why,
         added_by, added_name, added_at) VALUES ('acme', 'agency', ?, ?, ?, 'agent', ?, ?)`);
     evidence.run(id, acmeThread.thread, 'Elena says Agency Co takes over the day-to-day support this month.', 'The agent of a thread in #aem-acme', at(0.1));
+    // An agent saw Pied Piper at work for ACME last week, with no request to go to.
+    db.prepare(`INSERT INTO org_partner_evidence (customer, partner, kind, thread, why, added_by, added_name,
+        added_at) VALUES ('acme', 'piedpiper', 'active', ?, ?, 'agent', ?, ?)`)
+      .run(acmeThread.thread, 'Erlich plans the next ACME release with Elena in this thread.', 'The agent of a thread in #aem-acme', at(6));
     const other = of('acme', 2)[1];
     if (other) {
       evidence.run(id, other.thread, 'Agency Co\'s people answer the support questions here since last week.', 'The agent of a thread in #aem-forms-acme', at(0.05));

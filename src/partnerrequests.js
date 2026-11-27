@@ -292,6 +292,19 @@ async function knownPair(env, customer, partner) {
 }
 
 /**
+ * The latest item of a pair's evidence that the two still work together (`kind` `active`, a thread
+ * agent's `markActive`), with or without a request, `evidenceOf`'s with `at`, or null.
+ */
+export async function latestActive(env, customer, partner) {
+  const e = await env.DB.prepare(`SELECT e.*, t.team, COALESCE(l.title, t.title) AS title
+    FROM org_partner_evidence e LEFT JOIN threads t ON t.thread = e.thread
+    LEFT JOIN labels l ON l.thread = e.thread
+    WHERE e.customer = ? AND e.partner = ? AND e.kind = 'active' ORDER BY e.added_at DESC, e.id DESC
+    LIMIT 1`).bind(customer, partner).first();
+  return e ? { ...evidenceOf(e), at: e.added_at } : null;
+}
+
+/**
  * Adds `items` (`[{ thread, message?, link?, why }]`, resolved: src/agent/partnerrequest.js reads
  * them) to request `request` of the pair, or to the pair alone (`request` null), as `kind`
  * (`evidence`, or `active`: the two still work together), by `by` (as `createPartnerRequest`'s).

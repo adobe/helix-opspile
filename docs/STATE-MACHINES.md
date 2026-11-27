@@ -291,7 +291,9 @@ pair's page opens no request again. Clef's (`requested_by` `clef`, filed by each
 any; one declined or withdrawn is not filed again on the same fingerprint; and Clef withdraws its
 own that wait once the sync does not want them, with why in `reason`; an agent's `active` on the pair
 withdraws Clef's open `end` too (`decided_by` `agent`), its evidence going to it. A sync wants an
-`end` of a quiet pair only where Clef judged it ended (`ENDED_P`, on the day it is quiet since), so
+`end` of a quiet confirmed pair only where Clef judged it ended (`ENDED_P`, on the day it is quiet
+since), and of a quiet pair nobody decided a `review` instead (`ended:<day>`: ending it would
+confirm it too), so
 its `end` requests filed on silence alone are withdrawn ("Clef does not judge it ended …"). A sync
 wants a `link` of a pair nobody decided only while Clef is unsure of it (its `p` in the band, on
 Clef's fingerprint) or sure of it while its signals conflict (`conflictOf`: of one kind alone that

@@ -387,7 +387,11 @@ pair's open requests as the routes do; an undo opens none again. Three ask:
   customer elsewhere, or someone says so), which records its evidence (`kind` `active`), takes back
   Clef's open `end` of the pair (the evidence goes to it) and makes the pair's last sign now
   (`seen_at`), so it is not quiet until it is quiet again (`markActive`); a pair the admin team
-  ended or dismissed stays so;
+  ended or dismissed stays so. With no Clef `end` open, its evidence is kept with the pair alone,
+  and no request is opened to show it: the pair's page shows the latest (`active`,
+  `latestActive`), when and who added it to everyone who may see the pair, what it says and where
+  to the admin team; the agents' link notes and MCP `get_thread` say "a thread's agent saw them
+  working together on <day>" (`standingOf`'s `seen`, `partner_link_seen`);
 - Clef, from every load and cron run (`partnerWants`), only where it is unsure: a likely pair needs
   nobody to decide it, and the admin team is not to decide every one each day. It asks of a pair
   nobody decided whose probability is in the unsure band, `UNSURE_LOW` (0.35) to `UNSURE_HIGH`
@@ -407,9 +411,11 @@ pair's open requests as the routes do; an undo opens none again. Three ask:
   partner's last posts in the customer's threads and the customer's latest threads with their last
   messages (where someone may say another agency took over; `endedState`), four a sync, again once
   quiet since another day or after `ENDED_RECHECK_DAYS` (7), its answer kept (`ended_p`,
-  `ended_fingerprint`: the day it was quiet since). Then `end`, until the last sign; and an ended
-  one whose people post `AGAIN_DAYS` (14) after its end (`link` again). Each carries the
-  fingerprint of what it was found on (Clef's, or `end:`, `again:` and the day): declined, it is not
+  `ended_fingerprint`: the day it was quiet since). Then, of a confirmed pair, `end`, until the last
+  sign; of one nobody decided, `review` instead, for ending it would confirm it in the same step,
+  which is the admin team's to decide; and an ended one whose people post `AGAIN_DAYS` (14) after
+  its end (`link` again). Each carries the fingerprint of what it was found on (Clef's, or `end:`,
+  `ended:`, `again:` and the day): declined, it is not
   asked again until that changes, and Clef takes back its own that wait once the pair is no longer
   what it asked about, saying why (`reason`: sure of it now, unlikely now, not judged ended while
   only quiet, not quiet any more, or no longer so). Clef's requests list their signals as evidence

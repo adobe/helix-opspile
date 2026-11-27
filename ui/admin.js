@@ -4295,13 +4295,23 @@ function linkState(pair, p, c) {
   // Quiet is no end (src/orgpartners.js `quietOf`): Clef asks to end it only when it judges so.
   if (pair.quiet && !pair.until && !pair.dismissed) {
     const judged = pair.endedP !== null && pair.endedP !== undefined && pair.endedFor === pair.quiet ? ` Clef judges ${pct(pair.endedP)} that it ended.` : '';
-    const seenBy = pair.seen ? ` A thread's agent saw them working together ${esc(ago(pair.seen.at))}.` : '';
-    now += ` Quiet: none of ${esc(possOf(p))} people posted in ${esc(possOf(c))} threads since ${esc(pair.quiet)}, which is no end; Clef asks the admin team to end it only when it judges it ended.${judged}${seenBy}`;
+    now += ` Quiet: none of ${esc(possOf(p))} people posted in ${esc(possOf(c))} threads since ${esc(pair.quiet)}, which is no end; Clef asks the admin team to end it only when it judges it ended.${judged}`;
+  }
+  // The latest that a thread's agent saw them still working together (src/partnerrequests.js
+  // `markActive`): when and who for everyone; what it says, and where, for the admin team.
+  const a = pair.active;
+  let active = '';
+  if (a) {
+    const by = a.addedBy?.kind === 'person' ? who({ email: a.addedBy.email }) : esc(a.addedBy?.name || 'A thread\'s agent');
+    const where = a.thread ? ` in <a href="${esc(`/inbox?team=${encodeURIComponent(a.threadTeam || 'admin')}&t=${encodeURIComponent(a.thread)}`)}">${esc(a.title ? `“${a.title}”` : 'a thread')}</a>` : '';
+    const link = a.link ? ` (<a href="${esc(a.link)}" target="_blank" rel="noopener">the ${a.message ? 'message' : 'thread'}</a>)` : '';
+    const why = a.why ? `: <span class="note">${esc(a.why.replace(/[.\s]+$/, ''))}</span>` : '';
+    active = `<p class="sub">Seen working together on ${esc(dayOf(a.at))}, by ${by}${where}${link}${why}.</p>`;
   }
   const seen = pair.first
     ? `<p class="sub">${esc(possOf(p))} people posted in ${esc(possOf(c))} threads from ${esc(dayOf(pair.first))} to ${esc(dayOf(pair.last))}, as far back as the inbox reads.</p>`
     : `<p class="sub">None of ${esc(possOf(p))} people posted in ${esc(possOf(c))} threads that the inbox reads.</p>`;
-  return `<p>${now}</p>${seen}`;
+  return `<p>${now}</p>${seen}${active}`;
 }
 
 /** A request of the pair, as its page lists it: what it asks, who asked, where it stands. */

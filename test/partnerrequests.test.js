@@ -312,7 +312,14 @@ describe('partner requests', () => {
     assert.deepEqual(wants({ quiet: day0, signals: [sig('owners')] }), []);
     assert.deepEqual(wants({ quiet: day0, endedP: 0.7, endedFor: day0 }), []);
     assert.deepEqual(wants({ quiet: day0, endedP: 0.9, endedFor: '2026-07-01' }), []);
-    const [ended] = wants({ quiet: day0, endedP: ENDED_P, endedFor: day0 });
+    // Nobody confirmed it: a review, for ending it would confirm it too, the admin team's call.
+    const [review] = wants({ quiet: day0, endedP: ENDED_P, endedFor: day0 });
+    assert.deepEqual([review.action, review.until, review.fingerprint], ['review', undefined, `ended:${day0}`]);
+    assert.match(review.note, /^Clef judges 80% that The Agency stopped working for Globex.*Nobody confirmed it/);
+    // Confirmed, an end.
+    const [ended] = wants({
+      quiet: day0, endedP: ENDED_P, endedFor: day0, confirmed: { by: 'ada', at: AT }, candidate: false,
+    });
     assert.deepEqual([ended.action, ended.until, ended.fingerprint], ['end', day0, `end:${day0}`]);
     assert.match(ended.note, /^Clef judges 80% that The Agency stopped working for Globex/);
     // A conflict is a sure pair's: the unsure one is asked as unsure.
@@ -535,6 +542,21 @@ describe('partner requests', () => {
     });
     assert.deepEqual(rows(e, "SELECT status, decided_by FROM org_partner_requests WHERE action = 'end'"), [{ status: 'withdrawn', decided_by: 'agent' }]);
     assert.deepEqual(rows(e, 'SELECT kind, request IS NOT NULL AS r, why FROM org_partner_evidence'), [{ kind: 'active', r: 1, why: 'Wile plans the Globex release in this thread' }]);
+    // Seen again, with no request to go to: kept with the pair alone, and no request is opened.
+    const again = await quiet(() => requestPartnerLink(e, t, null, {
+      action: 'active', customer: 'globex', note: 'Still at it', evidence: [{ why: 'Road ships the Globex fix here' }],
+    }));
+    assert.deepEqual(again.active.withdrawn, []);
+    assert.equal(rows(e, "SELECT * FROM org_partner_requests WHERE status = 'open'").length, 0);
+    assert.deepEqual(rows(e, 'SELECT request FROM org_partner_evidence ORDER BY id DESC LIMIT 1'), [{ request: null }]);
+    // The pair's page shows the latest, when and who to everyone, what and where to the admin team.
+    const today = new Date().toISOString().slice(0, 10);
+    const bo = (await call(e, BO, 'GET', '/api/admin/org-partners?pair=globex:agency')).body.pairs[0];
+    assert.deepEqual([bo.active.at.slice(0, 10), bo.active.addedBy.name, bo.active.why], [today, 'The agent of a thread in #aem-agency', undefined]);
+    assert.equal(bo.standing.seen, today);
+    const ada = (await quiet(() => call(e, ADA, 'GET', '/api/admin/org-partners?pair=globex:agency'))).body.pairs[0];
+    assert.deepEqual([ada.active.why, ada.active.thread], ['Road ships the Globex fix here', 'slack:E1:C2:2.1']);
+    assert.match(standingWords(ada.standing), /; a thread's agent saw them working together on \d{4}-\d{2}-\d{2}$/);
     // A pair the admin team said is none, or ended, stays so.
     await quiet(() => call(e, ADA, 'POST', '/api/admin/org-partners/end', { customer: 'globex', partner: 'agency', until: '2026-10' }));
     const ended = await requestPartnerLink(e, t, null, {

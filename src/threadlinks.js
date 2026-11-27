@@ -416,7 +416,7 @@ async function shownOrgs(env, keys) {
         OR (x.role = 'partner' AND COALESCE(ot.type, 'customer') = 'customer')) AS pairable,
       op.customer AS pair_customer, op.confirmed_at AS pair_confirmed,
       op.dismissed_at AS pair_dismissed, op.until AS pair_until, op.p AS pair_p,
-      op.quiet_since AS pair_quiet
+      op.quiet_since AS pair_quiet, op.seen_at AS pair_seen
     FROM thread_orgs x LEFT JOIN orgs o ON o.slug = x.org
     LEFT JOIN threads t ON t.thread = x.thread LEFT JOIN orgs ot ON ot.slug = t.org
     LEFT JOIN org_partners op
@@ -808,6 +808,7 @@ const orgEntry = (r) => ({
       until: r.pair_until,
       p: r.pair_p,
       quiet: r.pair_quiet,
+      seen: r.pair_seen,
     } : null),
   } : {}),
 });

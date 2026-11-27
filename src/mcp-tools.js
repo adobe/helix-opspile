@@ -192,6 +192,8 @@ const partnerLink = (o) => {
     ...(s.until ? { partner_link_until: s.until } : {}),
     // Quiet: a partner of now whose people have not posted in the customer's threads since.
     ...(s.quiet ? { partner_link_quiet_since: s.quiet } : {}),
+    // The day a thread's agent last saw the two working together (`active`).
+    ...(s.seen ? { partner_link_seen: s.seen } : {}),
   };
 };
 
