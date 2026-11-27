@@ -1059,7 +1059,24 @@ and one per team: a pile of markdown files with git history.
 ```
 kb-org-<slug>    what we know about this customer or vendor, across all teams
 kb-team-<slug>   product and process knowledge for this team, across all customers
+kb-person-<key>  what we know about one end user of an individual channel (below)
 ```
+
+**An end user's knowledge base.** In an individual portal channel (see "Individual channels" under
+"Customer portal") each customer is their own, so its thread agents do not learn into the org's
+knowledge base, which every other end user's thread would read: each end user has one of their
+own, `kb-person-p<24 hex>` (kind `person` in `knowledge_bases`, made by the first turn of their
+first thread, src/individual.js). Its key is a hash of who they are: the address their accounts
+are one person by (an embedded account's merge key, `identities.merge_email`, or a standalone
+portal account's mail address), so two IMS profiles of one person have one knowledge base, and
+without an address the account's identity key. An embedded account counts as theirs only while it
+verified the address in the last 30 days (`identities.merge_at`), as the portal counts it. The end user of a thread is its first customer
+author. It is laid out as a customer's (`LAYOUT`: Customer, Contact, Site, Project, …, no catalog
+type and no stack drawing), and indexed for the search under its own key (`person` in the
+concepts' vectors), which no team's or customer's search asks for. The team's knowledge base and
+its `systemprompt.md` are as in any channel; the org's is neither read nor written there, nor its
+`systemprompt.md` appended. Adobe's people read it as any knowledge base (`mayRead`); it is not
+listed on the Teams or Customers pages yet.
 
 The repositories follow the [Open Knowledge Format](https://github.com/GoogleCloudPlatform/knowledge-catalog/blob/main/okf/SPEC.md)
 (OKF v0.2), the formalised [LLM wiki](https://gist.github.com/karpathy/442a6bf555914893e9891c11519de94f)
@@ -1070,7 +1087,8 @@ frontmatter with a required `type`, links between concepts, an `index.md` per di
 to them; `generated` says which agent wrote it and when, and `verified` will record staff
 review. Every change is a commit, so a bad memory is a `git revert`.
 
-[Thread agents](#thread-agents) are the writers. A thread's agent writes its team's and its
+[Thread agents](#thread-agents) are the writers (and in an individual channel, the end user's
+own, above). A thread's agent writes its team's and its
 customer's knowledge base, those of the teams its channel is shared with (`channel_teams`), and
 those of the teams that follow a technology its thread shows (`team_follows`, see "Following
 technologies"); every other team's it reads but cannot write (src/agent/repos.js, `accessibleRepos`). Code, not the agent, writes `index.md` and `log.md`
@@ -3863,7 +3881,10 @@ token) for what the Worker cannot see, about opspile's own resources only, by na
 - The Worker's CPU time and log events (`logs.workersLogs`): CPU from the invocations' own
   events (fetch, queue, scheduled), shared.
 - Artifacts operations per repository (`events.artifactsEventsByNamespaceAccount`, without token
-  minting): a knowledge base's are its customer's or team's (`knowledge_bases`), the mirrors shared.
+  minting): a knowledge base's are its customer's or team's (`knowledge_bases`), an end user's
+  (kind `person`) those of the channel's customer and owning team it was last worked from
+  (`owner_org`, `owner_team`, migration 0115; shared until an agent recorded them), the mirrors
+  shared.
 - What the buckets (`states.r2CombinedStorage`) and indexes (`states.vectorizeStorage`, times 768
   dimensions) hold, per day.
 
@@ -4338,7 +4359,15 @@ internal org may be individual without that org becoming anything else (see "Par
 "Vendors" for what an org's type is). One org holds the whole channel, as any: nobody is an org of
 their own. Adobe's side is as in any channel: its teams see, label, search and work every thread
 in their inbox. The events of an individual channel say so (`channel.audience`), and setting it
-sends a `channel` event.
+sends a `channel` event, which says it either way; the inbox keeps the latest by the event's number
+(`channel_audiences`, migration 0115) for the channel's **thread agents**, which work each end
+user's thread apart from the others' (src/individual.js): they learn into that person's own
+knowledge base, `kb-person` (see "An end user's knowledge base"), and not the org's; they read only
+that person's threads of the channel (`list_channel_threads`, `read_thread`, `raw_message`, the
+watches and the related threads, which find no other end user's) and no other channel
+(`org_threads` and `any_thread` are off); and they are told to file in the team's knowledge base,
+which every end user's agent reads, only what is true for everyone, and never to name another end
+user or thread. The team's knowledge base, its instructions and its tools are as in any channel.
 
 **Writing** there is **rich text** (`ui/richtext.js`): what is bold is bold in the box, a list
 is a list, and nobody types markdown's marks, though a line that starts with `- `, `1. `, `> `

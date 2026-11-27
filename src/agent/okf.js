@@ -175,7 +175,8 @@ const ROSTERS = new Set(['people', 'contacts', 'team', 'teams', 'staff', 'roster
 
 /**
  * Why an agent's concept is not where its type goes (`LAYOUT`), or null. `kind`: the
- * knowledge base's, `org` or `team`. A Contact is one person, at `contacts/<personSlug>.md`.
+ * knowledge base's, `org`, `team` or `person` (an end user's, laid out as a customer's: they are
+ * one). A Contact is one person, at `contacts/<personSlug>.md`.
  */
 export function checkLayout(path, content, kind) {
   const fm = splitFrontmatter(content);
@@ -190,7 +191,7 @@ export function checkLayout(path, content, kind) {
   if (row.org && kind === 'team') {
     return `a ${row.type} is about one customer: it goes to kb-org, not to a team's knowledge base`;
   }
-  if (row.team && kind === 'org') {
+  if (row.team && (kind === 'org' || kind === 'person')) {
     return `a ${row.type} is part of a team's catalog of products: it goes to kb-team, not to a customer's knowledge base`;
   }
   const p = String(path);

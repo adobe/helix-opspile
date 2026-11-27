@@ -45,6 +45,7 @@ import { signalFacts } from './resolve.js';
 import { teamsOf } from './shares.js';
 import { portalMarkdown } from './portalsource.js';
 import { recordLobby } from './portalrequests.js';
+import { recordAudience } from './individual.js';
 import { teamsFollowing } from './follows.js';
 import { classify } from './rules.js';
 import { threadKind } from './alertbots.js';
@@ -443,6 +444,14 @@ export async function processKey(env, key, cache = {}) {
     }
     return processReaction(env, key, op.reaction);
   }
+  if (op.op === 'channel' && op.channel.audience) {
+    await recordAudience(env, {
+      tenant: op.channel.tenant,
+      channelId: op.channel.channelId,
+      at: op.channel.at,
+      ...op.channel.audience,
+    });
+  }
   if (op.op === 'channel') {
     let jobs = 0;
     await updateChannelName(env, op.channel, undefined, {
@@ -458,6 +467,12 @@ export async function processKey(env, key, cache = {}) {
   const { message } = op;
   if (!message.channelId || !message.id) {
     return { key, result: 'skip', reason: 'no channel or id' };
+  }
+  if (message.audience) {
+    // Before the message is filed, so its agent works the channel as it is now.
+    await recordAudience(env, {
+      tenant: message.tenant, channelId: message.channelId, at: message.at, ...message.audience,
+    });
   }
   // eslint-disable-next-line no-param-reassign
   cache.rules = cache.rules || await loadRules(env);

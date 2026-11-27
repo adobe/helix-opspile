@@ -72,6 +72,7 @@ on:
       - 'src/har.js'
       - 'src/http.js'
       - 'src/ico.js'
+      - 'src/individual.js'
       - 'src/isolatecache.js'
       - 'src/invite.js'
       - 'src/kb.js'

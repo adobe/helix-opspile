@@ -1056,6 +1056,30 @@ already its author's alone. Setting it tells the inbox with a `channel` event wh
 exists, and every event of an individual channel says so (`channel.audience`); one that does not
 is of a shared channel. Switching moves no thread and rewrites nothing: who is in a thread decides.
 
+**What the inbox heard of a channel's audience.** none (shared) → individual ⇄ shared
+(`channel_audiences` in the inbox, migration 0115, src/individual.js `recordAudience`). Written
+from the portal's events by their outbox number (`seq`): a `channel` event says it either way, a
+message's only that it is individual; an older number changes nothing, and a shared one is written
+only over a row there is, so the channels nobody set have none. The admin team's change writes it
+at once too, with the number of the event the portal answered. The thread agents read it every
+turn (their target, src/agent/agent.js), so a switch changes the next turn's knowledge base and
+what it may read; what an agent filed before stays where it was.
+
+The agent's "their threads" are those one of the end user's accounts wrote in: narrower than the
+portal's `thread_members`, which also has the threads Adobe added them to and the inbox never hears
+of, so a thread they were added to joins their agent's reach once they write in it.
+
+**An end user's knowledge base.** absent → made (`knowledge_bases`, kind `person`): by the first
+turn of a thread of an individual channel with a customer author, keyed by who they are
+(`personSlug`). An end user whose address their provider verifies only later starts a second one
+(the key moves from the account to the address); nothing merges the two yet. Its owner for the
+COGS rollup (`owner_org`, `owner_team`) is the channel's customer and team it was last worked from,
+written by the agent's turn when it changed. Its key is the address, so an address given to someone
+new after its owner left keys their knowledge base to the former owner's: the reads are kept apart
+(accounts are joined by an embedded account's merge key only while it was verified in the last 30
+days, `identities.merge_at`, as the portal joins them), the knowledge base is not; there is no
+identity more stable than the address to key it by.
+
 **Thread member.** absent → in (`thread_members` in the portal). A customer is in a thread from
 their first message in it (a trigger on `messages`, `INSERT OR IGNORE`), and the migration put
 everyone who wrote before in theirs, so a channel switched to individual later keeps each person
