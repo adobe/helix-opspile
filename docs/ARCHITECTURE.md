@@ -542,18 +542,42 @@ account up again keeps the say. Its messages stay a bot's: they are not counted 
 answer the customer, `last_staff`), and the agents fence them as every bot's
 (`untrusted` in `src/agent/deliver.js`, which trusts staff people only).
 
-**Adobe's admin accounts.** The Teams tenant that hosts the teams has admin accounts of its own
-(`owner_` and initials, "People", below), staff by themselves, but nothing in Graph says who uses
-one: their name is the initials. Each is a thread of the admin team's inbox too, with the bots
+**Adobe's accounts that say nothing of whose they are.** Some accounts are staff by themselves
+(`identities.staff`), but nothing their platform says tells who uses one:
+
+- the Teams tenant that hosts the teams has admin accounts of its own (`owner_` and initials,
+  "People", below): their name is the initials, their mail address the tenant's own;
+- a Discord account with one of the `DISCORD_STAFF_ROLES` that its person did not connect in the
+  inbox: Discord shares no mail address, so the inbox knows it only by its name (often initials),
+  `ask_teammate` finds nobody by it, and its work counts towards nobody's profile, expertise or
+  expert finder. Only one that wrote a message waits.
+
+Each is a thread of the admin team's inbox too, with the bots, under **Staff accounts**
 (`GET /api/admin/accounts`, `src/accountlinks.js`), and the admin team gives each the mail address
 of the Adobe person whose it is (`PUT /api/admin/accounts`): the account is linked to that person
 (`identities.person`, with `linked_by` and `linked_at`, migration 0097), and so shows with their
 name and picture, on their profile card, and counts as one of their accounts ("One account a
-person"). Its messages in D1 follow at once (`relabelAccount`: `messages.person`, `staff`,
+person"). A Discord account is one user in every guild the inbox reads: the link is of each of its
+rows that is staff by itself and that nobody connected, though only the rows that wrote are
+threads. Its messages in D1 follow at once (`relabelAccount`: `messages.person`, `staff`,
 `author`, and the threads' `last_staff` and `last_author`), and so do the ones written before in
 the thread view (`accountAuthor`). Only an account that is staff by itself and that no mail
-address links is linked, and only to a staff person, so no customer's account becomes Adobe's.
-Looking the account up again keeps the link; giving no address takes it back. The thread view
+address links (or, on Discord, that its person did not connect) is linked, and only to a staff
+person, so no customer's account becomes Adobe's. Looking the account up again keeps the link;
+its person disconnecting Discord does not take it back, and giving no address does.
+
+The thread says who it may be (`linkCandidates`): a staff person whose Contact in a knowledge base
+(`kb_concepts`, found by its file name or title, as the profile cards find people) lists one of the
+account's names among its `aliases`, who has its name, or whose name it is the initials of (`AB`,
+`a.b.`: every word's first letter, or the first and the last name's). A thread agent may propose
+one too (`request_account_link`, `account_proposals`, migration 0116), from what its thread or
+its sidebar says, on its own or for the person there: a note in the account's thread, by the
+agent, with the thread's link. Each is an action of the thread, a proposal first, which asks before
+it links; a suggestion or a proposal never links by itself, and nothing is inferred from a mail
+address or a merge key (`identities.merge_email`: it links no person of D1 and makes nobody
+staff). Linking answers the account's proposals; declining one (`POST
+/api/admin/accounts/decline`) keeps it, so neither an agent nor the suggestions name that person
+for the account again. The thread view
 names every account that is staff by itself (these, and a Discord account with a staff role) as
 `toAuthor` does now, whatever its frontmatter says: its person's name while it has one (linked
 here, or connected by them on Discord), else its own, so what it wrote while linked goes by the
@@ -741,7 +765,7 @@ portal](#customer-portal).
 
 **Requests as threads.** What waits for the admin team is a thread of its inbox
 (`src/requestthreads.js`, `GET /api/requests`), not a page of the admin pages: a channel request,
-a membership request, a customer in the portal, a merge of customers, a bot or an admin account
+a membership request, a customer in the portal, a merge of customers, a bot or a staff account
 nobody said whose it is, two accounts of a customer's that may be one person, a conflict between the teams' technologies or their rules. Its key is
 `request:<kind>:<id>` (`src/requestkeys.js`: the row's id, a bot's or an account's identity key,
 a conflict's key), and the inbox lists it in the admin team's view only, with the team's own
@@ -2962,7 +2986,8 @@ written by people outside its control.
 | `list_experts`, `list_topics`, `suggest_expert` | colleagues not in the thread yet who could help, with the similar threads they worked on and the topics those are in (`about`: what the thread is about, in the agent's words), the topic map's topics and who works each, and a suggestion to the team to pull one in (see "Expert finder"). It tells nobody: a person decides |
 | `channel_assignment`, `list_teams`, `request_channel_reassignment`, `request_team_membership` | where the channel is filed and why (every rule that matches it, in the order they are tried, the shares, Clef's pick and the open requests), the ops teams with their rules and members, and, only while it answers a sidebar message, a channel request for its author: move the channel to another team, or add it to that team's inbox (see "Channel requests"), which the admin team decides; or a membership request: add its author, or someone they name, to an ops team (see "Membership requests"), which an admin or that team's managers decide |
 | `request_partner_link` | asks the admin team to decide that a partner works for a customer (`link`, since when) or no longer does (`end`, until when), from what its thread says or the person in its sidebar tells it, on its own or for them; the customer and the partner default to the thread's org, by its type (see "Partners"). The knowledge base's agent has it too, for the person in its conversation |
-| `ask_teammate` | a question to one colleague on the thread's teams, with its best guess at each of up to three questions, for a runbook, a reply or a fact; they answer it in their inbox, and the agent is told in an input of its own (see "Questions") |
+| `request_account_link` | proposes to the admin team that an account of its thread that is staff by itself and that nobody linked (a Discord account with a staff role, the Teams tenant's admin accounts) is a colleague's, by their mail address, from what its thread or the person in its sidebar says, or a colleague's knowledge-base Contact whose `aliases` name it; on its own or for them. It links nothing: the admin team confirms or declines it in the account's thread (see "Adobe's accounts that say nothing of whose they are") |
+| `ask_teammate` | a question to one colleague on the thread's teams (by mail address, or by a name the inbox knows them by: theirs, or an account's linked to them, as a Discord handle the admin team linked; an account of Adobe's nobody linked yet it says so of, and points to `request_account_link`), with its best guess at each of up to three questions, for a runbook, a reply or a fact; they answer it in their inbox, and the agent is told in an input of its own (see "Questions") |
 | `request_tool` | only while it answers a sidebar message: the tools and MCP servers its channel does not have that it could ask for, and a request for one, which anyone on the team grants to the thread for a day or denies, in the sidebar (see "Tool requests") |
 | `sidebar_followup` | tells the person who asked something in the sidebar (`message`, its `sb_…` id) what has happened since, from a later turn on the thread's messages (`addSidebarFollowup` in `src/sidebar.js`): a new answer of the agent's to them, under their question; refused while it answers a sidebar message, for a message it did not answer yet, over a week old, or followed up three times |
 | `find_member` | whether someone is in the agent's channel (on Teams, its Teams team), by name or mail address (`src/mention-match.js`), from the platform's list of members in `channel_members`, listed again when over an hour old; two accounts of one mail address are one match. With no complete list to go by (a failed listing, a Teams shared channel, over 2000 members) it says it cannot tell |
@@ -3917,14 +3942,17 @@ Authors are normalized to `{ kind: person | bot | system, org, staff }`.
 - On **Discord**, bots carry `author.bot`, webhooks `webhook_id`. Discord shares no email
   with bots, so a member is staff when they have one of the `DISCORD_STAFF_ROLES`
   (`identities.staff`), or when they connected the account in the inbox (OAuth `identify`),
-  which links it to their person: their posts move their watermark and count as theirs.
+  which links it to their person: their posts move their watermark and count as theirs. One
+  with a staff role that they did not connect the admin team links to them ("Adobe's accounts
+  that say nothing of whose they are", below).
 - On **Teams**, the support tenant invites everyone as a guest, staff included, so
   `userType` and `tenantId` do not distinguish staff from customers. The organization is
   derived from the person's **mail domain** instead. The one exception is the tenant's own
   admin accounts: members, not guests, whose user name begins `owner_` (`owner_` and the
   initials of the Adobe person who uses one, mailed at the tenant's own domain). They are
   staff by themselves (`isHostAdmin` in `src/lookup.js`, `identities.staff`), and the admin
-  team says whose each is ("Adobe's admin accounts", below), so it shows as that person. Bot posts carry `from.application`; a
+  team says whose each is ("Adobe's accounts that say nothing of whose they are", below), so
+  it shows as that person. Bot posts carry `from.application`; a
   bot (`applicationIdentityType: bot`) keeps its id as its identity, webhooks and connectors
   stay anonymous.
 
@@ -3948,7 +3976,8 @@ person's, the first by:
    channel, and the inbox can add a colleague of its own workspace to it (an account of another
    workspace it cannot);
 3. their own account before one the admin team linked to them (`identities.linked_at`: a host
-   tenant's admin account, which they use only to run the tenant), then a full member before a
+   tenant's admin account, which they use only to run the tenant, or a Discord account with a
+   staff role they never connected), then a full member before a
    guest (`identities.guest`, migration 0061: Slack's `is_restricted` or
    `is_ultra_restricted`, Graph's `userType`; NULL until the account is looked up again);
 4. the one that posted in the last 90 days, then the one with the most messages in the last 180,

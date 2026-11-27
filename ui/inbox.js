@@ -5621,7 +5621,7 @@ async function openThread(key, { live = false, cached = false } = {}) {
 
 // ---------------------------------------------------------------- the admin team's requests
 // What waits for the admin team (a channel a team asked for, a person to add to a team, a
-// customer in the portal, a merge of customers, a bot or an admin account nobody said whose it
+// customer in the portal, a merge of customers, a bot or a staff account nobody said whose it
 // is, a conflict between technologies or team rules) is a thread of its inbox (GET /api/requests,
 // src/requestthreads.js), keyed `request:<kind>:<id>`; decided ones stay, resolved. Its thread is
 // the request, what the admin team writes about it (its decision log: POST /api/requests/note)

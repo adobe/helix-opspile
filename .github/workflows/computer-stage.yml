@@ -33,6 +33,7 @@ on:
       - 'scripts/dev-computer/**'
       - 'src/agent/**'
       - '!src/agent/stub.js'
+      - 'src/accountlinks.js'
       - 'src/accounts.js'
       - 'src/agentlabels.js'
       - 'src/alertbots.js'
