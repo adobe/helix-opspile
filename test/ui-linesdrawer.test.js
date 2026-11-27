@@ -22,6 +22,8 @@ import { SCRIPTS } from './ui.js';
 
 const js = SCRIPTS['inbox.js'];
 const css = SCRIPTS['spectrum-inbox.css'];
+// Where the lines are a drawer: a phone, and a short screen with the list beside the thread.
+const SHORT_OR_PHONE = '@media (max-width: 699px), (max-width: 1099px) and (max-height: 640px) {';
 
 /** A piece of the page's script, from the line starting with `from` up to `to`, run in Node. */
 function piece(from, to, expose, globals = {}) {
@@ -96,10 +98,10 @@ describe('the drawer', () => {
     assert.equal(js.match(/\n {2}renderLines\(key\);\n\}/g).length, 2);
   });
 
-  it('is a drawer only on a phone: on a wider screen it is no box, and has no tab', () => {
-    assert.match(css, /\n\.linestab, \.lineshead \{ display: none; \}\n\.linesdrawer, \.linesdrawer \.sheet \{ display: contents; \}\n@media \(max-width: 699px\) \{/);
+  it('is a drawer only on a phone or a short screen: on a larger one it is no box, and has no tab', () => {
+    assert.match(css, /\n\.linestab, \.lineshead \{ display: none; \}\n\.linesdrawer, \.linesdrawer \.sheet \{ display: contents; \}\n@media \(max-width: 699px\), \(max-width: 1099px\) and \(max-height: 640px\) \{/);
     const phone = css.slice(css.indexOf('.linesdrawer, .linesdrawer .sheet { display: contents; }'));
-    const rules = phone.slice(phone.indexOf('@media (max-width: 699px) {'), phone.indexOf('/* A source beside the draft'));
+    const rules = phone.slice(phone.indexOf(SHORT_OR_PHONE), phone.indexOf('/* A source beside the draft'));
     assert.match(rules, /\.linestab \{ flex-basis: 100%; display: flex;/);
     assert.match(rules, /\.linestab\[hidden\] \{ display: none; \}/);
     // Closed, the lines take no room; open, a sheet at the screen's bottom edge, the rest dimmed.
@@ -117,7 +119,7 @@ describe('the drawer', () => {
 
   it('rises from the bottom edge as a Dialog arrives, and drops back faster', () => {
     const phone = css.slice(css.indexOf('.linesdrawer, .linesdrawer .sheet { display: contents; }'));
-    const rules = phone.slice(phone.indexOf('@media (max-width: 699px) {'), phone.indexOf('/* A source beside the draft'));
+    const rules = phone.slice(phone.indexOf(SHORT_OR_PHONE), phone.indexOf('/* A source beside the draft'));
     // Displayed until the sheet is gone, and no longer in the way of a tap.
     assert.match(rules, /\.linesdrawer \{[^}]*transition: background-color var\(--s2-out\), display var\(--s2-out\) allow-discrete; \}/);
     assert.match(rules, /\.linesdrawer\.open \{[^}]*transition: background-color var\(--s2-dialog-in\), display var\(--s2-dialog-in\) allow-discrete; \}/);
@@ -153,8 +155,10 @@ describe('the drawer', () => {
     // A modal dialog only while it is open.
     assert.match(render, /const dialog = \{ role: 'dialog', 'aria-modal': 'true', 'aria-labelledby': 'lines-title' \};/);
     assert.match(render, /if \(open\) sheet\.setAttribute\(name, value\); else sheet\.removeAttribute\(name\);/);
-    // A screen that grows past the phone's breakpoint has no drawer left to be open.
-    assert.match(js, /const LINES_DRAWER = matchMedia\('\(max-width: 699px\)'\);\nLINES_DRAWER\.addEventListener\('change', \(\) => \{\n {2}if \(LINES_DRAWER\.matches\) return;\n {2}if \(linesDrawer\.key\) setLines\(linesDrawer\.key, false\);/);
+    // A screen that grows past the phone's breakpoint, or a short one that grows taller, has no
+    // drawer left to be open.
+    assert.match(js, /const SHORT_OR_PHONE = '\(max-width: 699px\), \(max-width: 1099px\) and \(max-height: 640px\)';\n/);
+    assert.match(js, /const LINES_DRAWER = matchMedia\(SHORT_OR_PHONE\);\nLINES_DRAWER\.addEventListener\('change', \(\) => \{\n {2}if \(LINES_DRAWER\.matches\) return;\n {2}if \(linesDrawer\.key\) setLines\(linesDrawer\.key, false\);/);
   });
 
   it('opens on its tab, and closes on ✕, a tap beside the sheet, Escape, and the draft going to the thread', () => {

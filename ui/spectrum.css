@@ -147,6 +147,12 @@ header .note { white-space: nowrap; }
   #user { height: calc(var(--spectrum-spacing-75) + var(--spectrum-spacing-600)); }
 }
 
+/* Under 1000px the logo's name does not fit whole beside the pages and you (a foldable
+   unfolded on its side, a tablet upright): the logo alone, as on a phone. */
+@media (max-width: 999px) {
+  header h1 a { font-size: 0; }
+}
+
 /* Phones: the logo without its name, the tools by their icon, you by your face, the modes by
    who or what; the pages are the one you are on, with a menu of the others. */
 @media (max-width: 699px) {
