@@ -143,7 +143,7 @@ describe('personal view', () => {
   let n = 0;
   /** One message: `channelId` filed under `team`, as `person` (or a customer). */
   const say = (DB, {
-    thread, channelId, team, person = null, at, kind = 'channel', author = 'person',
+    thread, channelId, team, person = null, at, kind = 'channel', author = 'person', preview,
   }) => {
     n += 1;
     return indexMessage(DB, {
@@ -155,6 +155,7 @@ describe('personal view', () => {
       kind,
       counted: author === 'person',
       authorKind: author,
+      preview,
       staff: Boolean(person),
       person,
       rootId: thread,
@@ -293,7 +294,7 @@ describe('personal view', () => {
     });
     // The opspile app answers (a thread agent's post_message), and Teams says something.
     await say(DB, {
-      thread: 'asked', channelId: 'C1', team: 'helix', at: at(2), author: 'bot',
+      thread: 'asked', channelId: 'C1', team: 'helix', at: at(2), author: 'bot', preview: 'Only on a full release.',
     });
     await say(DB, {
       thread: 'asked', channelId: 'C1', team: 'helix', at: at(3), author: 'system',
@@ -314,6 +315,25 @@ describe('personal view', () => {
     await advanceWatermark(DB, 1, 'asked', at(4), 'open');
     assert.deepEqual(await count(), { asked: [false, 0] });
     assert.deepEqual((await waitingFor({ DB }, { id: 1, email: 'a@adobe.com' }, new Date('2026-10-22T00:00:00Z'))).threads, []);
+  });
+
+  it('shows a bot\'s reply after the last person\'s message on the row, not what it answers', async () => {
+    const DB = fresh();
+    const at = (m) => `2026-10-21T10:${String(m).padStart(2, '0')}:00Z`;
+    await say(DB, {
+      thread: 'asked', channelId: 'C1', team: 'helix', person: 1, at: at(1), preview: 'Purged on deploy?',
+    });
+    await say(DB, {
+      thread: 'asked', channelId: 'C1', team: 'helix', at: at(2), author: 'bot', preview: 'Only on a full release.',
+    });
+    const [t] = (await inbox({ DB }, me, null, { personal: true })).threads;
+    assert.deepEqual([t.last_text, t.bot_reply.text], ['Purged on deploy?', 'Only on a full release.']);
+    // A person answers after it: theirs is the latest, and the row's.
+    await say(DB, {
+      thread: 'asked', channelId: 'C1', team: 'helix', person: 2, at: at(3), preview: 'Thanks!',
+    });
+    const [after] = (await inbox({ DB }, me, null, { personal: true })).threads;
+    assert.deepEqual([after.last_text, after.bot_reply], ['Thanks!', undefined]);
   });
 
   it('counts unread threads the personal view does not show, for each of your teams', async () => {

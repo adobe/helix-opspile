@@ -74,7 +74,7 @@ import { DEFAULTS, readSettings, saveSettings } from './settings.js';
 import { claimPost, logPost, settlePost } from './postkeys.js';
 import { postingOffer } from './postoffer.js';
 import {
-  ATTENTION, latestMember, readState, unreadInYours, waitingOn,
+  ATTENTION, botReplies, latestMember, readState, unreadInYours, waitingOn,
 } from './threads.js';
 import {
   cleanQuery, find, MAX_RESULTS, queryVector, terms, withSnippets,
@@ -605,6 +605,8 @@ export async function inbox(env, me, team, {
   // The customers a partner's thread is about, the partners in a customer's (src/threadlinks.js).
   const linkedP = linkedOrgsOf(env, [...new Set([...threadKeys,
     ...threads.map((t) => t.logical_thread).filter(Boolean)])]);
+  // A bot's reply after the last person's message (an agent's post_message): the row's preview.
+  const botRepliesP = botReplies(env.DB, threadKeys);
   const [
     { results: marks }, { results: mentions }, { results: labels }, people, { results: rx },
     { results: posted }, { results: named }, resolved, signals, { results: names },
@@ -712,6 +714,7 @@ export async function inbox(env, me, team, {
     .flatMap((t) => t.participants.map((p) => p.key)));
   const states = readState(threads, marks || [], mentions || [], me.id, yours);
   const linkedBy = await linkedP;
+  const botBy = await botRepliesP;
   return {
     team: personal ? null : team,
     personal,
@@ -746,6 +749,7 @@ export async function inbox(env, me, team, {
           mentioned: namedBy.get(t.thread) || [],
           resolutionFacts: resolved.get(t.thread),
           signals: signals.get(t.thread) || [],
+          ...(botBy.get(t.thread) ? { bot_reply: botBy.get(t.thread) } : {}),
         };
       })).map(({ resolutionFacts: facts, ...t }) => {
       const g = sizes.get(t.thread);

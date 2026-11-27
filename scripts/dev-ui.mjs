@@ -874,6 +874,15 @@ function unreadInYours(rows) {
   return out;
 }
 
+/** As src/threads.js's `botReplies`: a bot's message after the last person's, for its row. */
+function botReply(t) {
+  const live = store.threads.get(t.thread).messages.filter((m) => !m.deletedAt)
+    .sort((a, b) => a.at.localeCompare(b.at));
+  const m = live[live.length - 1];
+  return m && m.author.kind === 'bot' && m.at > (t.last_at || '')
+    ? { bot_reply: { who: m.author.name, text: previewOf(m.body), at: m.at } } : {};
+}
+
 /** As src/waiting.js's `waitingThreads`: Dana's threads with messages for her, latest first. */
 function waitingThreads() {
   const rows = [...store.threads.values()].map((e) => e.row)
@@ -1019,6 +1028,8 @@ function inbox(team, before = null, personal = false, only = null, limit = null)
       ...people(store.threads.get(t.thread)),
       posters: [...new Set(store.threads.get(t.thread).messages
         .map((m) => byName.get(m.author.name)?.id).filter(Boolean))],
+      // A bot's reply after the last person's message (src/threads.js botReplies).
+      ...botReply(t),
       mentioned: store.mentions.filter((m) => m.thread === t.thread)
         .map((m) => ({ person: m.person, staff: Boolean(store.people.get(m.person)?.staff) })),
       reactions: Object.values(store.threads.get(t.thread).messages

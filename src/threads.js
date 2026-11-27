@@ -367,6 +367,25 @@ export async function unreadInYours(db, threads, me) {
 }
 
 /**
+ * The bots' replies that came after the last person's message of each of `threads` (an agent's
+ * `post_message`, say): its row shows that one, not the message it answers, since it is what is
+ * new. `last_text` is people's only (bots do not answer the customer, `last_staff`).
+ *
+ * @returns {Promise<Map<string, { who: string, text: string, at: string }>>}
+ */
+export async function botReplies(db, threads) {
+  if (!threads.length) {
+    return new Map();
+  }
+  const { results } = await db.prepare(`SELECT m.thread, m.author, m.preview, m.at
+    FROM threads t JOIN messages m ON m.thread = t.thread AND m.at = t.any_at
+    WHERE t.thread IN (SELECT value FROM json_each(?1)) AND t.any_at > COALESCE(t.last_at, '')
+      AND m.deleted = 0 AND m.author_kind = 'bot' AND m.preview IS NOT NULL`)
+    .bind(JSON.stringify(threads)).all();
+  return new Map((results || []).map((r) => [r.thread, { who: r.author || '', text: r.preview, at: r.at }]));
+}
+
+/**
  * Records who a message mentions, replacing what was recorded for it before. Returns the
  * people it mentions now and did not before (a new message's, or the ones an edit added).
  */

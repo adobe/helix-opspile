@@ -2408,6 +2408,8 @@ const plain = (text) => String(text || '').replace(EMOJI_CODE, (m, n) => emojiBy
  * src/previews.js).
  */
 function preview(t) {
+  // A bot's reply after it (an agent's post_message) is what is new: it, not what it answers.
+  if (t.bot_reply?.text) return { who: t.bot_reply.who || '', text: plain(t.bot_reply.text).slice(0, 220) };
   if (t.last_text) return { who: t.last_author || '', text: plain(t.last_text).slice(0, 220) };
   const ms = (state.cache.get(t.thread)?.data?.messages || [])
     .filter((m) => m.author?.kind !== 'system' && !m.deletedAt && !m.pending);
