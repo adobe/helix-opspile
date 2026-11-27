@@ -309,6 +309,9 @@ export async function orgReadable(env, org) {
  * (`org_threads`), or null nowhere.
  */
 export function readScope(tools, target) {
+  if (target && target.individual) {
+    return null;
+  }
   if (tools.includes('any_thread')) {
     return { org: null };
   }
@@ -352,7 +355,9 @@ export async function toolsFor(env, target) {
     on.some((t) => t.internal) && internalChannel(env, target.channelId),
     on.some((t) => t.org) && orgReadable(env, target.org),
   ]);
-  return on.filter((t) => (!t.internal || internal) && (!t.org || org)).map((t) => t.tool).sort();
+  // An individual channel's agent reads no other channel: its end user's threads are here.
+  return on.filter((t) => (!t.internal || internal) && (!t.org || org)
+    && !(target.individual && (t.internal || t.org))).map((t) => t.tool).sort();
 }
 
 /**

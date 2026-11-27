@@ -29,6 +29,9 @@ const ADA = {
 const BO = {
   id: 2, email: 'bo@staff.example', name: 'Bo', staff: 1, teams: ['helix'],
 };
+const CY = {
+  id: 3, email: 'cy@staff.example', name: 'Cy', staff: 1, teams: [],
+};
 const asMe = (p) => ({ ...p, teams: p.teams.map((t) => (typeof t === 'string' ? { slug: t } : t)) });
 const AT = '2026-10-22T00:00:00Z';
 
@@ -52,7 +55,7 @@ function fakeAI() {
  */
 function env() {
   const DB = d1({
-    people: [ADA, BO],
+    people: [ADA, BO, CY],
     teams: [{ slug: 'admin', name: 'Admin' }, { slug: 'helix', name: 'Helix ops' }],
   });
   const sql = DB.sqlite;
@@ -390,6 +393,148 @@ describe('admin: partners', () => {
     assert.deepEqual([Boolean(r.body.pair.confirmed), r.body.pair.dismissed], [true, null]);
     assert.equal((await call(e, ADA, 'POST', '/api/admin/org-partners/confirm', { customer: 'globex', partner: 'globex' })).status, 400);
     assert.equal((await call(e, ADA, 'POST', '/api/admin/org-partners/confirm', { customer: 'globex', partner: 'nobody' })).status, 404);
+  });
+
+  it('opens a pair\'s page to the ops teams, its evidence as counts, and leaves deciding to the admin team', async () => {
+    const e = env();
+    // A request of Clef's, and one of an agent's, whose notes say what they found.
+    e.DB.sqlite.exec(`INSERT INTO org_partner_requests (customer, partner, action, note, fingerprint,
+        requested_by, requested_at) VALUES
+      ('globex', 'agency', 'link', 'wile@agency.example posted about globex-web/www', 'f', 'clef', '${AT}'),
+      ('globex', 'agency', 'end', 'Hank wrote: our agency.example contract ends', NULL, 'agent', '${AT}')`);
+    // The list is the admin team's; one pair anyone's on an ops team, nobody's else.
+    assert.equal((await call(e, BO, 'GET', '/api/admin/org-partners')).status, 403);
+    assert.equal((await call(e, CY, 'GET', '/api/admin/org-partners?pair=globex:agency')).status, 403);
+    const page = await quiet(() => call(e, BO, 'GET', '/api/admin/org-partners?pair=globex:agency'));
+    assert.equal(page.status, 200);
+    const [pair] = page.body.pairs;
+    assert.deepEqual(pair.signals, [{ kind: 'posters', n: 3, people: 2 }, { kind: 'owners', n: 1 }]);
+    assert.deepEqual([pair.p, pair.standing.status], [0.9, 'sure']);
+    assert.deepEqual([page.body.orgs.globex.domains, page.body.orgs.agency.domain], [[], null]);
+    assert.equal(page.body.requests.length, 2);
+    assert.ok(page.body.requests.every((r) => r.note === null && !('fingerprint' in r)));
+    // No domain, site owner, entry path or message text.
+    const text = JSON.stringify(page.body);
+    for (const secret of ['agency.example', 'globex.example', 'globex-web', 'Hank', 'wrote']) {
+      assert.ok(!text.includes(secret), secret);
+    }
+    // The admin team reads all of it.
+    const admin = await quiet(() => call(e, ADA, 'GET', '/api/admin/org-partners?pair=globex:agency'));
+    assert.match(admin.body.pairs[0].signals[0].text, /agency\.example/);
+    assert.ok(admin.body.requests.some((r) => r.note));
+    // Bo asks from it, and decides nothing.
+    for (const what of ['confirm', 'dismiss', 'end']) {
+      // eslint-disable-next-line no-await-in-loop
+      assert.equal((await call(e, BO, 'POST', `/api/admin/org-partners/${what}`, { customer: 'globex', partner: 'agency', until: '2026-10' })).status, 403);
+    }
+    assert.equal((await quiet(() => call(e, BO, 'POST', '/api/admin/org-partner-requests', {
+      customer: 'initech', partner: 'agency', action: 'link', note: 'Bill said',
+    }))).status, 200);
+    const mine = await quiet(() => call(e, BO, 'GET', '/api/admin/org-partners?pair=initech:agency'));
+    assert.equal(mine.body.requests[0].note, 'Bill said');
+  });
+
+  it('reads one pair for its page, asking Clef of that pair at most, and files nothing', async () => {
+    const e = env();
+    // A second candidate, the studio's: a sync would ask Clef about it too.
+    e.DB.sqlite.exec(`INSERT INTO orgs (slug, name, type, updated_at) VALUES ('studio', 'Studio', 'partner', '${AT}');
+      INSERT INTO identities (source, tenant, user_id, kind, email, fetched_at)
+        VALUES ('slack', 'E1', 'U5', 'person', 'sue@studio.example', '${AT}');
+      INSERT INTO messages (source, tenant, channel_id, id, thread, at, staff, counted, author_key) VALUES
+        ('slack', 'E1', 'C1', 's2', 'slack:E1:C1:1.1', '${AT}', 0, 1, 'slack:E1:U5'),
+        ('slack', 'E1', 'C1', 's3', 'slack:E1:C1:1.2', '${AT}', 0, 1, 'slack:E1:U5');
+      INSERT INTO channel_members (source, tenant, channel_id, user_id, email)
+        VALUES ('slack', 'E1', 'C1', 'U5', 'sue@studio.example')`);
+    // Clef is unsure of every pair: a sync would file a request for each.
+    const asked = [];
+    e.AI = {
+      async run(model, input) {
+        asked.push(input.state);
+        return { answers: { works: { type: 'noul', noul: 0.6 } } };
+      },
+    };
+    const requests = () => e.DB.rows('SELECT customer, partner FROM org_partner_requests');
+    const page = await quiet(() => call(e, BO, 'GET', '/api/admin/org-partners?pair=globex:agency'));
+    assert.equal(page.status, 200);
+    assert.equal(asked.length, 1);
+    assert.ok(/C: slug globex,/.test(asked[0]) && /P: slug agency,/.test(asked[0]));
+    const [pair] = page.body.pairs;
+    assert.deepEqual([pair.p, pair.standing.status, pair.candidate, page.body.unchecked], [0.6, 'likely', true, 0]);
+    assert.deepEqual(e.DB.rows('SELECT customer, partner, p FROM org_partners'), [{ customer: 'globex', partner: 'agency', p: 0.6 }]);
+    assert.deepEqual(requests(), []);
+    // Its verdict is kept: read again, Clef is not asked; nor of a pair that is no candidate.
+    await quiet(() => call(e, BO, 'GET', '/api/admin/org-partners?pair=globex:agency'));
+    await quiet(() => call(e, BO, 'GET', '/api/admin/org-partners?pair=initech:agency'));
+    assert.equal(asked.length, 1);
+    assert.equal(e.DB.rows('SELECT * FROM org_partners').length, 1);
+    // The admin team's read of a pair files nothing either; its list load does.
+    await quiet(() => call(e, ADA, 'GET', '/api/admin/org-partners?pair=globex:agency'));
+    assert.deepEqual(requests(), []);
+    await quiet(() => call(e, ADA, 'GET', '/api/admin/org-partners'));
+    assert.equal(asked.length, 2);
+    assert.deepEqual(requests().map((r) => r.partner).sort(), ['agency', 'studio']);
+  });
+
+  it('does not ask Clef again on every view of a pair\'s page after it did not answer', async () => {
+    const e = env();
+    let calls = 0;
+    e.AI = {
+      async run() {
+        calls += 1;
+        throw new Error('timeout');
+      },
+    };
+    const read = () => quiet(() => call(e, BO, 'GET', '/api/admin/org-partners?pair=globex:agency'));
+    const first = await read();
+    assert.equal(calls, 1);
+    assert.equal(first.body.pairs[0].p, null);
+    assert.ok(first.body.pairs[0].unanswered);
+    const again = await read();
+    assert.equal(calls, 1);
+    assert.ok(again.body.pairs[0].unanswered);
+    assert.deepEqual(e.DB.rows('SELECT * FROM org_partners'), []);
+    // The list's sync asks as ever.
+    await quiet(() => call(e, ADA, 'GET', '/api/admin/org-partners'));
+    assert.equal(calls, 2);
+  });
+
+  it('lets the admin team dismiss a pair and undo its last decision, directly', async () => {
+    const e = env();
+    const post = (what, body) => quiet(() => call(e, ADA, 'POST', `/api/admin/org-partners/${what}`, { customer: 'globex', partner: 'agency', ...body }));
+    const row = () => e.DB.rows('SELECT confirmed_at IS NOT NULL AS c, dismissed_at IS NOT NULL AS d, since, until FROM org_partners')[0];
+    const ask = (action) => e.DB.sqlite.prepare(`INSERT INTO org_partner_requests (customer, partner, action,
+      requested_by, requested_at) VALUES ('globex', 'agency', ?, 'bo@staff.example', ?) RETURNING id`).get(action, AT).id;
+    const status = (id) => e.DB.rows(`SELECT status FROM org_partner_requests WHERE id = ${id}`)[0].status;
+    await quiet(() => call(e, ADA, 'GET', '/api/admin/org-partners'));
+    // Confirmed, then undone: Clef's verdict again, and its dates gone.
+    await post('confirm', { since: '2025-03' });
+    assert.deepEqual(row(), {
+      c: 1, d: 0, since: '2025-03', until: null,
+    });
+    await post('confirm', { undo: true });
+    assert.deepEqual(row(), {
+      c: 0, d: 0, since: null, until: null,
+    });
+    // Ended, then undone: confirmed again; undone again, not confirmed.
+    await post('end', { until: '2026-06' });
+    await post('end', { undo: true });
+    assert.deepEqual(row(), {
+      c: 1, d: 0, since: null, until: null,
+    });
+    await post('end', { until: '2026-06' });
+    await post('confirm', { undo: true });
+    assert.deepEqual(row(), {
+      c: 0, d: 0, since: null, until: null,
+    });
+    // Dismissed directly: every request of the pair that waits is closed; undone, none opens.
+    const link = ask('link');
+    const end = ask('end');
+    await post('dismiss', {});
+    assert.deepEqual([status(link), status(end), row().d], ['dismissed', 'dismissed', 1]);
+    assert.equal((await partnersOf(e, 'globex')).length, 0);
+    await post('dismiss', { undo: true });
+    assert.deepEqual([status(link), row().d], ['dismissed', 0]);
+    assert.deepEqual((await partnersOf(e, 'globex')).map((x) => x.slug), ['agency']);
   });
 
   it('keeps a candidate until it is none, and a decided pair after', async () => {

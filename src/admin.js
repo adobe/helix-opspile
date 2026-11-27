@@ -19,6 +19,7 @@ import { PLATFORMS } from './platforms.js';
 import { json } from './http.js';
 import { likePattern } from './like.js';
 import { ensureKnowledgeBase } from './kb.js';
+import { recordAudience } from './individual.js';
 import { setTeamDefault } from './agent/enabled.js';
 import { AGENT_TOOLS, setToolSwitch } from './agent/agenttools.js';
 import { GLOBAL_SERVERS, setGlobalSwitch } from './agent/globals.js';
@@ -61,7 +62,9 @@ import {
 import {
   getBot, listBots, setBot, unreviewedCount,
 } from './ourbots.js';
-import { linkAccount, listAccounts, unlinkedCount } from './accountlinks.js';
+import {
+  declineProposal, linkAccount, listAccounts, unlinkedCount,
+} from './accountlinks.js';
 import { decideAccountPair, undecidedPairCount } from './accountpairs.js';
 import {
   followable, setTeamFollow, teamFollows, teamFollowsBy,
@@ -776,7 +779,8 @@ async function requestList(env, me, { status, count }) {
   const merges = isAdmin(me) ? await openMergeCount(env) + await openPartnerCount(env) : 0;
   // And the bots nobody said whose they are (src/ourbots.js), the admin team's too.
   const bots = isAdmin(me) ? await unreviewedCount(env) : 0;
-  // And the admin accounts nobody said whose they are (src/accountlinks.js), the admin team's too.
+  // And the accounts staff by themselves nobody said whose they are (src/accountlinks.js: the host
+  // tenant's admin accounts, Discord accounts with a staff role), the admin team's too.
   const accounts = isAdmin(me) ? await unlinkedCount(env) : 0;
   // And a customer's two accounts that may be one person (src/accountpairs.js), the admin team's.
   const pairs = isAdmin(me) ? await undecidedPairCount(env) : 0;
@@ -1235,6 +1239,12 @@ async function approveIntegration(env, me, body) {
       return portalRefused(reserved);
     }
     channel = { ...reserved.channel, existing: Boolean(reserved.existing) };
+    if (reserved.channel.audience) {
+      // Either way: a reservation resumed as shared was individual in the inbox until now.
+      await recordAudience(env, {
+        tenant: `${channel.id}.embed.invalid`, channelId: channel.id, audience: reserved.channel.audience,
+      });
+    }
     if (!reserved.existing) {
       // The channel as the inbox knows it, its customer and its route, before anyone can post.
       const tenant = `${channel.id}.embed.invalid`;
@@ -1359,6 +1369,10 @@ async function setIntegrationAudience(env, me, body) {
   if (res.error) {
     return portalRefused(res);
   }
+  // The inbox's agents work it so from now on, not from the event (src/individual.js).
+  await recordAudience(env, {
+    tenant: res.channel.lobby, channelId: res.channel.id, audience, seq: res.seq || 0,
+  });
   console.log(JSON.stringify({
     route: 'admin', integration: 'audience', by: me.id, audience,
   }));
@@ -2186,12 +2200,13 @@ async function addMemberSettling(env, me, body) {
 
 /**
  * The routes of `/api/admin/*` for every member of an ops team, not only the admin team and
- * team managers: the duplicate customers they see, asking for a merge (src/orgmerge.js), asking the
- * admin team to decide a partner of a customer (src/partnerrequests.js), and the customers' pages
- * (whose channels, and who follows them).
+ * team managers: the duplicate customers they see, asking for a merge (src/orgmerge.js), a pair of
+ * a customer and a partner's page (`?pair=`, its evidence as counts: src/orgpartners.js checks)
+ * and asking the admin team to decide it (src/partnerrequests.js), and the customers' pages
+ * (whose channels, and who follows them). Deciding a pair stays the admin team's.
  */
 export const STAFF_ROUTES = ['GET org-duplicates', 'POST org-merge-requests', 'DELETE org-merge-requests',
-  'POST org-partner-requests', 'DELETE org-partner-requests', 'GET orgs', 'GET org'];
+  'GET org-partners', 'POST org-partner-requests', 'DELETE org-partner-requests', 'GET orgs', 'GET org'];
 
 async function adminRoute(request, env, url, me) {
   const p = url.pathname;
@@ -2320,6 +2335,7 @@ async function adminRoute(request, env, url, me) {
     case 'PUT bots': return setBot(env, me, body);
     case 'GET accounts': return listAccounts(env);
     case 'PUT accounts': return linkAccount(env, me, body);
+    case 'POST accounts/decline': return declineProposal(env, me, body);
     case 'PUT account-pairs': return decideAccountPair(env, me, body);
     case 'GET cogs': return json(await cogsReport(env, url));
     case 'POST cogs/rollup': return json(await rollupCogs(env));
@@ -2340,7 +2356,7 @@ const DECIDING = new Set(['DELETE requests', 'POST member-requests/confirm',
   'POST portal/integration/approve', 'POST portal/integration/decline',
   'PUT portal/integration/auto', 'PUT portal/integration/audience', 'DELETE org-merge-requests', 'POST org-merge-requests/decline', 'POST org-merge',
   'DELETE org-merge', 'POST members', 'POST assign', 'DELETE assign', 'POST rules', 'PUT rules',
-  'DELETE rules', 'PUT bots', 'PUT accounts', 'PUT account-pairs', 'POST conflicts',
+  'DELETE rules', 'PUT bots', 'PUT accounts', 'POST accounts/decline', 'PUT account-pairs', 'POST conflicts',
   'POST rule-conflicts']);
 
 export async function admin(request, env, url, me) {

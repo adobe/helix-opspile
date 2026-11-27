@@ -258,10 +258,14 @@ function element(e, names) {
     ]), style);
   }
   if (e.type === 'link') {
-    const label = e.text || e.url || '';
+    // The blocks Slack makes of mrkdwn an app sent (a reply from the inbox) keep its entities in
+    // a link's URL (`&amp;`), not in its label. A label Slack shortened (`truncated`, an app's
+    // markdown block) is not the address: the address is.
+    const url = decode(e.url || '');
+    const label = (!e.truncated && e.text) || url;
     return styled([{
       type: 'link',
-      url: e.url || '',
+      url,
       title: null,
       children: [style.code ? { type: 'inlineCode', value: label } : text(label)],
     }], style);

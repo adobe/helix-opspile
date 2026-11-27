@@ -632,6 +632,10 @@ kbd { line-height: normal; padding: 0 var(--spectrum-spacing-75); }
 .feed .rq-checks { display: flex; flex-wrap: wrap; gap: var(--spectrum-spacing-75) var(--spectrum-spacing-300); margin: 0; padding: 0; border: 0; }
 .feed .rq-checks legend { flex-basis: 100%; padding: 0; margin-bottom: var(--spectrum-spacing-75); }
 .feed .rq-check { display: inline-flex; align-items: center; gap: var(--spectrum-spacing-75); cursor: pointer; }
+.feed .rq-date { display: flex; align-items: flex-end; gap: var(--spectrum-spacing-200); }
+.feed .rq-date > .fld { flex: 1; }
+.feed .rq-date > button { min-height: var(--spectrum-component-height-100); }
+.feed .rq-date > button:disabled { color: var(--spectrum-disabled-content-color); text-decoration: none; }
 .feed .rq-go { display: flex; justify-content: flex-end; align-items: center; gap: var(--spectrum-spacing-200); }
 .composer.rqbox { flex-wrap: wrap; gap: var(--spectrum-spacing-75) 0; }
 .composer.rqbox .rq-lbl { flex-basis: 100%; }
@@ -3166,6 +3170,14 @@ main.simple .fr.all { margin-bottom: var(--spectrum-spacing-75); }
 .logo .av { display: grid; place-items: center; font-size: calc(var(--spectrum-spacing-100) + var(--spectrum-border-width-100)); line-height: 1; }
 .spectrum .logo > *, .spectrum .logo .av { border-radius: var(--spectrum-corner-radius-75); }
 .spectrum .logo img { background: var(--spectrum-background-layer-2-color); }
+/* The partners at work in a heading's threads: their logos, small on its lower corner. */
+.logo > .pms { inset: auto calc(-1 * var(--spectrum-spacing-75)) calc(-1 * var(--spectrum-spacing-75)) auto; display: flex; width: auto; height: auto; }
+.logo .pm { position: relative; flex: none; width: var(--spectrum-spacing-200); height: var(--spectrum-spacing-200); }
+.logo .pm + .pm { margin-left: calc(-1 * var(--spectrum-spacing-75)); }
+.logo .pm > * { position: absolute; inset: 0; width: 100%; height: 100%; }
+.logo .pm .av { font-size: var(--spectrum-font-size-50); }
+.spectrum .logo > .pms { border-radius: 0; }
+.spectrum .logo .pm > *, .spectrum .logo .pm .av { border-radius: var(--spectrum-corner-radius-75); box-shadow: 0 0 0 var(--spectrum-border-width-200) var(--content); }
 main.simple .t .l2 { padding-left: 0; }
 main.simple .t.dotted .l2 { padding-left: calc(var(--spectrum-spacing-300) + var(--spectrum-border-width-100)); }
 main.simple .t .cust { flex: none; }

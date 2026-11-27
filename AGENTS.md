@@ -218,6 +218,15 @@ code and docs, is the decision model that labels threads and channels.
   (`thread_links`). A linked thread's title and link go only to who may see it (`canSee` in the
   inbox, `readable` for an agent, src/agent/related.js); the others are counted, never quoted.
 
+- **An individual channel's customers are each their own** (a portal channel's audience, portal
+  migration 0008; not an org type: the org holds the whole channel, and may be internal). The
+  portal keeps every customer read to their own threads (`theirs` in `src/portal/store.js`, every
+  path: lists, threads, counts, the feed, typing, files, mentions); its thread agents learn into
+  the end user's own knowledge base, `kb-person`, never `kb-org`, and read only that person's
+  threads (`src/individual.js`, `target.individual`). A new read path of the portal or a new agent
+  tool that reads threads asks it too. An embedded account's verified address is a merge key
+  (`users.verified_email`, `identities.merge_email`), never its `email`: it makes nobody staff.
+
 - **Most lifecycles here are implicit:** a nullable timestamp, a watermark, whether a row exists.
   [docs/STATE-MACHINES.md](docs/STATE-MACHINES.md) lists them, with the rules they follow. Read the
   entry before changing one, and add one for anything new with a lifecycle.
