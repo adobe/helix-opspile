@@ -345,6 +345,25 @@ describe('personal view', () => {
     assert.deepEqual(threads.map((x) => [x.thread, x.entry, x.n]), [['g2', 'g1', 1]]);
   });
 
+  it('counts a reply for the header in a group\'s root when the member I posted in is read', async () => {
+    const DB = fresh();
+    const at = (m) => `2026-10-21T10:${String(m).padStart(2, '0')}:00Z`;
+    // I post in g2 and read it; another person replies in g1, the group's root, which keeps
+    // logical_thread NULL as src/rethread.js leaves it: only the member points at it.
+    await say(DB, {
+      thread: 'g2', channelId: 'Croot', team: 'helix', person: 1, at: at(1),
+    });
+    await say(DB, {
+      thread: 'g1', channelId: 'Croot', team: 'helix', person: 2, at: at(2),
+    });
+    DB.sqlite.prepare("UPDATE threads SET logical_thread = 'g1' WHERE thread = 'g2'").run();
+    await advanceWatermark(DB, 1, 'g2', at(1), 'open');
+    const [t] = (await inbox({ DB }, me, null, { personal: true })).threads;
+    assert.equal(t.unreadForYou, 1);
+    const { threads } = await waitingFor({ DB }, { id: 1, email: 'a@adobe.com' }, new Date('2026-10-22T00:00:00Z'));
+    assert.deepEqual(threads.map((x) => [x.thread, x.entry, x.n]), [['g1', 'g1', 1]]);
+  });
+
   it('shows a bot\'s reply after the last person\'s message on the row, not what it answers', async () => {
     const DB = fresh();
     const at = (m) => `2026-10-21T10:${String(m).padStart(2, '0')}:00Z`;
