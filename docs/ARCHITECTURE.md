@@ -967,6 +967,13 @@ earlier roots in the same channel, within 14 days, are found by vector search.
   `> <author> wrote:` and its text.
 - **Thread marks:** a root that announces a thread (🧵, `:thread:`) stays on its own too, and
   out of a burst: nearly all of them are answered in their thread.
+- **Numbered items:** a root that starts with an item number of a series ("2/14 Forms: …",
+  "(3/3)", `numbersItem`) stays on its own too, out of a burst and not Clef's to fold: its author
+  posts a list of questions one by one, so that each is answered in its thread. The case that
+  showed it was an RFP's fourteen questions, posted in under three minutes: a burst made them one
+  entry, interleaving the fourteen platform threads, and the inbox's replies would have gone to the
+  last item's (src/post.js `target`). A date ("1/14/2027"), a ratio ("3/40", "50/50") or a time
+  ("24/7") is no item number. Of production's 296 burst members, only that series had one.
 - **Replies of its own (de-threading):** a conversation's root that people answer in its own
   platform thread holds a conversation of its own, however much it reads like a follow-up (a
   different customer raising a related problem by @-mentioning whoever was active last). One
