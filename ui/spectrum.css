@@ -630,33 +630,19 @@ header .note { white-space: nowrap; }
   background: var(--spectrum-gray-200);
   font-weight: var(--spectrum-bold-font-weight);
 }
-/* Counts: Spectrum 2's notification Badge, in the accent color. */
+/* What waits for you: Spectrum 2's notification Badge, negative, the inbox's red badge. */
 .spectrum header .count, .spectrum .pagemenu .count {
   min-width: var(--spectrum-component-height-50);
   height: var(--spectrum-component-height-50);
   padding: 0 var(--spectrum-spacing-75);
   border-radius: calc(var(--spectrum-component-height-50) / 2);
   color: var(--spectrum-white);
-  background: var(--spectrum-accent-background-color-default);
+  background: var(--spectrum-negative-background-color-default);
   font-size: var(--spectrum-font-size-50);
   font-weight: var(--spectrum-bold-font-weight);
 }
 .spectrum header .count:not(.total):hover, .spectrum .pagemenu .count:hover {
-  background: var(--spectrum-accent-background-color-hover);
-}
-/* The questions thread agents ask you: the agent's purple, with its bubble, as in the inbox. */
-.spectrum header .count.asks, .spectrum .pagemenu .count.asks {
-  display: inline-flex; align-items: center; gap: var(--spectrum-spacing-50);
-  background: var(--spectrum-purple-background-color-default);
-}
-.spectrum header .count.asks:hover, .spectrum .pagemenu .count.asks:hover {
-  background: var(--spectrum-purple-background-color-default);
-  filter: brightness(0.92);
-}
-.spectrum header .count.asks[hidden], .spectrum .pagemenu .count.asks[hidden] { display: none; }
-.spectrum header .count.asks .bubble-ico, .spectrum .pagemenu .count.asks .bubble-ico {
-  position: static; flex: none; padding: 0; color: inherit; background: none;
-  width: var(--spectrum-spacing-200); height: var(--spectrum-spacing-200);
+  background: var(--spectrum-negative-background-color-hover);
 }
 /* The modes a page is in: Spectrum 2's Tag, with its clear button. */
 .spectrum header .mode {

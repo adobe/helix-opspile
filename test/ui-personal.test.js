@@ -90,7 +90,7 @@ function load() {
     FACETS, state, pass: null, keptUnread: (t) => t.unread, viewerId: () => ME,
   });
   const activityOf = (t) => String(t.last_at || t.any_at || '');
-  page = piece('const GROUPS = {', '/** Markdown as one line', 'GROUPS, simpleCustomers, forgetColumn, row, grouped, groupPlan, groupHtml, youCount, youBadge, stackLine, mergeStacks', {
+  page = piece('const GROUPS = {', '/** Markdown as one line', 'GROUPS, simpleCustomers, forgetColumn, row, grouped, groupPlan, groupHtml, youCount, youBadge, badgePool, viewCount, stackLine, mergeStacks', {
     state,
     esc,
     notButton: views.notButton,
@@ -127,6 +127,11 @@ function load() {
     avatar: (name) => `<span class="av">${esc(name)}</span>`,
     profileKey: () => '',
     AT: '<svg/>',
+    AGENT_NAME: 'opspile',
+    isRequestKey: (k) => String(k).startsWith('request:'),
+    isQuestionKey: (k) => String(k).startsWith('request:question:'),
+    adminRequests: () => false,
+    personal: views.personal,
   });
   bar = piece('function filtButton(on) {', '/*\n * The thread list stays put', 'filtButton', {
     state,
@@ -136,6 +141,8 @@ function load() {
     mentionsOn: views.mentionsOn,
     youCount: page.youCount,
     youBadge: page.youBadge,
+    badgePool: page.badgePool,
+    viewCount: page.viewCount,
     SLIDERS: '<svg/>',
     AT: '<svg/>',
   });
@@ -556,17 +563,18 @@ describe('the simple personal view', () => {
       assert.doesNotMatch(columnRow('globex'), /class="fr off"/);
     });
 
-    it('counts nothing of an excluded customer: no badge, not bold, not in All customers', () => {
+    it('still counts what waits for you at an excluded customer, so the column adds up', () => {
       assert.equal(badge(columnRow('')), '3');
       assert.equal(badge(bar.filtButton(0)), '3');
       exclude('acme');
-      assert.equal(badge(columnRow('acme')), null);
+      // Out of the list, struck through, not bold: but its badge stays, and is in All customers,
+      // as it is in Personal's number in the switch and Inbox's in the header.
+      assert.equal(badge(columnRow('acme')), '2');
       assert.match(columnRow('acme'), /<span class="lab">ACME<\/span>/);
-      assert.equal(badge(columnRow('')), '1');
-      assert.equal(badge(bar.filtButton(0)), '1');
+      assert.equal(badge(columnRow('')), '3');
+      assert.equal(badge(bar.filtButton(0)), '3');
       exclude('globex');
-      assert.equal(badge(columnRow('')), null);
-      assert.equal(badge(bar.filtButton(0)), null);
+      assert.equal(badge(columnRow('')), '3');
       assert.deepEqual(column(), ['initech', 'acme', 'globex']);
     });
 
@@ -626,6 +634,24 @@ describe('the simple personal view', () => {
   });
 
   describe('the red badge', () => {
+    it('is Personal\'s in its filters, the admin team\'s requests in its, and nothing in a team\'s', () => {
+      const t = state.data.threads.find((x) => x.thread === 'a1');
+      assert.equal(page.viewCount(t), 2);
+      state.sort = 'team';
+      state.team = 'edge';
+      // What is yours in a team's inbox is counted in Personal: not twice.
+      assert.equal(page.viewCount(t), 0);
+      state.sort = 'personal';
+    });
+
+    it('counts a question an agent asked you as one until it is answered, read or not', () => {
+      const q = { thread: 'request:question:q1', team: 'edge', request: { open: true } };
+      assert.equal(page.youCount(q), 1);
+      assert.equal(page.youCount({ ...q, unread: false, request: { open: false } }), 0);
+      // A thread's bot reply for you counts as a person's (unreadForYou), once it is unread.
+      assert.equal(page.youCount({ thread: 't', unread: true, unreadForYou: 1 }), 1);
+    });
+
     it('counts the unread messages that mention you: beside each customer, in all, and on the rows', () => {
       assert.equal(badge(columnRow('acme')), '2');
       assert.equal(badge(columnRow('globex')), '1');
@@ -634,8 +660,8 @@ describe('the simple personal view', () => {
       assert.equal(badge(rowOf('a1')), '2');
       assert.equal(badge(rowOf('g2')), '1');
       assert.equal(badge(rowOf('a2')), null);
-      assert.match(columnRow('acme'), /title="2 unread messages for you: mentions, and replies in threads you are in"/);
-      assert.match(rowOf('g2'), /title="1 unread message for you: mentions, and replies in threads you are in"/);
+      assert.match(columnRow('acme'), /title="Waits for you: 2 unread messages for you, mentions and replies \(a person&#39;s or a bot&#39;s\) in threads you are in"/);
+      assert.match(rowOf('g2'), /title="Waits for you: 1 unread message for you, mentions and replies \(a person&#39;s or a bot&#39;s\) in threads you are in"/);
     });
 
     it('counts what is new in the threads you are in too, as Slack does, each message once', () => {
@@ -652,7 +678,7 @@ describe('the simple personal view', () => {
       assert.equal(badge(columnRow('')), '7');
       // The expert view's row says how many are new; with mentions only, how many mentions.
       state.settings.expert = true;
-      assert.match(rowOf('g1'), /<b class="men" title="3 unread messages for you[^"]*">3 new<\/b>/);
+      assert.match(rowOf('g1'), /<b class="men" title="Waits for you: 3 unread messages for you[^"]*">3 new<\/b>/);
       assert.match(rowOf('g2'), /<b class="men" title="Unread mentions of you">1 mention<\/b>/);
       state.settings.expert = false;
       read('g1');
@@ -716,6 +742,15 @@ describe('the simple personal view', () => {
       const col = page.simpleCustomers();
       assert.deepEqual([...col.matchAll(/data-v="([^"]+)"/g)].map((m) => m[1]), ['acme', 'globex']);
       assert.equal(badge(columnRow('')), '3');
+    });
+
+    it('leaves the column adding up: a reply for you is counted though the @ hides its thread', () => {
+      state.mentions = true;
+      state.data.threads.find((t) => t.thread === 'g1').unreadForYou = 1;
+      const sum = [...page.simpleCustomers().matchAll(/data-v="[^"]+"[^>]*>[\s\S]*?<b class="men"[^>]*>(\d+)</g)]
+        .reduce((n, m) => n + Number(m[1]), 0);
+      assert.equal(badge(columnRow('')), '4');
+      assert.equal(sum, 4);
     });
 
     it('keeps a thread once you read it: its mention stays in the thread', () => {

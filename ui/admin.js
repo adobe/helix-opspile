@@ -4497,6 +4497,8 @@ function drawLink(v) {
     request: (method, path, body) => call(path, method, body).then((r) => ({ ok: r.ok, status: r.status, data: r.body })),
   });
   Follow.on(followChanged);
+  // What else waits for you, on Inbox with the requests: your messages and questions.
+  if (!state.me.readonly) Header.loadWaiting();
   if (!(await load())) return;
   Agent.init(state.me, state.bases, {
     // The agent's address: the view and the file it has open, in the page's.

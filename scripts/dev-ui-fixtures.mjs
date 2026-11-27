@@ -1837,6 +1837,23 @@ for (const t of threads.filter((x) => x.customer === 'globex')) {
     },
   });
 
+  // Dana asked in her own thread and the opspile app answered: a thread agent's post_message,
+  // after she last read it. A bot's reply moves no `last_at`, but it is hers to read: the badge
+  // counts it as it counts a person's reply (src/threads.js unreadInYours), and Inbox in the
+  // header does too (src/waiting.js).
+  seed({
+    ch: CHANNELS.initech,
+    messages: [
+      ['dana', 70, 'Is the checkout cache purged on every deploy, or only on a full release?'],
+      ['app', 12, 'Only on a full release: a deploy purges the HTML, the checkout fragments keep their '
+        + 'surrogate keys. `POST /purge` with the key `checkout` clears them now.'],
+    ],
+    reads: { dana: 70 },
+    label: {
+      kind: 'question', next_actor: 'us', urgency: 0.8, resolved_p: 0.3,
+    },
+  });
+
   // Read and unread side by side, for the thread list: critical and
   // unseen, read and resolved with a staff ✅, read and waiting on the customer, read and old.
   seed({
