@@ -1291,6 +1291,16 @@ and not after a shorter look elsewhere. The filter cards hold the same rows, in 
 count what is unread now (`unreadNow`, `facetRows`): a read thread the list still holds is not
 counted, so a row's count goes down as you read, without its row moving.
 
+**Filters per view.** default → set → kept → back (`keepFilters` and `viewFiltersBack` in
+`ui/inbox.js`, sessionStorage `opspile.viewfilters`). Each view (a team's inbox, the personal view,
+by `scopeKey`) has filters of its own: picked and excluded values, and Mentions in the personal view.
+The filters on screen are kept as the view's whenever the address is written (`toUrl`), and before
+another view takes over (`switchView`, Back and Forward); the view opened gets its own back, or the
+default's (conversations only) if this tab has not opened it yet. An address with `filters=1` (a
+link, Back, a bell) sets them for its view instead; one without (Inbox in the header, a bookmark of a
+view) brings back the view's own. Unread only is no view's: it goes along. A new tab starts at
+the defaults.
+
 **Customer column.** placed → held → let go (`state.column`, `columnPlace` and `forgetColumn` in
 `ui/inbox.js`). The simple personal view's customers go by their place: the highest they have had
 (unread mentions of you, then unread, then the rest) since the inbox was last away; within a place,

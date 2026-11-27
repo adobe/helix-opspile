@@ -273,6 +273,107 @@ describe('inbox page', () => {
     assert.match(css, /@container \(max-width: 559px\) \{[^@]*#threads \.count \.order \{ overflow-x: auto;/);
   });
 
+  it('keeps a set of filters for each view, instead of carrying them to the next', async () => {
+    const store = new Map();
+    const sessionStorage = {
+      getItem: (k) => (store.has(k) ? store.get(k) : null),
+      setItem: (k, v) => store.set(k, String(v)),
+    };
+    const location = { pathname: '/inbox', search: '' };
+    const history = {
+      pushState(_, __, url) { location.search = url.slice(url.indexOf('?')); },
+      replaceState(_, __, url) { location.search = url.slice(url.indexOf('?')); },
+    };
+    const state = {
+      me: { teams: [{ slug: 'helix' }, { slug: 'admin' }] },
+      team: 'helix',
+      sort: 'team',
+      sel: { type: new Set(['conversation']) },
+      not: {},
+      mentions: false,
+      unread: false,
+      search: { q: '' },
+      cache: new Map(),
+    };
+    const personal = () => state.sort === 'personal';
+    const scopeKey = () => (personal() ? '~personal' : state.team);
+    const globals = {
+      state,
+      personal,
+      scopeKey,
+      sessionStorage,
+      location,
+      history,
+      onePick: () => {},
+      mentionsOn: () => personal() && state.mentions,
+      setUnread: (on) => { state.unread = on; },
+    };
+    const urls = piece(
+      '// ---------------------------------------------------------------- filters per view',
+      '/**\n * A click on a link the inbox opens itself',
+      'toUrl, fromUrl, keepFilters',
+      globals,
+    );
+    const { switchView } = piece('/**\n * Shows a team\'s inbox', 'async function start', 'switchView', {
+      ...globals,
+      toUrl: urls.toUrl,
+      viewFiltersBack: piece(
+        '// ---------------------------------------------------------------- filters per view',
+        '// ---------------------------------------------------------------- URL state',
+        'viewFiltersBack',
+        globals,
+      ).viewFiltersBack,
+      keepFilters: urls.keepFilters,
+      allKinds: () => {
+        delete state.sel.type;
+        delete state.not.type;
+      },
+      render: () => {},
+      renderUser: () => {},
+      syncReading: () => {},
+      emptyPane: () => {},
+      loadInbox: async () => {},
+      connect: () => {},
+      searching: () => false,
+    });
+    const sets = (o) => Object.fromEntries(Object.entries(o).map(([id, set]) => [id, [...set]]));
+
+    // helix: Teams only, without ACME.
+    state.sel.platform = new Set(['Teams']);
+    state.not.customer = new Set(['acme']);
+    urls.toUrl();
+    // The personal view, not opened yet: the default's, not helix's.
+    await switchView(null);
+    assert.deepEqual(sets(state.sel), { type: ['conversation'] });
+    assert.deepEqual(state.not, {});
+    state.sel.customer = new Set(['globex']);
+    state.mentions = true;
+    urls.toUrl();
+    assert.match(location.search, /view=personal.*f\.customer=globex.*mentions=1/);
+    // Back to helix: its own, as left; the personal view's customer is not among them.
+    await switchView('helix');
+    assert.deepEqual(sets(state.sel), { type: ['conversation'], platform: ['Teams'] });
+    assert.deepEqual(sets(state.not), { customer: ['acme'] });
+    assert.equal(state.mentions, false);
+    assert.doesNotMatch(location.search, /globex|mentions/);
+    // Another team starts at the default; from the end line, without the type filter.
+    await switchView('admin', { allKinds: true });
+    assert.deepEqual(state.sel, {});
+    // An address without filters brings back the view's own (a reload, Inbox in the header).
+    location.search = '?view=personal';
+    urls.fromUrl();
+    assert.deepEqual(sets(state.sel), { type: ['conversation'], customer: ['globex'] });
+    assert.equal(state.mentions, true);
+    // One with filters sets them, for its view.
+    location.search = '?team=helix&filters=1&f.resolved=open';
+    urls.fromUrl();
+    assert.deepEqual(sets(state.sel), { resolved: ['open'] });
+    urls.toUrl(false);
+    await switchView(null);
+    await switchView('helix');
+    assert.deepEqual(sets(state.sel), { resolved: ['open'] });
+  });
+
   it('opens the personal view unless the address names a team', () => {
     const { personalAsked } = piece('const personalAsked', 'function fromUrl', 'personalAsked');
     const asks = (search) => personalAsked(new URLSearchParams(search));
@@ -419,13 +520,12 @@ describe('inbox page', () => {
     assert.equal(list[remembered], '');
     assert.match(list.innerHTML, /hidden by the filters/);
 
-    const { endTeam } = piece('function endTeam', 'function endNote', 'endTeam', { state });
-    endTeam({ closest: (sel) => (sel === '.end' ? {} : null) });
+    const { endTeam, allKinds } = piece('const endTeam', 'function endNote', 'endTeam, allKinds', { state });
+    assert.equal(endTeam({ closest: (sel) => (sel === '.end' ? {} : null) }), true);
+    assert.equal(endTeam({ closest: () => null }), false);
+    allKinds();
     assert.equal(state.sel.type, undefined);
     assert.equal(state.not.type, undefined);
-    state.sel.type = new Set(['conversation']);
-    endTeam({ closest: () => null });
-    assert.equal([...state.sel.type].join(), 'conversation');
   });
 
   it('shows only the viewer\'s own messages (and those being sent) as theirs', () => {

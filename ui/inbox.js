@@ -1454,8 +1454,8 @@ const FACETS = [
 // (`state.sort` is 'personal'), the threads of the channels they posted or were mentioned in,
 // whichever team they are filed under. The personal view (latest activity first) keeps the customer and platform
 // cards only, and picks one customer at a time; it shows conversations, not alerts. A team's
-// view has every card. Filters on the cards a view does not show do not apply in it, and are
-// kept for the other.
+// view has every card. Each view has filters of its own ("filters per view", below), and those
+// on the cards a view does not show (the expert view's, in the simple one) do not apply in it.
 const PERSONAL_FACETS = FACETS.filter((f) => f.id === 'customer' || f.id === 'platform');
 const personal = () => state.sort === 'personal';
 /*
@@ -3075,10 +3075,11 @@ function endHtml(teams) {
 }
 /**
  * The end line counts every unread thread, alerts included. A team's type filter would hide
- * those alerts, so following a team name there opens the team without it.
+ * those alerts, so following a team name there opens the team without it (`allKinds`, which
+ * switchView applies to the filters of the team it opens).
  */
-function endTeam(view) {
-  if (!view.closest('.end')) return;
+const endTeam = (view) => Boolean(view.closest('.end'));
+function allKinds() {
   delete state.sel.type;
   delete state.not.type;
 }
@@ -11015,8 +11016,43 @@ function setUnread(on) {
   state.unread = on;
 }
 
+// ---------------------------------------------------------------- filters per view
+/*
+ * Each view (a team's inbox, the personal view) has filters of its own, not those of the view
+ * before it: switching views keeps the filters of the one left, by its scopeKey, and brings back
+ * those of the one opened, as they were left in this tab (sessionStorage, so a reload keeps
+ * them), or the default's (conversations only) for a view not opened yet. The address has the
+ * filters of the view on screen (toUrl), so Back, a reload and a link with `filters=1` set them;
+ * an address without `filters` brings back the view's own. Mentions, the personal view's switch,
+ * is one of its filters; unread only is not a filter of one view, and goes along.
+ */
+const VIEW_FILTERS_KEY = 'opspile.viewfilters';
+const defaultFilters = () => ({ sel: { type: new Set(['conversation']) }, not: {}, mentions: false });
+const storedFilters = () => {
+  try { return JSON.parse(sessionStorage.getItem(VIEW_FILTERS_KEY) || '{}') || {}; } catch { return {}; }
+};
+const plainSets = (sets) => Object.fromEntries(Object.entries(sets || {})
+  .filter(([, set]) => set?.size).map(([id, set]) => [id, [...set]]));
+const toSets = (o) => Object.fromEntries(Object.entries(o || {})
+  .filter(([, vs]) => Array.isArray(vs) && vs.length).map(([id, vs]) => [id, new Set(vs.map(String))]));
+/** Keeps the filters on screen as those of view `scope` (scopeKey's), in this tab. */
+function keepFilters(scope = scopeKey()) {
+  if (!scope) return;
+  const all = storedFilters();
+  all[scope] = { sel: plainSets(state.sel), not: plainSets(state.not), mentions: Boolean(state.mentions) };
+  try { sessionStorage.setItem(VIEW_FILTERS_KEY, JSON.stringify(all)); } catch { /* storage is off */ }
+}
+/** Puts the filters of the view on screen in place: as it was left, or the default's. */
+function viewFiltersBack() {
+  const kept = storedFilters()[scopeKey()];
+  Object.assign(state, kept && typeof kept === 'object'
+    ? { sel: toSets(kept.sel), not: toSets(kept.not), mentions: kept.mentions === true }
+    : defaultFilters());
+}
+
 // ---------------------------------------------------------------- URL state
 function toUrl(push = true, entry = null) {
+  keepFilters();
   const q = new URLSearchParams();
   if (personal()) q.set('view', 'personal'); else q.set('team', state.team);
   q.set('filters', '1');
@@ -11048,7 +11084,9 @@ function fromUrl() {
   const q = new URLSearchParams(location.search);
   const team = q.get('team');
   state.team = team || state.me.teams[0]?.slug;
-  if (q.has('filters')) {
+  state.sort = personalAsked(q) ? 'personal' : 'team';
+  if (!q.has('filters')) viewFiltersBack();
+  else {
     state.sel = {};
     state.not = {};
     for (const [k, v] of q) if (k.startsWith('f.') && v) state.sel[k.slice(2)] = new Set(v.split('|'));
@@ -11060,11 +11098,10 @@ function fromUrl() {
       for (const x of state.not[id]) state.sel[id]?.delete(x);
       if (!state.sel[id]?.size) delete state.sel[id];
     }
+    state.mentions = q.get('mentions') === '1';
   }
-  state.sort = personalAsked(q) ? 'personal' : 'team';
   onePick();
   setUnread(q.get('unread') === '1');
-  state.mentions = q.get('mentions') === '1';
   state.as = Number(q.get('as')) || null;
   return {
     open: q.get('t'), msg: q.get('m'), compose: q.get('compose') === '1' && !state.as, q: q.get('q') || '',
@@ -11977,11 +12014,17 @@ function move(step) {
   }
 }
 
-/** Shows a team's inbox (`slug`), or the personal view (no slug). */
-async function switchView(slug) {
+/**
+ * Shows a team's inbox (`slug`), or the personal view (no slug), with its own filters (see
+ * "filters per view"); `allKinds` drops its type filter (endTeam).
+ */
+async function switchView(slug, { allKinds: every = false } = {}) {
   const was = scopeKey();
+  keepFilters(was);
   if (slug) state.team = slug;
   state.sort = slug ? 'team' : 'personal';
+  if (scopeKey() !== was) viewFiltersBack();
+  if (every) allKinds();
   onePick();
   if (scopeKey() === was) { render(); toUrl(); return; }
   Object.assign(state, { open: null, compose: null, awaiting: null, prevKeys: null });
@@ -12063,8 +12106,7 @@ async function start() {
     // A click on the view already shown sorts it afresh, without the threads unread only kept.
     if (view) {
       if (view.getAttribute('aria-checked') === 'true') state.list.key = null;
-      endTeam(view);
-      switchView(view.dataset.view || null);
+      switchView(view.dataset.view || null, { allKinds: endTeam(view) });
       return;
     }
     const stack = e.target.closest('[data-stack]');
@@ -12230,6 +12272,8 @@ async function start() {
     const main = document.querySelector('main');
     main.classList.toggle('instant', Boolean(e.hasUAVisualTransition));
     const scope = scopeKey();
+    // The filters of the view on screen are its own, whichever view the address goes to.
+    keepFilters(scope);
     const {
       open, msg, compose, q: query,
     } = fromUrl();
@@ -12482,7 +12526,7 @@ const WEBMCP_TOOLS = [
   },
   {
     name: 'filter_threads',
-    description: 'Sets the inbox filters and view (a team, or personal) on screen, like clicking the filter cards and the view switch. Each filter given replaces that filter; an empty list clears it; filters not given stay as they are. `exclude` leaves values out, as negative filters. Returns how many threads match. Then call list_threads.',
+    description: 'Sets the inbox filters and view (a team, or personal) on screen, like clicking the filter cards and the view switch. Each filter given replaces that filter; an empty list clears it; filters not given stay as they are. Each view has filters of its own: switching to another view brings back that view\'s, as they were left there, and the filters given apply to them. `exclude` leaves values out, as negative filters. Returns how many threads match. Then call list_threads.',
     inputSchema: {
       type: 'object',
       properties: {
