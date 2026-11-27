@@ -122,6 +122,21 @@ beforeEach(() => {
   forgetPartnerDomains();
 });
 
+/**
+ * Threads of other orgs, each with a fact of its own, as the inbox has thousands: a value two
+ * threads of a few share is rare (src/factweights.js weighs it by tf-idf over all of them).
+ */
+function filler(sql, n = 30) {
+  for (let i = 0; i < n; i += 1) {
+    sql.prepare(`INSERT INTO threads (thread, source, tenant, channel_id, root_id, org, team, kind,
+        path, root_at, last_at, any_at, messages, updated_at)
+      VALUES (?, 'slack', 'E1', 'CF', ?, ?, 'helix', 'channel', 'x', ?, ?, ?, 1, ?)`)
+      .run(`slack:E1:CF:f.${i}`, `f.${i}`, `filler${i}`, '2025-01-01T00:00:00Z', '2025-01-01T00:00:00Z', '2025-01-01T00:00:00Z', '2025-01-01T00:00:00Z');
+    sql.prepare('INSERT INTO facts (thread, source, field, value) VALUES (?, \'rule\', \'ticket\', ?)')
+      .run(`slack:E1:CF:f.${i}`, `FILL-${i}`);
+  }
+}
+
 describe('partner owners', () => {
   it('reads the owner a site, a repository or a URL names', () => {
     assert.equal(ownerOf('site', 'Acme-Web/www'), 'acme-web');
@@ -251,6 +266,65 @@ describe('partner signals', () => {
     })), [['posters', 'kb']]);
   });
 
+  it('hints at a pair by the specific facts of both, and by those its people bring to customers', () => {
+    const c = org('globex', 'customer');
+    const p = org('agency', 'partner');
+    const orgs = new Map([['globex', c], ['agency', p], ['initech', org('initech', 'customer')]]);
+    const fact = (field, value, w, entries, orgsOf = ['globex', 'agency', 'initech']) => ({
+      field, value, w, entries: new Set(entries), orgs: new Set(orgsOf),
+    });
+    // The agency's thread and Globex's name one environment; Globex's and Initech's another,
+    // where the agency's people posted in both.
+    const ev = evidence({
+      facts: new Map([
+        ['agency', new Map([['aemcs_env:p1-e1', fact('aemcs_env', 'p1-e1', 0.9, ['a1'])]])],
+        ['globex', new Map([['aemcs_env:p1-e1', fact('aemcs_env', 'p1-e1', 0.9, ['g1'])],
+          ['aemcs_env:p2-e2', fact('aemcs_env', 'p2-e2', 0.8, ['g2'])]])],
+        ['initech', new Map([['aemcs_env:p2-e2', fact('aemcs_env', 'p2-e2', 0.8, ['i1'])]])],
+      ]),
+      factPosters: new Map([['g2', new Set(['agency.example', 'globex.example'])],
+        ['i1', new Set(['agency.example'])]]),
+    });
+    const ctx = contextOf(orgs, ev, new Map([['agency.example', 'agency']]));
+    const [signal] = partnerSignals(c, p, ev, ctx);
+    assert.equal(signal.kind, 'facts');
+    assert.equal(signal.n, 2);
+    assert.equal(signal.carried, 1);
+    assert.deepEqual(signal.fields, ['aemcs_env']);
+    assert.match(signal.text, /threads of both name 1 specific fact few others' do \(aemcs_env p1-e1\)/);
+    assert.match(signal.text, /1 specific fact of the customer's threads is in the threads of 1 other customer too, where the partner's people posted in both \(aemcs_env p2-e2\)/);
+    assert.equal(partnerSignals(orgs.get('initech'), p, ev, ctx)[0].carried, 1);
+    // Never a pair by itself: the first value is in a third org's threads too.
+    assert.deepEqual(partnerCandidates({ orgs }, ev, ctx), []);
+    // One of theirs alone is a hint, for the admin team, never Clef (`hintOnly`).
+    ev.facts.get('agency').get('aemcs_env:p1-e1').orgs = new Set(['globex', 'agency']);
+    ev.facts.get('globex').get('aemcs_env:p1-e1').orgs = new Set(['globex', 'agency']);
+    ev.factPosters = new Map();
+    const hinted = partnerCandidates({ orgs }, ev, contextOf(orgs, ev, new Map([['agency.example', 'agency']])));
+    assert.deepEqual(hinted.map((x) => [x.customer, x.hint, x.signals[0].only]), [['globex', true, 1]]);
+    // Beside the partner's people in the customer's threads, it adds up.
+    ev.posters = new Map([['globex', [{ domain: 'agency.example', threads: 1, people: 1 }]]]);
+    assert.deepEqual(partnerCandidates({ orgs }, ev, contextOf(orgs, ev, new Map([['agency.example', 'agency']])))
+      .map((x) => [x.customer, x.signals.map((g) => g.kind)]), [['globex', ['posters', 'facts']]]);
+  });
+
+  it('counts no fact twice: a site whose owner both name is the owners\'', () => {
+    const c = org('globex', 'customer');
+    const p = org('agency', 'partner');
+    const ev = evidence({
+      owners: new Map([['globex', new Map([['gx-web', 1]])], ['agency', new Map([['gx-web', 1]])]]),
+      facts: new Map([
+        ['agency', new Map([['site:gx-web/www', {
+          field: 'site', value: 'gx-web/www', w: 1, entries: new Set(['a1']),
+        }]])],
+        ['globex', new Map([['site:gx-web/www', {
+          field: 'site', value: 'gx-web/www', w: 1, entries: new Set(['g1']),
+        }]])],
+      ]),
+    });
+    assert.deepEqual(kinds(c, p, ev).map(([k]) => k), ['owners']);
+  });
+
   it('counts the people of every mail domain of the partner', () => {
     const c = org('globex', 'customer');
     const p = org('agency', 'partner');
@@ -346,6 +420,62 @@ describe('admin: partners', () => {
     assert.deepEqual(one.body.pairs.map((x) => [x.customer, x.candidate]), [['initech', false]]);
     assert.deepEqual(one.body.pairs[0].signals.map((s) => s.kind), ['members']);
     assert.equal((await call(e, ADA, 'GET', '/api/admin/org-partners?pair=initech:nobody')).status, 404);
+  });
+
+  it('makes a candidate of a weak pair whose threads name the same specific fact', async () => {
+    const e = env();
+    // The agency's thread and Initech's name one AEM Cloud Service environment, nobody else's.
+    filler(e.DB.sqlite);
+    for (const thread of ['slack:E1:C2:2.1', 'slack:E1:C3:3.1']) {
+      e.DB.sqlite.prepare(`INSERT INTO facts (thread, source, field, value)
+        VALUES (?, 'rule', 'aemcs_env', 'p77-e88')`).run(thread);
+    }
+    const r = await call(e, ADA, 'GET', '/api/admin/org-partners');
+    const pair = r.body.pairs.find((x) => x.customer === 'initech');
+    assert.deepEqual(pair.signals.map((g) => g.kind), ['members', 'facts']);
+    assert.match(pair.signals[1].text, /aemcs_env p77-e88/);
+    // Clef is told the kind of fact, not its value.
+    assert.ok(e.AI.asked.some((x) => /one of the same specific facts \(aemcs_env\)/.test(x)));
+    assert.ok(!e.AI.asked.some((x) => /p77-e88/.test(x)));
+    // Anyone else on an ops team reads it as a count.
+    const one = await call(e, BO, 'GET', '/api/admin/org-partners?pair=initech:agency');
+    assert.deepEqual(one.body.pairs[0].signals.find((g) => g.kind === 'facts'), { kind: 'facts', n: 1 });
+  });
+
+  it('asks the admin team, never Clef, of a pair only facts of theirs alone pair', async () => {
+    const e = env();
+    const sql = e.DB.sqlite;
+    // Hooli has nothing to do with the agency but an environment only their threads name.
+    filler(sql);
+    sql.exec(`INSERT INTO orgs (slug, name, type, updated_at) VALUES ('hooli', 'Hooli', 'customer', '${AT}')`);
+    sql.prepare(`INSERT INTO threads (thread, source, tenant, channel_id, root_id, org, team, kind,
+        channel_name, path, root_at, last_at, any_at, messages, updated_at)
+      VALUES ('slack:E1:C4:4.1', 'slack', 'E1', 'C4', '4.1', 'hooli', 'helix', 'channel', '', 'x', ?, ?, ?, 1, ?)`)
+      .run(AT, AT, AT, AT);
+    for (const thread of ['slack:E1:C2:2.1', 'slack:E1:C4:4.1']) {
+      sql.prepare(`INSERT INTO facts (thread, source, field, value)
+        VALUES (?, 'rule', 'aemcs_env', 'p31-e41')`).run(thread);
+    }
+    // A verdict Clef gave before, on what pairs them no more.
+    sql.exec(`INSERT INTO org_partners (customer, partner, score, signals, p, fingerprint)
+      VALUES ('hooli', 'agency', 2, '[]', 0.9, 'old')`);
+    const r = await call(e, ADA, 'GET', '/api/admin/org-partners');
+    const pair = r.body.pairs.find((x) => x.customer === 'hooli');
+    assert.deepEqual([pair.candidate, pair.hint, pair.p], [true, true, null]);
+    assert.deepEqual(pair.signals.map((g) => [g.kind, g.only]), [['facts', 1]]);
+    assert.ok(!e.AI.asked.some((x) => /slug hooli/.test(x)));
+    // Not a partner of anyone's: the verdict is gone, and partnersOf leaves it out.
+    assert.equal(sql.prepare("SELECT p FROM org_partners WHERE customer = 'hooli'").get().p, null);
+    assert.deepEqual(await partnersOf(e, 'hooli'), []);
+    // The admin team is asked, once, on the values both name.
+    const asks = sql.prepare(`SELECT action, status, fingerprint, note FROM org_partner_requests
+      WHERE customer = 'hooli'`).all();
+    assert.equal(asks.length, 1);
+    assert.equal(asks[0].action, 'link');
+    assert.match(asks[0].fingerprint, /^facts:/);
+    assert.match(asks[0].note, /a hint Clef is not asked about: threads of both name 1 specific fact few others' do \(aemcs_env p31-e41\)/);
+    await call(e, ADA, 'GET', '/api/admin/org-partners');
+    assert.equal(sql.prepare("SELECT COUNT(*) AS n FROM org_partner_requests WHERE customer = 'hooli'").get().n, 1);
   });
 
   it('confirms and dismisses a pair, and everyone at Adobe reads the confirmed and likely ones', async () => {

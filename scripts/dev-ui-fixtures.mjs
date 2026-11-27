@@ -2024,8 +2024,61 @@ for (const t of threads.filter((x) => x.customer === 'globex')) {
       thread: preview503, org: 'agency', name: 'Agency Co', icon: 'agency.example', role: 'partner', p: 1, via: ['posters'],
     },
   ];
+  // Two customers' threads name one AEM Cloud Service environment, and Clef found them the same
+  // issue (src/threadlinks.js, across customers, src/factweights.js): Umbrella's, and Hooli's on
+  // Edge, which Dana does not see; and Globex's, which names a pull request with it too.
+  const umbrellaAuthor = seed({
+    ch: CHANNELS.aemUmbrella,
+    messages: [
+      ['ola', 150, 'Our author instance answers 503 since last night\'s maintenance window. Publishing is stuck.'],
+      ['priya', 130, 'Checking with the AEM Cloud Service on-call. Which environment is it?'],
+      ['ola', 125, 'p4242-e1717, the stage author.'],
+    ],
+    label: {
+      kind: 'incident', next_actor: 'us', urgency: 2, resolved_p: 0.1, tech: { aemcs: 1 },
+    },
+    facts: [['aemcs_env', 'p4242-e1717'], ['url', 'https://github.com/umbrella-web/site/pull/42']],
+  });
+  const hooliAuthor = seed({
+    ch: CHANNELS.hooli,
+    messages: [
+      ['lena', 240, 'Hooli\'s stage author (p4242-e1717) returns 503 after the maintenance window.'],
+      ['dana', 200, 'The environment is being restored; I will update here.'],
+    ],
+    label: {
+      kind: 'incident', next_actor: 'us', urgency: 1.8, resolved_p: 0.3, tech: { aemcs: 1 },
+    },
+    facts: [['aemcs_env', 'p4242-e1717']],
+  });
+  const globexAuthor = seed({
+    ch: CHANNELS.aemGlobex,
+    messages: [
+      ['mei', 300, 'After merging umbrella-web/site#42 into our fork, publishing to p4242-e1717 fails.'],
+      ['lena', 280, 'That environment had an outage this morning; try again now?'],
+    ],
+    label: {
+      kind: 'question', next_actor: 'customer', urgency: 0.8, resolved_p: 0.5, tech: { aemcs: 1 },
+    },
+    facts: [['aemcs_env', 'p4242-e1717'], ['url', 'https://github.com/umbrella-web/site/pull/42']],
+  });
   const threadLinks = [{
     a: agencyMove, b: preview503, score: 0.87, p: 0.81, via: ['owner', 'clef'],
+  }, {
+    a: umbrellaAuthor,
+    b: hooliAuthor,
+    score: 0.89,
+    p: 0.77,
+    via: ['clef', 'facts'],
+    facts: 0.95,
+    shared: [{ field: 'aemcs_env', value: 'p4242-e1717' }],
+  }, {
+    a: umbrellaAuthor,
+    b: globexAuthor,
+    score: 0.84,
+    p: 0.62,
+    via: ['clef', 'facts'],
+    facts: 0.99,
+    shared: [{ field: 'aemcs_env', value: 'p4242-e1717' }, { field: 'url', value: 'https://github.com/umbrella-web/site/pull/42' }],
   }];
 
   return {

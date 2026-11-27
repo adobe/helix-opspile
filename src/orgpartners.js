@@ -11,6 +11,9 @@
  */
 
 import { isolateCache } from './isolatecache.js';
+import {
+  combined, factIndex, keyWeight, SPECIFIC, spreadOf,
+} from './factweights.js';
 import { orgDomain } from './favicons.js';
 import { json } from './http.js';
 import { CLEF, threadMessages } from './label.js';
@@ -39,9 +42,11 @@ import { UNASSIGNED } from './rules.js';
  *   usual mail domain, posting in the customer's threads (`posters`) or in its channels' members
  *   (`members`); the customer's people posting in the partner's threads (`guests`); the GitHub and
  *   aem.live owners the facts of both name, where few customers' threads name the owner
- *   (`owners`); the partner's knowledge base naming the customer's sites or name (`kb`); a Slack
- *   Connect or Teams team their channels share (`place`); and a channel whose name has both
- *   (`channel`, `<partner>-<customer>`);
+ *   (`owners`); the specific facts (src/factweights.js) the threads of both name, or that the
+ *   customer's and another customer's name where the partner's people posted in both (`facts`, a
+ *   hint that makes no candidate alone); the partner's knowledge base naming the customer's sites
+ *   or name (`kb`); a Slack Connect or Teams team their channels share (`place`); and a channel
+ *   whose name has both (`channel`, `<partner>-<customer>`);
  * - Clef, asked about each candidate with what it is shown of both: whether the partner works
  *   for the customer (`askPair`). Its answers are kept (`org_partners`), and asked again once
  *   what it would be shown changed, a few per list load and per cron run.
@@ -100,6 +105,9 @@ async function rows(env, sql, ...args) {
 }
 
 // ---- owners ----------------------------------------------------------------------------------
+
+/** A fact's field as `ownerOf` reads it: a URL Clairic found is a URL. */
+const KEY_OF = { affected_url: 'url' };
 
 /** GitHub paths that are not an owner. */
 const NOT_OWNER = new Set(['orgs', 'users', 'settings', 'features', 'marketplace', 'apps', 'about',
@@ -231,11 +239,65 @@ async function loadEvidence(env) {
   };
 }
 
+/**
+ * The specific facts each org's threads name that the threads of another org name too
+ * (src/factweights.js `factIndex`: of `SPECIFIC` weight or more, so of two to `COMMON_ORGS` orgs),
+ * `facts`: `Map<org, Map<key, { field, value, w, entries: Set<entry>, orgs: Set<org> }>>`, `orgs`
+ * every org whose threads name it; and the mail domains of
+ * the people outside Adobe who posted in the threads that name them (`factPosters`, `Map<entry,
+ * Set<domain>>`).
+ */
+async function loadFactEvidence(env, { fresh = false } = {}) {
+  const index = await factIndex(env, { fresh });
+  const facts = new Map();
+  const entries = new Set();
+  for (const [key, k] of index.keys) {
+    const w = k.entries.size >= 2 && spreadOf(index, key).orgs.size >= 2
+      ? keyWeight(index, key, k.base) : 0;
+    if (w >= SPECIFIC) {
+      for (const e of k.entries) {
+        const { org } = index.entries.get(e);
+        if (!facts.has(org)) {
+          facts.set(org, new Map());
+        }
+        const m = facts.get(org);
+        if (!m.has(key)) {
+          m.set(key, {
+            field: k.field, value: k.value, w, entries: new Set(), orgs: spreadOf(index, key).orgs,
+          });
+        }
+        m.get(key).entries.add(e);
+        entries.add(e);
+      }
+    }
+  }
+  const posted = entries.size ? await rows(env, `SELECT DISTINCT COALESCE(t.logical_thread, t.thread) AS entry,
+      LOWER(SUBSTR(i.email, INSTR(i.email, '@') + 1)) AS domain
+    FROM threads t JOIN messages m ON m.thread = t.thread
+    JOIN identities i ON i.source || ':' || i.tenant || ':' || i.user_id = +m.author_key
+    WHERE (t.thread IN (SELECT value FROM json_each(?1))
+        OR t.logical_thread IN (SELECT value FROM json_each(?1)))
+      AND m.staff = 0 AND m.deleted = 0 AND m.counted = 1 AND i.email LIKE '%_@_%'`, JSON.stringify([...entries])) : [];
+  const factPosters = new Map();
+  for (const r of posted) {
+    if (!factPosters.has(r.entry)) {
+      factPosters.set(r.entry, new Set());
+    }
+    factPosters.get(r.entry).add(r.domain);
+  }
+  return { facts, factPosters };
+}
+
+async function loadAll(env, { fresh = false } = {}) {
+  const [ev, f] = await Promise.all([loadEvidence(env), loadFactEvidence(env, { fresh })]);
+  return { ...ev, ...f };
+}
+
 const evidenceKept = isolateCache(EVIDENCE_MS);
 
-/** The evidence (`loadEvidence`), kept as src/orgmerge.js keeps its facts. */
+/** The evidence (`loadEvidence`, `loadFactEvidence`), kept as src/orgmerge.js keeps its facts. */
 async function evidence(env, { fresh = false } = {}) {
-  return evidenceKept.get(env, loadEvidence, { fresh });
+  return evidenceKept.get(env, (e) => loadAll(e, { fresh }), { fresh });
 }
 
 /**
@@ -325,6 +387,57 @@ export async function partnerMailDomains(env, orgs) {
 }
 
 /**
+ * The specific facts that customers' threads name where one partner's people posted, in the
+ * threads of two customers or more: `Map<customer\npartner, Map<key, { field, value, w, others
+ * }>>`, `others` the other customers whose threads the partner's people brought it to. A
+ * partner's people are those of its mail domains (`partnerOf`, `domainPartner`'s).
+ */
+function postedFactsOf(orgs, ev, partnerOf) {
+  const out = new Map();
+  const isCustomer = (slug) => (orgs.get(slug) || { type: 'customer' }).type === 'customer';
+  // By value: the customers whose threads name it, and the partners whose people posted there.
+  const byKey = new Map();
+  for (const [slug, m] of ev.facts || new Map()) {
+    if (isCustomer(slug)) {
+      for (const [key, x] of m) {
+        const partners = new Set();
+        for (const e of x.entries) {
+          for (const d of (ev.factPosters && ev.factPosters.get(e)) || []) {
+            const p = domainPartner(partnerOf, d);
+            if (p && p !== slug) {
+              partners.add(p);
+            }
+          }
+        }
+        for (const p of partners) {
+          if (!byKey.has(key)) {
+            byKey.set(key, { x, by: new Map() });
+          }
+          const { by } = byKey.get(key);
+          by.set(p, [...(by.get(p) || []), slug]);
+        }
+      }
+    }
+  }
+  for (const [key, { x, by }] of byKey) {
+    for (const [p, customers] of by) {
+      if (customers.length >= 2) {
+        for (const c of customers) {
+          const k = keyOf(c, p);
+          if (!out.has(k)) {
+            out.set(k, new Map());
+          }
+          out.get(k).set(key, {
+            field: x.field, value: x.value, w: x.w, others: customers.filter((o) => o !== c),
+          });
+        }
+      }
+    }
+  }
+  return out;
+}
+
+/**
  * What every pair is compared with, worked out once per list: each org's usual mail domain, whose
  * each partner domain is (`partnerMailDomains`, else each partner's usual one), how many orgs'
  * threads name each owner, and how many orgs have a channel in each place.
@@ -356,7 +469,13 @@ export function contextOf(orgs, ev, domains = null) {
     }
   }
   return {
-    usual, partnerOf, partnerMail, ownerSpread, places,
+    usual,
+    partnerOf,
+    partnerMail,
+    ownerSpread,
+    places,
+    postedFacts: postedFactsOf(orgs, ev, partnerOf),
+    typeOf: (slug) => (orgs.get(slug) || { type: 'customer' }).type,
   };
 }
 
@@ -469,6 +588,41 @@ export function partnerSignals(c, p, ev, ctx) {
       of: shared,
     });
   }
+  // Specific facts (src/factweights.js: an AEM environment, a pull request, a site few others'
+  // threads name) that the threads of both name; and those of the customer's threads that another
+  // customer's threads name too, where the partner's people posted in both. Its own, they say
+  // nothing of whose it is: a hint beside the others (`NOT_ALONE`).
+  const mineFacts = (ev.facts && ev.facts.get(c.slug)) || new Map();
+  const counted = new Set(shared);
+  const byOwner = (x) => counted.has(ownerOf(KEY_OF[x.field] || x.field, x.value));
+  const inBoth = [...((ev.facts && ev.facts.get(p.slug)) || new Map())]
+    .filter(([k, x]) => mineFacts.has(k) && !byOwner(x));
+  const brought = (ctx.postedFacts && ctx.postedFacts.get(keyOf(c.slug, p.slug))) || new Map();
+  const carried = [...brought]
+    .filter(([k, x]) => !inBoth.some(([b]) => b === k) && !byOwner(x));
+  if (inBoth.length || carried.length) {
+    const all = [...inBoth, ...carried];
+    const sure = combined(all.map(([, x]) => x.w));
+    const others = new Set(carried.flatMap(([, x]) => x.others));
+    const values = (list) => listed(list.map(([, x]) => `${x.field} ${x.value}`));
+    // Of those both name, the values no other customer's or partner's threads do: theirs alone.
+    const typeOf = ctx.typeOf || (() => 'customer');
+    const only = inBoth.filter(([, x]) => x.orgs && [...x.orgs]
+      .every((o) => o === c.slug || o === p.slug || !['customer', 'partner'].includes(typeOf(o))));
+    out.push({
+      kind: 'facts',
+      weight: all.length >= 2 || sure >= 0.9 ? 1.5 : 1,
+      n: all.length,
+      fields: [...new Set(all.map(([, x]) => x.field))].sort(),
+      carried: carried.length,
+      only: only.length,
+      keys: all.map(([k]) => k).sort(),
+      text: [
+        inBoth.length ? `threads of both name ${plural(inBoth.length, 'specific fact')} few others' do (${values(inBoth)})` : null,
+        carried.length ? `${plural(carried.length, 'specific fact')} of the customer's threads ${carried.length === 1 ? 'is' : 'are'} in the threads of ${plural(others.size, 'other customer')} too, where the partner's people posted in both (${values(carried)})` : null,
+      ].filter(Boolean).join('; '),
+    });
+  }
   // The partner's knowledge base names the customer's sites, or the customer.
   const entries = ev.kb.get(p.slug) || [];
   if (entries.length) {
@@ -539,16 +693,26 @@ const scoreOf = (signals) => signals.reduce((n, s) => n + s.weight, 0);
 
 /**
  * Signals that make no candidate alone, however much they weigh: a knowledge-base entry that
- * names a customer, a Slack Connect or Teams team both have. Clef found most such pairs unlikely.
+ * names a customer, a Slack Connect or Teams team both have (Clef found most such pairs unlikely),
+ * the specific facts both name (a hint: a value two orgs share is no proof of who works for whom).
  */
-const NOT_ALONE = new Set(['kb', 'place']);
+const NOT_ALONE = new Set(['kb', 'place', 'facts']);
 const enough = (signals) => scoreOf(signals) >= CANDIDATE
   && !(signals.length === 1 && NOT_ALONE.has(signals[0].kind));
+/**
+ * A hint, and no more: nothing pairs the two but specific facts their threads name, some of them
+ * named by no other customer's or partner's threads (a site, an environment of theirs alone). It
+ * is a candidate the admin team is asked about (`partnerWants`), never Clef: a pair Clef found
+ * likely would count as partners on that alone.
+ */
+export const hintOnly = (signals) => signals.length === 1 && signals[0].kind === 'facts'
+  && signals[0].only > 0;
 
 /**
  * The pairs of a customer and a partner whose signals add up to `CANDIDATE`, and are more than a
- * `NOT_ALONE` signal, strongest first: `[{ customer, partner, signals, score }]`. `f` is the
- * duplicates' facts, `ev` the evidence, `ctx` `contextOf`'s (of `f.orgs` and `ev` when none).
+ * `NOT_ALONE` signal, or are a hint (`hintOnly`, `hint`), strongest first: `[{ customer, partner,
+ * signals, score, hint }]`. `f` is the duplicates' facts, `ev` the evidence, `ctx` `contextOf`'s
+ * (of `f.orgs` and `ev` when none).
  */
 export function partnerCandidates(f, ev, ctx = contextOf(f.orgs, ev)) {
   const all = [...f.orgs.values()];
@@ -558,9 +722,10 @@ export function partnerCandidates(f, ev, ctx = contextOf(f.orgs, ev)) {
   for (const p of partners) {
     for (const c of customers) {
       const signals = partnerSignals(c, p, ev, ctx);
-      if (enough(signals)) {
+      const hint = !enough(signals) && hintOnly(signals);
+      if (enough(signals) || hint) {
         out.push({
-          customer: c.slug, partner: p.slug, signals, score: scoreOf(signals),
+          customer: c.slug, partner: p.slug, signals, score: scoreOf(signals), hint,
         });
       }
     }
@@ -595,6 +760,8 @@ function said(s) {
     case 'posters': return `${about(s.people)} of P's people posted in ${about(s.n)} of C's threads`;
     case 'guests': return `${about(s.people)} of C's people posted in ${about(s.n)} of P's threads`;
     case 'members': return `${about(s.n)} of P's people ${s.n === 1 ? 'is' : 'are'} in C's channels`;
+    case 'facts': return `${about(s.n)} of the same specific facts (${(s.fields || []).join(', ')}) in`
+      + ` threads of C's and ${s.carried ? 'of P\'s or of another customer\'s where P\'s people posted in both' : 'P\'s'}`;
     default: return s.text.replace(/\bthe customer\b/g, 'C').replace(/\bthe partner\b/g, 'P');
   }
 }
@@ -932,6 +1099,7 @@ function pairOf(r, c = null) {
     checked: (r && r.checked_at) || null,
     stale: false,
     candidate: Boolean(c),
+    hint: Boolean(c && c.hint),
     confirmed: r && r.confirmed_at ? { by: r.confirmed_by, at: r.confirmed_at } : null,
     dismissed: r && r.dismissed_at ? { by: r.dismissed_by, at: r.dismissed_at } : null,
     // The admin team's dates, and when its people posted in the customer's threads.
@@ -1231,7 +1399,9 @@ export function conflictOf(x) {
  *   quiet): a confirmed one, one no more? (`end`, until its last sign); one nobody decided, please
  *   look (`review`: ending it would confirm it too, the admin team's decision). Quiet alone asks
  *   nothing;
- * - an ended one whose people post again: one again? (`link`).
+ * - an ended one whose people post again: one again? (`link`);
+ * - a hint (`hintOnly`: nothing pairs them but specific facts of theirs alone), which Clef is not
+ *   asked about: a partner? (`link`, on the values both name).
  */
 export function partnerWants(pairs, orgs, fingerprints) {
   const wants = [];
@@ -1245,7 +1415,16 @@ export function partnerWants(pairs, orgs, fingerprints) {
       && fingerprints.has(key);
     const found = (x.signals || []).map((g) => g.text).join('; ');
     const doubt = open && x.p > UNSURE_HIGH ? conflictOf(x) : null;
-    if (open && x.p >= UNSURE_LOW && x.p <= UNSURE_HIGH) {
+    if (x.hint && x.candidate && !x.confirmed && !x.dismissed && fingerprints.has(key)) {
+      wants.push({
+        customer: x.customer,
+        partner: x.partner,
+        action: 'link',
+        since: null,
+        note: `Only the facts their threads name pair ${name(x.partner)} and ${name(x.customer)}, a hint Clef is not asked about: ${found}. Nobody at Adobe sees them as partners unless you confirm it.`,
+        fingerprint: fingerprints.get(key),
+      });
+    } else if (open && x.p >= UNSURE_LOW && x.p <= UNSURE_HIGH) {
       wants.push({
         customer: x.customer,
         partner: x.partner,
@@ -1383,8 +1562,11 @@ async function sync(env, {
     const row = keptBy.get(keyOf(c.customer, c.partner));
     const others = (confirmed.get(c.customer) || []).filter((o) => o.slug !== c.partner);
     const state = pairState(orgs.get(c.customer), orgs.get(c.partner), c.signals, ctx, others);
+    // A hint is asked of the admin team on the values both name, never of Clef.
     // eslint-disable-next-line no-await-in-loop
-    const fingerprint = await fingerprintOf(state);
+    const fingerprint = c.hint ? `facts:${await fingerprintOf(c.signals[0].keys.join('\n'))}`
+      // eslint-disable-next-line no-await-in-loop
+      : await fingerprintOf(state);
     const signals = JSON.stringify(c.signals);
     const span = spanOf(orgs.get(c.customer), orgs.get(c.partner), ev, ctx);
     const moved = !row || row.first_at !== span.first || row.last_at !== span.last;
@@ -1398,8 +1580,16 @@ async function sync(env, {
     }
     fingerprints.set(keyOf(c.customer, c.partner), fingerprint);
     const pair = { ...pairOf(row, c), first: span.first, last: span.last };
-    pair.stale = Boolean(row && row.p !== null && row.fingerprint !== fingerprint);
-    if (!decided(row) && (pair.p === null || pair.stale) && env.AI && asking.length < ask) {
+    if (c.hint && row && row.p !== null && !decided(row)) {
+      // Clef's verdict was on what pairs them no more: a hint stands on no verdict.
+      writes.push(env.DB.prepare(`UPDATE org_partners SET p = NULL, fingerprint = NULL, checked_at = NULL
+        WHERE customer = ? AND partner = ? AND confirmed_at IS NULL AND dismissed_at IS NULL`)
+        .bind(c.customer, c.partner));
+      Object.assign(pair, { p: null, checked: null });
+    }
+    pair.stale = Boolean(!c.hint && row && row.p !== null && row.fingerprint !== fingerprint);
+    if (!c.hint && !decided(row) && (pair.p === null || pair.stale) && env.AI
+      && asking.length < ask) {
       asking.push({
         pair, state, fingerprint, c,
       });
@@ -1440,7 +1630,7 @@ async function sync(env, {
     await env.DB.prepare(`UPDATE org_partners SET p = ?, fingerprint = ?, checked_at = ?
       WHERE customer = ? AND partner = ?`).bind(p, fingerprint, now, c.customer, c.partner).run();
   });
-  const unchecked = pairs.filter((x) => x.candidate && !x.confirmed && !x.dismissed
+  const unchecked = pairs.filter((x) => x.candidate && !x.hint && !x.confirmed && !x.dismissed
     && (x.p === null || x.stale)).length;
   await judgeQuiet(env, pairs, orgs, ctx, { wait, judging: Boolean(env.AI) });
   // What Clef asks the admin team to decide now, in its inbox; best effort, as the list is.
@@ -1546,17 +1736,22 @@ async function onePair(env, customer, partner, { fresh = false, wait = ASK_TIMEO
   }
   const signals = partnerSignals(c, p, ev, ctx);
   const score = scoreOf(signals);
-  const candidate = enough(signals);
+  const hint = !enough(signals) && hintOnly(signals);
+  const candidate = enough(signals) || hint;
   const span = spanOf(c, p, ev, ctx);
   const x = {
     ...pairOf(row, {
-      customer, partner, signals, score,
+      customer, partner, signals, score, hint,
     }),
     candidate,
     first: span.first,
     last: span.last,
   };
-  if (candidate && !decided(row)) {
+  if (hint && x.p !== null && !decided(row)) {
+    // As `sync` clears it: a hint stands on no verdict of Clef's.
+    Object.assign(x, { p: null, checked: null });
+  }
+  if (candidate && !hint && !decided(row)) {
     const others = (confirmedPartners(kept, orgs).get(customer) || [])
       .filter((o) => o.slug !== partner);
     const state = pairState(c, p, signals, ctx, others);
@@ -1604,7 +1799,8 @@ async function onePair(env, customer, partner, { fresh = false, wait = ASK_TIMEO
       Object.assign(x, { p: verdict, checked: now, stale: false });
     }
   }
-  const waits = x.candidate && !x.confirmed && !x.dismissed && (x.p === null || x.stale);
+  const waits = x.candidate && !x.hint && !x.confirmed && !x.dismissed
+    && (x.p === null || x.stale);
   const unchecked = waits ? 1 : 0;
   return {
     pairs: [x], orgs, ctx, unchecked, skipped: false,

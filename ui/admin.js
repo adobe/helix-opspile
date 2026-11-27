@@ -3469,6 +3469,8 @@ function linkTable(list) {
   const { orgs } = state.links;
   const rows = list.map((x) => {
     let said = x.p === null ? '<span class="sub">not asked yet</span>' : pct(x.p);
+    // A hint (src/orgpartners.js `hintOnly`): only facts of theirs alone pair them, Clef is not asked.
+    if (x.hint && x.p === null) said = '<span class="sub">a hint, not asked</span>';
     if (x.until) said = `<span class="tag">former, until ${esc(x.until)}</span>`;
     else if (x.confirmed) said = '<span class="tag confirmed">confirmed</span>';
     else if (x.dismissed) said = '<span class="tag declined">not partners</span>';
@@ -4225,6 +4227,7 @@ function linkSaid(x) {
   if (x.until) return `a former partner, until ${x.until}${asked}`;
   if (x.confirmed) return `confirmed${asked}`;
   if (x.dismissed) return `dismissed${asked}`;
+  if (x.hint && x.p === null) return `a hint: only facts of theirs alone pair them, and Clef is not asked${asked}`;
   return `${x.p === null ? 'Clef has not said yet' : `${pct(x.p)} likely, says Clef`}${asked}`;
 }
 
@@ -4329,7 +4332,7 @@ const possOf = (name) => (/s$/i.test(name) ? `${name}'` : `${name}'s`);
 
 /** Where a pair stands now, in a sentence, and when its partner's people posted. */
 function linkState(pair, p, c) {
-  let now = `Not decided: nobody at Adobe sees ${esc(p)} as a partner of ${esc(c)} until Clef finds it likely, or the admin team confirms it.`;
+  let now = `Not decided: nobody at Adobe sees ${esc(p)} as a partner of ${esc(c)} until ${pair.hint ? '' : 'Clef finds it likely, or '}the admin team confirms it.`;
   if (pair.until) now = `A former partner: ${esc(p)} worked for ${esc(c)} until ${esc(pair.until)}${pair.ended ? `, as ${who({ email: pair.ended.by })} said ${esc(ago(pair.ended.at))}` : ''}.`;
   else if (pair.confirmed) now = `A partner of ${esc(c)}${pair.since ? ` since ${esc(pair.since)}` : ''}: confirmed by ${who({ email: pair.confirmed.by })} ${esc(ago(pair.confirmed.at))}.`;
   else if (pair.dismissed) now = `Not partners: dismissed by ${who({ email: pair.dismissed.by })} ${esc(ago(pair.dismissed.at))}, whatever Clef says.`;
@@ -4372,6 +4375,7 @@ function drawLink(v) {
   const [p, c] = [linkName(pair.partner, orgs), linkName(pair.customer, orgs)];
   const sure = { sure: ': sure', likely: ': likely, though unsure', unsure: ': unsure', unlikely: ': unlikely' }[pair.standing?.status] || '';
   let unasked = 'Clef has not been asked yet; it is, the next time the list loads.';
+  if (pair.hint) unasked = `A hint, and no more: only specific facts their threads name, and no other customer's or partner's do, pair them. Clef is not asked about it, and nobody at Adobe sees ${esc(p)} as a partner of ${esc(c)} until the admin team confirms it.`;
   if (pair.unanswered) unasked = `No verdict yet: Clef did not answer ${esc(ago(pair.unanswered))}, and is asked again in a few minutes.`;
   const clef = pair.p === null ? unasked
     : `Clef says ${pct(pair.p)} that ${esc(p)} works for ${esc(c)}${esc(sure)}${pair.stale ? ' (from before what they share changed: it is asked again)' : ''}${pair.checked ? `, asked ${esc(ago(pair.checked))}` : ''}.`;

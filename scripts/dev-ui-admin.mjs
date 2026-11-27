@@ -73,7 +73,8 @@ const DEV_PARTNER_CLEF = {
 /**
  * Two partners' customers (src/orgpartners.js): Pied Piper's people post in ACME's threads, in
  * one of Hooli's and are in Wonka's channel, and its threads and ACME's name the site owner
- * `acme-web`; Raviga was confirmed for Soylent by hand. A's partners are `seedPartners`.
+ * `acme-web`, Wonka's and Stark's an environment each; Raviga was confirmed for Soylent by
+ * hand. A's partners are `seedPartners`.
  */
 function seedPartnerPairs(DB) {
   const db = DB.sqlite;
@@ -117,6 +118,15 @@ function seedPartnerPairs(DB) {
   for (const t of [own[0], acme].filter(Boolean)) {
     db.prepare('INSERT OR IGNORE INTO facts (thread, source, field, value) VALUES (?, \'rule\', \'site\', \'acme-web/www\')').run(t.thread);
   }
+  // Specific facts (src/factweights.js): an AEM Cloud Service environment only Pied Piper's and
+  // Wonka's threads name, beside its person in Wonka's channel; and one only its and Stark's name,
+  // nothing else pairing them: a hint for the admin team, which Clef is not asked about.
+  const env = (t, value) => t && db.prepare('INSERT OR IGNORE INTO facts (thread, source, field, value) VALUES (?, \'rule\', \'aemcs_env\', ?)')
+    .run(t.thread, value);
+  env(own[0], 'p4242-e1717');
+  env(wonka, 'p4242-e1717');
+  env(own[1], 'p5151-e2020');
+  env(of('stark', 1)[0], 'p5151-e2020');
   db.prepare(`INSERT INTO org_partners (customer, partner, confirmed_by, confirmed_at, since, first_at,
       last_at) VALUES ('soylent', 'raviga', 'priya@example.com', ?, '2025-02', ?, ?)`).run(at(3), at(240), at(110));
   // Raviga's people last posted in Soylent's threads 110 days ago, and Soylent's went on: quiet.

@@ -1141,6 +1141,22 @@ title, and counts the customers' threads a partner's people post in. With `--cle
 the last 90 days' partner threads as the link job does, their messages read from pile 2 and Clef
 asked through `cf ai run`. It prints counts only, no message and no name, and sends no write.
 
+What the facts two threads share would link, weighed by how rare they are (src/factweights.js), across
+customers and as partner hints:
+
+```sh
+STAFF_DOMAINS=<Adobe's mail domains> npm run facts:links -- <D1 id> [--profile <cf profile>] \
+  [--days <n>] [--vectors <CONTENT index>] [--clef <n> --bucket <pile 2's bucket>]
+```
+
+It reads the facts as the link job does, finds for every customer's thread the other customers'
+threads active within `--days` (`FACTS_DAYS`) that share specific facts, takes out what a partner of
+both explains, and counts the rest; with `--vectors` it compares their thread vectors
+(`cf vectorize get-by-ids`), with `--clef` it asks n of them as the job does. It then counts the
+partner pairs with a `facts` signal and the hints for the admin team. It prints counts and the
+shapes of values (`aemcs_env pN-eN`, a pull request of an Adobe repository), never a name or a
+customer's value, and sends no write.
+
 ### Score the product labels
 
 The technologies a thread involves come from three pipelines: Clef's tech questions and the

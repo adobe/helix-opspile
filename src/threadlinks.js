@@ -13,6 +13,9 @@
 import { isolateCache } from './isolatecache.js';
 import { entryOf } from './drafts.js';
 import { entryRows, vectorOf } from './expertise.js';
+import {
+  combined, factIndex, keysOf, keyWeight, MIN_WEIGHT, SPECIFIC, spreadOf,
+} from './factweights.js';
 import { registrable } from './favicons.js';
 import { CLEF, stateOf, threadMessages } from './label.js';
 import {
@@ -45,8 +48,11 @@ import { inParts } from './search.js';
  *   own); its people of no known org are the community, and link it with nobody;
  * - **"possibly the same issue"** (`thread_links`): the threads of the last RELATED_DAYS days in
  *   the linked orgs' channels (the customers it is about, else all the partner's; a customer's
- *   partners) whose thread vectors are like this one's (CONTENT, src/vectors.js), Clef deciding
- *   whether each is about the same issue, or a threshold without it.
+ *   partners) whose thread vectors are like this one's (CONTENT, src/vectors.js), and the threads
+ *   of the last FACTS_DAYS days, there and in other customers' channels, that name the same
+ *   specific facts (src/factweights.js: tf-idf, `sharedFacts`), less those a partner of both
+ *   explains (`explainFacts`); Clef deciding whether each is about the same issue, or a threshold
+ *   without it.
  *
  * The inbox shows them (`linkedOrgsOf` for the list, `entryLinks` for the open thread); people
  * dismiss what is wrong (`dismissAbout`, `dismissLink`). The agents of both threads of a new
@@ -83,6 +89,16 @@ export const RELATED_P = 0.5;
 /** New candidates Clef is asked about per job, and the vectors asked for. */
 export const RELATED_ASK = 3;
 const RELATED_K = 50;
+/** From this weight of the facts two threads share (src/factweights.js `combined`), a candidate. */
+export const FACTS_MIN = SPECIFIC;
+/** The days a thread that shares facts was active in. */
+export const FACTS_DAYS = 30;
+/** The threads of shared facts looked at per job, those kept as candidates, those asked about. */
+export const FACTS_SCAN = 20;
+export const FACTS_K = 5;
+export const FACTS_ASK = 2;
+/** Of the shared facts, those kept with a link and shown to Clef. */
+const SHARED_KEPT = 5;
 const ASK_TIMEOUT_MS = 10000;
 const MAX_LINKED = 100;
 const SHOWN_FACTS = 8;
@@ -336,6 +352,28 @@ async function aboutCustomers(env, {
 }
 
 /**
+ * The type of each of `slugs` (orgs): `Map<slug, type>`, `merged` for a merged one; an org of no
+ * row has none (it is a customer).
+ */
+async function typesOf(env, slugs) {
+  const typeOf = new Map();
+  if (!slugs.length) {
+    return typeOf;
+  }
+  const typed = await rows(
+    env,
+    `SELECT slug, type FROM orgs
+    WHERE slug IN (SELECT value FROM json_each(?1))
+    UNION SELECT slug, 'merged' FROM org_merges WHERE slug IN (SELECT value FROM json_each(?1))`,
+    JSON.stringify([...new Set(slugs)]),
+  );
+  for (const r of typed) {
+    typeOf.set(r.slug, typeOf.get(r.slug) === 'merged' ? 'merged' : r.type);
+  }
+  return typeOf;
+}
+
+/**
  * The partners whose people posted in an entry, and with `customers` (a public thread's) the
  * customers whose people did, by their mail domain: `{ partners, customers }`, each `[{ org, p,
  * via, people }]`. A domain that is a partner's (or named no partner's, `excluded`) is no
@@ -367,17 +405,7 @@ async function postingOrgs(env, { keys, anchor, customers: withCustomers = false
   }
   // Only orgs that are partners now (a domain may name one retyped since), and customers: of no
   // other type (an org of no row is one), not merged.
-  const typed = await rows(
-    env,
-    `SELECT slug, type FROM orgs
-    WHERE slug IN (SELECT value FROM json_each(?1))
-    UNION SELECT slug, 'merged' FROM org_merges WHERE slug IN (SELECT value FROM json_each(?1))`,
-    JSON.stringify([...partners.keys(), ...customers.keys()]),
-  );
-  const typeOf = new Map();
-  for (const r of typed) {
-    typeOf.set(r.slug, typeOf.get(r.slug) === 'merged' ? 'merged' : r.type);
-  }
+  const typeOf = await typesOf(env, [...partners.keys(), ...customers.keys()]);
   const out = (by, type) => [...by].filter(([org]) => (typeOf.get(org) || 'customer') === type)
     .map(([org, people]) => ({
       org, p: 1, via: 'posters', people,
@@ -469,6 +497,25 @@ async function agentOf(env, name) {
 
 const pairOf = (x, y) => (x < y ? [x, y] : [y, x]);
 
+/** Of `list` (`[{ key }]`, entries), those that are no partner's thread about another customer. */
+async function notAboutOthers(env, list, customer) {
+  if (!list.length) {
+    return list;
+  }
+  const about = await rows(
+    env,
+    `SELECT thread, org FROM thread_orgs WHERE role = 'about'
+    AND dismissed_at IS NULL AND p >= ? AND thread IN (SELECT value FROM json_each(?))`,
+    ABOUT_MIN,
+    JSON.stringify(list.map((x) => x.key)),
+  );
+  const of = new Map();
+  for (const r of about) {
+    of.set(r.thread, [...(of.get(r.thread) || []), r.org]);
+  }
+  return list.filter((x) => !of.has(x.key) || of.get(x.key).includes(customer));
+}
+
 /**
  * Threads of the last `days` in the channels of `orgs` whose thread vectors are like `vector`, by
  * inbox entry, best first: `[{ key, score, org }]`, leaving out the entries `skip` (keys) and,
@@ -514,24 +561,194 @@ export async function similarIn(env, vector, orgs, {
       }
     }
   }
-  let out = [...best.values()];
-  if (customer && out.length) {
-    // A partner's thread about another customer is not this one's.
-    const about = await rows(
-      env,
-      `SELECT thread, org FROM thread_orgs WHERE role = 'about'
-      AND dismissed_at IS NULL AND p >= ? AND thread IN (SELECT value FROM json_each(?))`,
-      ABOUT_MIN,
-      JSON.stringify(out.map((x) => x.key)),
-    );
-    const of = new Map();
-    for (const r of about) {
-      of.set(r.thread, [...(of.get(r.thread) || []), r.org]);
-    }
-    out = out.filter((x) => !of.has(x.key) || of.get(x.key).includes(customer));
-  }
+  const list2 = [...best.values()];
+  const out = customer ? await notAboutOthers(env, list2, customer) : list2;
   return out.sort((a, b) => b.score - a.score);
 }
+
+// ---- shared facts ----------------------------------------------------------------------------
+
+/**
+ * The entries of `index` (src/factweights.js `factIndex`) whose facts share weighed values with
+ * the anchor's, `{ entry, org, keys }` (`keys`: src/factweights.js `keysOf` its facts, read now),
+ * best first: `[{ key, org, score, shared: [{ key, field, value, w }] }]`, `w` each value's
+ * weight (its field's, how specific and how rare it is, the anchor counted; of MIN_WEIGHT or
+ * more), `score` what they
+ * say together (`combined`). Only entries of other orgs that `allow(org)` lets in, active since
+ * `since` (ISO), and not of `skip` (keys).
+ */
+export function sharedFacts(index, anchor, { allow = () => true, since = null, skip = [] } = {}) {
+  const extra = [{ entry: anchor.entry, org: anchor.org }];
+  const skipped = new Set([anchor.entry, ...skip]);
+  const by = new Map();
+  for (const [key, k] of anchor.keys) {
+    const w = keyWeight(index, key, k.base, extra);
+    // What weighs less than MIN_WEIGHT says nothing (a doc page, a status), here as in the topics.
+    const x = w >= MIN_WEIGHT && index.keys.get(key);
+    for (const e of x ? x.entries : []) {
+      const info = index.entries.get(e);
+      const recent = !since || (info && info.last && info.last >= since);
+      if (info && recent && !skipped.has(e) && info.org !== anchor.org && allow(info.org)) {
+        if (!by.has(e)) {
+          by.set(e, []);
+        }
+        by.get(e).push({
+          key, field: k.field, value: k.value, w,
+        });
+      }
+    }
+  }
+  return [...by].map(([e, shared]) => ({
+    key: e,
+    org: index.entries.get(e).org,
+    shared: shared.sort((a, b) => b.w - a.w || a.key.localeCompare(b.key)),
+    score: combined(shared.map((x) => x.w)),
+  })).sort((a, b) => b.score - a.score || a.key.localeCompare(b.key));
+}
+
+/**
+ * A match of `sharedFacts` between two customers' threads, less what a partner explains: a value
+ * both name is the partner's (its sandbox, its boilerplate, its tooling), not one issue of both,
+ * where a partner is on both sides, or on one and its own threads name the value. A partner is on
+ * a side (`mine`, `theirs`: `Set`s of partner orgs) where it works for that customer, confirmed or
+ * likely (`partnersOf`), or its people posted in that thread (their mail domain, `partnerDomains`);
+ * `keyPartners(key)` are the partner orgs whose threads name the value. `{ ...match, shared,
+ * explained, score }`: `explained` the values a partner explains, each with `by` (the partners),
+ * `shared` the rest, and `score` what they say together.
+ */
+export function explainFacts(match, { mine, theirs, keyPartners = () => new Set() }) {
+  const shared = [];
+  const explained = [];
+  for (const x of match.shared) {
+    const own = keyPartners(x.key);
+    const by = [...new Set([...mine, ...theirs])]
+      .filter((p) => (mine.has(p) && (theirs.has(p) || own.has(p)))
+        || (theirs.has(p) && own.has(p)))
+      .sort();
+    if (by.length) {
+      explained.push({ ...x, by });
+    } else {
+      shared.push(x);
+    }
+  }
+  return {
+    ...match, shared, explained, score: combined(shared.map((x) => x.w)),
+  };
+}
+
+/**
+ * The partners whose people posted in each of `entries` (keys): `Map<entry, Set<partner>>`, by
+ * their mail domain (`partnerDomains`), orgs of type `partner` now, not merged.
+ */
+async function postingPartners(env, entries) {
+  const out = new Map(entries.map((e) => [e, new Set()]));
+  if (!entries.length) {
+    return out;
+  }
+  const [list, domains] = await Promise.all([
+    rows(env, `SELECT DISTINCT COALESCE(t.logical_thread, t.thread) AS entry, LOWER(i.email) AS email
+      FROM threads t JOIN messages m ON m.thread = t.thread
+      JOIN identities i ON i.source || ':' || i.tenant || ':' || i.user_id = +m.author_key
+      WHERE (t.thread IN (SELECT value FROM json_each(?1))
+          OR t.logical_thread IN (SELECT value FROM json_each(?1)))
+        AND m.staff = 0 AND m.deleted = 0 AND m.counted = 1 AND i.email LIKE '%_@_%'
+        AND COALESCE(i.staff, 0) = 0`, JSON.stringify(entries)),
+    partnerDomains(env),
+  ]);
+  const found = [];
+  for (const { entry, email } of list) {
+    const p = partnerOf(String(email).split('@')[1], domains);
+    if (p && p.org && out.has(entry)) {
+      found.push([entry, p.org]);
+    }
+  }
+  const typeOf = await typesOf(env, found.map(([, org]) => org));
+  for (const [entry, org] of found) {
+    if (typeOf.get(org) === 'partner') {
+      out.get(entry).add(org);
+    }
+  }
+  return out;
+}
+
+/**
+ * The entries that share specific facts with this one (`sharedFacts`, of FACTS_MIN or more), of
+ * the last FACTS_DAYS days, the FACTS_K best: in the linked orgs' channels (`linked`), and for a
+ * customer's entry in every other customer's too (`cross`), where what a partner explains does not
+ * count (`explainFacts`). A customer's entry leaves out a partner's thread about another customer,
+ * as `similarIn` does. `[{ key, org, score, shared, explained, cross }]`.
+ */
+async function factCandidates(env, {
+  entry, anchor, type, linked, now,
+}) {
+  if (type !== 'customer' && !(type === 'partner' && linked.length)) {
+    return [];
+  }
+  const facts = await rows(
+    env,
+    'SELECT field, value FROM facts WHERE thread IN (SELECT value FROM json_each(?))',
+    JSON.stringify(entry.keys),
+  );
+  const keys = keysOf(facts);
+  if (!keys.size) {
+    return [];
+  }
+  const index = await factIndex(env);
+  const near = new Set(linked);
+  const since = new Date(now.getTime() - FACTS_DAYS * 86400 * 1000).toISOString();
+  let found = sharedFacts(index, { entry: entry.key, org: anchor.org, keys }, {
+    allow: type === 'partner' ? (o) => near.has(o) : () => true, since, skip: entry.keys,
+  }).filter((m) => m.score >= FACTS_MIN);
+  if (!found.length) {
+    return [];
+  }
+  // The orgs' types: of the threads found, and of those naming each shared value (a partner's).
+  const spread = new Map();
+  for (const m of found) {
+    for (const x of m.shared) {
+      if (!spread.has(x.key)) {
+        spread.set(x.key, spreadOf(index, x.key).orgs);
+      }
+    }
+  }
+  const naming = [...spread.values()].flatMap((o) => [...o]);
+  const typeOf = await typesOf(env, [...found.map((m) => m.org), ...naming]);
+  const customer = (org) => (typeOf.get(org) || 'customer') === 'customer';
+  found = found.filter((m) => near.has(m.org) || (type === 'customer' && customer(m.org)))
+    .slice(0, FACTS_SCAN);
+  if (type === 'customer') {
+    found = await notAboutOthers(env, found, anchor.org);
+  }
+  const cross = found.filter((m) => !near.has(m.org));
+  if (cross.length) {
+    const orgs = [...new Set([anchor.org, ...cross.map((m) => m.org)])];
+    const [partners, posting] = await Promise.all([
+      Promise.all(orgs.map(async (o) => [o, new Set((await partnersOf(env, o))
+        .filter((p) => p.type === 'partner').map((p) => p.slug))])).then((l) => new Map(l)),
+      postingPartners(env, [entry.key, ...cross.map((m) => m.key)]),
+    ]);
+    const side = (org, key) => new Set([...(partners.get(org) || []), ...(posting.get(key) || [])]);
+    const mine = side(anchor.org, entry.key);
+    const keyPartners = (key) => new Set([...(spread.get(key) || [])]
+      .filter((o) => typeOf.get(o) === 'partner'));
+    found = found.map((m) => (near.has(m.org) ? m : {
+      ...explainFacts(m, { mine, theirs: side(m.org, m.key), keyPartners }), cross: true,
+    })).filter((m) => m.score >= FACTS_MIN);
+  }
+  return found.slice(0, FACTS_K);
+}
+
+const cosine = (a, b) => {
+  let dot = 0;
+  let na = 0;
+  let nb = 0;
+  for (let i = 0; i < a.length; i += 1) {
+    dot += a[i] * b[i];
+    na += a[i] * a[i];
+    nb += b[i] * b[i];
+  }
+  return na && nb ? Math.round((dot / Math.sqrt(na * nb)) * 1000) / 1000 : 0;
+};
 
 /** An entry as Clef is shown it: where it is, its title and facts, its first and latest words. */
 async function describeEntry(env, letter, key) {
@@ -584,19 +801,30 @@ async function sharedOwner(env, a, b) {
 export const SAME_QUESTION = 'Would someone working thread A want to know about thread B, because'
   + ' both deal with the same problem or the same change?';
 
-/** What Clef is shown of entries `a` and `b` (their keys), or null where one is gone. */
-export async function sameState(env, a, b) {
+/**
+ * What Clef is shown of entries `a` and `b` (their keys), or null where one is gone: with the
+ * specific facts both name (`shared`, `[{ field, value }]`), and for two customers' threads
+ * (`cross`) that they are no partners of each other.
+ */
+export async function sameState(env, a, b, { shared = [], cross = false } = {}) {
   const [da, db] = await Promise.all([describeEntry(env, 'A', a), describeEntry(env, 'B', b)]);
   if (!da || !db) {
     return null;
   }
-  return 'Two threads of an ops inbox at Adobe, in the channels of two organizations that work'
-    + ` together: a customer and a partner (an agency or system integrator) that works for it.\n\n${da}\n\n${db}`;
+  const lead = cross
+    ? 'Two threads of an ops inbox at Adobe, in the channels of two of Adobe\'s customers, two'
+      + ' organizations that do not work together as far as the inbox knows.'
+    : 'Two threads of an ops inbox at Adobe, in the channels of two organizations that work'
+      + ' together: a customer and a partner (an agency or system integrator) that works for it.';
+  const both = shared.length
+    ? `\n\nBoth threads name these, which few other threads do: ${shared.slice(0, SHARED_KEPT)
+      .map((x) => `${x.field} ${x.value}`).join('; ')}.` : '';
+  return `${lead}\n\n${da}\n\n${db}${both}`;
 }
 
 /** Clef's probability that entries `a` and `b` are about the same issue, or null. */
-async function askSame(env, a, b) {
-  const state = await sameState(env, a, b);
+async function askSame(env, a, b, opts = {}) {
+  const state = await sameState(env, a, b, opts);
   if (!state) {
     return null;
   }
@@ -607,77 +835,145 @@ async function askSame(env, a, b) {
   return Number.isFinite(p) ? p : null;
 }
 
-/** Whether a link is shown: Clef said so, or it was not asked and the vectors are that alike. */
 /**
  * Whether a link is shown: both name the same owner (a site, a repository few customers have)
  * and the vectors are alike, Clef said so, or it was not asked and the vectors are that alike.
+ * The facts both name make a candidate (`facts`), never a link by themselves.
  */
 export const shownLink = (l) => !l.dismissed_at && (Boolean(l.owner)
   || (l.p == null ? l.score >= RELATED_SURE : l.p >= RELATED_P));
 
-/** What says a link is shown, for the inbox: `owner`, `clef`, `vector`. */
+/**
+ * What says a link is shown, for the inbox: `owner`, `clef`, `vector`; and `facts` where the
+ * specific facts both name made it a candidate.
+ */
 export const linkVia = (l) => [l.owner && 'owner', l.p != null && l.p >= RELATED_P && 'clef',
-  l.p == null && l.score >= RELATED_SURE && 'vector'].filter(Boolean);
+  l.p == null && l.score >= RELATED_SURE && 'vector', l.facts != null && l.facts >= FACTS_MIN && 'facts']
+  .filter(Boolean);
+
+/** A link's shared facts as kept (`thread_links.shared`): `[{ field, value, w }]`. */
+const sharedOf = (l) => {
+  try {
+    const list = JSON.parse(l.shared || '[]');
+    return Array.isArray(list) ? list : [];
+  } catch {
+    return [];
+  }
+};
 
 /**
- * The entry's related threads, found and kept (see `similarIn`): the candidates, each kept with
- * its score; Clef asked about RELATED_ASK of the new ones (or of one whose verdict is missing);
- * `[{ a, b, score, p }]` of the links shown now that were not before.
+ * The entry's related threads, found and kept: the candidates, by meaning in the linked orgs'
+ * channels (`similarIn`) and by the specific facts they share there and in other customers'
+ * (`factCandidates`, those whose vectors are at least RELATED_MIN alike too), each kept with its
+ * score and its facts; Clef asked about RELATED_ASK of the new ones found by meaning and
+ * FACTS_ASK of those found by their facts alone (or of one whose verdict is missing). `{ orgs,
+ * candidates, facts, asked, fresh }`, `fresh` `[{ a, b, score, p }]` of the links shown now that
+ * were not before.
  */
 async function relate(env, {
   entry, anchor, type, now,
 }) {
   const orgs = await linkedOrgs(env, { keys: entry.keys, org: anchor.org, type });
-  if (!orgs.length || !env.CONTENT) {
-    return { orgs: 0, candidates: 0, fresh: [] };
+  const byFacts = await factCandidates(env, {
+    entry, anchor, type, linked: orgs, now,
+  });
+  if ((!orgs.length && !byFacts.length) || !env.CONTENT) {
+    return {
+      orgs: orgs.length, candidates: 0, facts: 0, asked: 0, fresh: [],
+    };
   }
   const vector = await vectorOf(env, await entryRows(env, entry.key));
-  const found = await similarIn(env, vector, orgs, {
+  const found = orgs.length ? await similarIn(env, vector, orgs, {
     skip: entry.keys, customer: type === 'customer' ? anchor.org : null, now,
-  });
-  if (!found.length) {
-    return { orgs: orgs.length, candidates: 0, fresh: [] };
+  }) : [];
+  // The threads found by their facts alone: alike enough by their own vectors, compared.
+  const seen = new Set(found.map((f) => f.key));
+  for (const m of byFacts) {
+    if (vector && !seen.has(m.key)) {
+      // eslint-disable-next-line no-await-in-loop
+      const other = await vectorOf(env, await entryRows(env, m.key));
+      const score = other ? cosine(vector, other) : 0;
+      if (score >= RELATED_MIN) {
+        found.push({
+          key: m.key, score, org: m.org, alone: true,
+        });
+      }
+    }
   }
+  if (!found.length) {
+    return {
+      orgs: orgs.length, candidates: 0, facts: byFacts.length, asked: 0, fresh: [],
+    };
+  }
+  const factsOf = new Map(byFacts.map((m) => [m.key, m]));
   const kept = await rows(env, `SELECT * FROM thread_links WHERE (a = ?1 AND b IN (SELECT value FROM json_each(?2)))
     OR (b = ?1 AND a IN (SELECT value FROM json_each(?2)))`, entry.key, JSON.stringify(found.map((f) => f.key)));
   const keptBy = new Map(kept.map((l) => [`${l.a}\n${l.b}`, l]));
   const at = now.toISOString();
   const fresh = [];
   let asked = 0;
+  let askedFacts = 0;
   for (const f of found) {
     const [a, b] = pairOf(entry.key, f.key);
     const was = keptBy.get(`${a}\n${b}`);
+    const m = factsOf.get(f.key);
+    const cross = Boolean(m && m.cross);
+    const shared = m ? m.shared.slice(0, SHARED_KEPT) : sharedOf(was || {});
     let p = was ? was.p : null;
     let checked = was ? was.checked_at : null;
-    if (env.AI && p == null && asked < RELATED_ASK && !(was && was.dismissed_at)) {
-      asked += 1;
+    const room = f.alone ? askedFacts < FACTS_ASK : asked < RELATED_ASK;
+    if (env.AI && p == null && room && !(was && was.dismissed_at)) {
+      if (f.alone) {
+        askedFacts += 1;
+      } else {
+        asked += 1;
+      }
       // eslint-disable-next-line no-await-in-loop
-      p = await askSame(env, entry.key, f.key);
+      p = await askSame(env, entry.key, f.key, { shared, cross });
       checked = p == null ? checked : at;
     }
-    // eslint-disable-next-line no-await-in-loop
-    const owner = was && was.owner ? 1 : Number(await sharedOwner(env, entry.keys, [f.key]));
+    // The same rare owner says so between a partner and its customer, not between two customers.
+    let owner = Number(Boolean(was && was.owner));
+    if (!owner && !cross) {
+      // eslint-disable-next-line no-await-in-loop
+      owner = Number(await sharedOwner(env, entry.keys, [f.key]));
+    }
+    let facts = was ? was.facts ?? null : null;
+    if (m) {
+      facts = m.score;
+    }
+    const sharedText = shared.length ? JSON.stringify(shared.map((x) => ({
+      field: x.field, value: x.value, w: x.w,
+    }))) : null;
     const link = {
       a,
       b,
       score: Math.max(f.score, was ? was.score : 0),
       p,
       owner,
+      facts,
+      shared: sharedText,
       dismissed_at: was ? was.dismissed_at : null,
     };
-    if (!was || was.score !== link.score || was.p !== p || Number(was.owner) !== owner) {
+    if (!was || was.score !== link.score || was.p !== p || Number(was.owner) !== owner
+      || (was.facts ?? null) !== link.facts || (was.shared ?? null) !== link.shared) {
       // eslint-disable-next-line no-await-in-loop
-      await env.DB.prepare(`INSERT INTO thread_links (a, b, score, p, owner, found_at, checked_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?) ON CONFLICT (a, b) DO UPDATE SET score = excluded.score,
-          p = excluded.p, owner = excluded.owner, checked_at = excluded.checked_at`)
-        .bind(a, b, link.score, p, owner, at, checked).run();
+      await env.DB.prepare(`INSERT INTO thread_links (a, b, score, p, owner, facts, shared, found_at,
+          checked_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT (a, b) DO UPDATE SET score = excluded.score,
+          p = excluded.p, owner = excluded.owner, facts = excluded.facts, shared = excluded.shared,
+          checked_at = excluded.checked_at`)
+        .bind(a, b, link.score, p, owner, link.facts, link.shared, at, checked).run();
     }
     if (shownLink(link) && !(was && shownLink(was))) {
       fresh.push(link);
     }
   }
   return {
-    orgs: orgs.length, candidates: found.length, asked, fresh,
+    orgs: orgs.length,
+    candidates: found.length,
+    facts: byFacts.length,
+    asked: asked + askedFacts,
+    fresh,
   };
 }
 
@@ -754,6 +1050,7 @@ export async function linkThread(env, key, now = new Date()) {
       customers: posting.customers.length,
       linked: 0,
       candidates: 0,
+      facts: 0,
       asked: 0,
       related: 0,
       told: 0,
@@ -784,6 +1081,7 @@ export async function linkThread(env, key, now = new Date()) {
     orgs: orgs.length,
     linked: rel.orgs,
     candidates: rel.candidates,
+    facts: rel.facts || 0,
     asked: rel.asked || 0,
     related: rel.fresh.length,
     told,
@@ -837,9 +1135,10 @@ export async function linkedOrgsOf(env, keys) {
 
 /**
  * What the open thread shows of its links (`keys`: its entry's): `{ about, with, related }`,
- * `related` the threads possibly about the same issue, each `{ thread, score, p, org, org_name,
- * org_icon, org_type, team, source, channel_name, last_at }`, with its `title` and `permalink`
- * where `canSee(key)` says the viewer may see it (none of its words otherwise).
+ * `related` the threads possibly about the same issue, each `{ thread, score, p, via, facts,
+ * shared, org, org_name, org_icon, org_type, team, source, channel_name, last_at }`, with its
+ * `title` and `permalink` where `canSee(key)` says the viewer may see it (none of its words
+ * otherwise: of the facts both name, `shared`, only their fields).
  */
 export async function entryLinks(env, keys, canSee) {
   const [orgs, links] = await Promise.all([
@@ -880,6 +1179,10 @@ export async function entryLinks(env, keys, canSee) {
         score: l.score,
         p: l.p,
         via: linkVia(l),
+        facts: l.facts ?? null,
+        // The facts both name: their values only to who may see the other thread.
+        shared: sharedOf(l).map((x) => (seen
+          ? { field: x.field, value: x.value } : { field: x.field })),
         org: r.org,
         org_name: r.org_name || null,
         org_icon: r.org_icon || null,

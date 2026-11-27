@@ -27,6 +27,7 @@
     "response:backtest": "node scripts/response-backtest.mjs",
     "response:waits": "node scripts/wait-backtest.mjs",
     "partners:threads": "node scripts/thread-orgs-measure.mjs",
+    "facts:links": "node scripts/fact-links-measure.mjs",
     "truth": "node scripts/truth.mjs",
     "build": "node scripts/ui-markdown.mjs",
     "prelint": "npm run build --silent",

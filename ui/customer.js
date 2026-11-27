@@ -422,6 +422,7 @@ globalThis.CustomerView = (() => {
     guests: (n, P, C) => `${C} people in ${n} of ${P} threads`,
     members: (n, P, C) => `${n} of ${P} people in ${C} channels`,
     owners: (n) => (n === 1 ? 'a site owner in common' : `${n} site owners in common`),
+    facts: (n) => (n === 1 ? 'a specific fact in common' : `${n} specific facts in common`),
     kb: (n, P) => `named in ${plural(n, 'entry', 'entries')} of ${P} knowledge base`,
     place: () => 'a Slack Connect or Teams team in common',
     channel: (n) => (n === 1 ? 'a channel named for both' : `${n} channels named for both`),

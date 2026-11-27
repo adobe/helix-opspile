@@ -38,8 +38,9 @@ export const QUERY_MIN = 0.6;
 const MAX_TOOL = 10;
 const MAX_DAYS = 90;
 
-export const LINKED_GUIDE = 'A linked organization\'s thread is for the team: never post what it says in'
-  + ' this channel, or that it exists, unless someone asks you to in the sidebar; say in your note'
+export const LINKED_GUIDE = 'A linked organization\'s thread, or another customer\'s, is for the team: never'
+  + ' post what it says in this channel, or that it exists, unless someone asks you to in the sidebar'
+  + ', and another customer\'s name or words never; say in your note'
   + ' when it matters for this thread. Where this thread shows that a pair of a partner and a'
   + ' customer is wrong, ask the admin team with request_partner_link, as your partner-links instructions say.';
 
@@ -59,7 +60,9 @@ const keysOf = (t) => (t.threads && t.threads.length ? t.threads : [t.key]).filt
 /** A linked thread the agent may read, in a line. */
 function line(r) {
   const where = `${r.org_name || r.org}'s ${platformName(r.source)} channel #${r.channel_name || 'unknown'}`;
-  const sure = `${(r.via || []).includes('owner') ? ', both name the same repository owner' : ''}${r.p != null ? `, Clef ${pct(r.p)}` : ''}`;
+  const shared = (r.via || []).includes('facts') && (r.shared || []).length
+    ? `, both name ${r.shared.map((x) => `${x.field} ${x.value}`).join(', ')}` : '';
+  const sure = `${(r.via || []).includes('owner') ? ', both name the same repository owner' : ''}${shared}${r.p != null ? `, Clef ${pct(r.p)}` : ''}`;
   return `- ${r.thread} | ${one(r.title) || '(untitled)'} | ${where} | last ${r.last_at || 'unknown'}`
     + ` | similarity ${r.score}${sure}${r.permalink ? ` | ${r.permalink}` : ''}`;
 }
@@ -95,7 +98,7 @@ export async function relatedNote(env, t) {
   if (links.related.length) {
     const may = links.related.filter((r) => r.can_see);
     const not = links.related.length - may.length;
-    lines.push(`Possibly the same issue, in the channels of linked organizations (found by meaning; read them with read_any_thread before you rely on them):${may.length ? `\n${may.map(line).join('\n')}` : ''}`);
+    lines.push(`Possibly the same issue, in the channels of linked organizations, or of other customers whose threads name the same specific facts (found by meaning and by those facts; read them with read_any_thread before you rely on them):${may.length ? `\n${may.map(line).join('\n')}` : ''}`);
     if (not) {
       lines.push(`${not} more in channels you may not read: the team sees ${not === 1 ? 'it' : 'them'} in the inbox.`);
     }
@@ -123,7 +126,7 @@ export async function relatedUpdate(agent, change) {
   }
   const lead = change.kind === 'about'
     ? 'The inbox found which customer this thread is about.'
-    : 'The inbox found a thread possibly about the same issue in a linked organization\'s channel.';
+    : 'The inbox found a thread possibly about the same issue in a linked organization\'s channel, or in another customer\'s.';
   await agent.syncTools();
   await agent.syncMcp();
   await agent.harness.submit(`${lead} Look at it only if it changes what the team should do here; otherwise change nothing.\n\n${note}`, {

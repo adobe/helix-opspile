@@ -445,6 +445,10 @@ function threadHead(key, data) {
         ...(r.can_see ? { title: clip(r.title || '(no text)', 140), link: r.permalink || null } : {}),
         similarity: r.score,
         ...(r.p != null ? { p: r.p } : {}),
+        // The specific facts both name: their values only where the person may see that thread.
+        ...((r.via || []).includes('facts') && (r.shared || []).length ? {
+          shared_facts: r.shared.map((x) => (x.value ? `${x.field} ${x.value}` : x.field)),
+        } : {}),
         last_activity: r.last_at,
       })),
     } : {}),
