@@ -50,7 +50,8 @@ flushed. Until then the inbox has the thread unread, so the other pages reload o
 the read.
 
 **Thread grouping.** undecided → new topic, or folded by burst, reply, Clef, vector or skeleton → (a
-conversation's root folded by Clef that gets a person's reply in its own platform thread) splitting
+conversation's root folded by Clef that gets a person's reply in its own platform thread, or a burst
+member that somebody else answered in its own, as the root of its group before it) splitting
 → split (`threads.logical_*` and `split_from`, `src/rethread.js`). `skeleton_hash` is written
 before the work that can fail, and `rethreaded_at` after all of it. So a retry starts from the top, and hash without decision means
 the job died, which `sweepRethreads` picks up. A root skipped on purpose (a system notice) has no
@@ -65,8 +66,9 @@ reply's retry, a later reply, or re-threading (which `sweepRethreads` sends out 
 after `rethreaded_at`) finishes it; each step can be done again, a burst root that moved already is
 moved again, and `split_from` is cleared last. A fold as an addressed reply
 (`logical_via = 'reply'`: the root @-mentions somebody of the conversation, minutes after its latest
-message) is never split either, like a burst member's: the conversation went on in that platform
-thread, so the replies there are the group's. Routed is final the other way:
+message) is never split: the conversation went on in that platform thread, so the replies there are
+the group's. A burst member is split only as above (`apart` in `src/rethread.js`), by a reply to it
+or to the root before it, whichever comes second. Routed is final the other way:
 a folded root whose platform thread got one of its group's replies (the entry's latest, `target` in
 `src/post.js`) gets `routed_at`, set once (`routed_at IS NULL`) and before the post goes out, so the
 reply cannot arrive first and split it. It is never cleared, also not when the post fails: a root
