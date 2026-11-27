@@ -514,7 +514,8 @@ async function fetchTeamsUser(env, userId, fallbackName) {
 /**
  * A Discord account as a member of the guild: their server nickname and avatar, and whether
  * one of their roles is in DISCORD_STAFF_ROLES. Discord shares no email with bots, so the
- * account is linked to a person only when they connect it in the inbox (src/post.js).
+ * account is linked to a person only when they connect it in the inbox (src/post.js), or, for
+ * one with a staff role, when the admin team says whose it is (src/accountlinks.js).
  */
 async function fetchDiscordUser(env, guild, userId, fallbackName) {
   const member = await discordApi(env, `/guilds/${guild}/members/${userId}`, { allow: [404] });
@@ -667,7 +668,7 @@ export async function getIdentity(env, ref, now = Date.now()) {
       ON CONFLICT (email) DO UPDATE SET staff = 1`).bind(f.email, f.name).run();
   }
   // An account the admin team said whose it is (src/accountlinks.js) stays that person's: its
-  // mail address, the host tenant's own, says nobody.
+  // mail address, the host tenant's own, says nobody, and a Discord account has none.
   const linked = Boolean(row && row.linked_at && row.person);
   let person = !linked && f.email
     ? await env.DB.prepare('SELECT id, staff, name FROM people WHERE email = ?').bind(f.email).first()

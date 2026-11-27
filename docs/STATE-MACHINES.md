@@ -369,19 +369,37 @@ identity's refresh leaves them out of its upsert. Setting or clearing the name r
 name); their frontmatter keeps the name they were written with, which `accountAuthor` replaces in
 the thread view.
 
-**A host tenant's admin account.** a customer's (before migration 0097) → staff → linked ⇄
-unlinked (`identities.staff`, `person`, `linked_by`, `linked_at`; `src/lookup.js`,
-`src/accountlinks.js`). The Teams lookup says it is staff (`isHostAdmin`: a member, not a guest,
-of the host tenant, its user name `owner_…`) on every refresh; the migration said so of the ones
-seen before. Linking is the admin team's, in the account's thread of its inbox, and only of an
-account that is staff by itself and that no mail address links, to a staff person; the refresh
-keeps a link (`linked_at` set: `person` is not looked up by mail address) and only the admin team
-takes it back (all three NULL). A change of side or person rewrites `messages.person`, `staff` and, from
-the admin page, `author` of its messages, and `last_staff` and `last_author` of the threads they
-are in (`relabelAccount`); their frontmatter keeps what they were written with, which
-`accountAuthor` replaces in the thread view, until a replay writes them again: there its name is
-the one `toAuthor` gives the account now (its person's while linked, its own once unlinked), the
-messages written while it was linked too.
+**An account that is staff by itself.** a customer's (a host tenant's admin account, before
+migration 0097) → staff → linked ⇄ unlinked (`identities.staff`, `person`, `linked_by`,
+`linked_at`; `src/lookup.js`, `src/accountlinks.js`). Two kinds: a host tenant's admin account,
+which the Teams lookup says is staff (`isHostAdmin`: a member, not a guest, of the host tenant,
+its user name `owner_…`) on every refresh, as the migration said of the ones seen before; and a
+Discord account with one of the `DISCORD_STAFF_ROLES`, which the Discord lookup says on every
+refresh. Unlinked, it waits in the admin team's inbox (`unlinkedCount`): a Teams one always, a
+Discord one once it wrote a message. Linking is the admin team's, in the account's thread of its
+inbox, and only of an account that is staff by itself and that no mail address links (on
+Discord: that its person did not connect, `person` set with `linked_at` NULL, which stays
+theirs), to a staff person; on Discord the link is of the user's rows in every guild that are staff
+by themselves and nobody connected, or that the admin team linked. The refresh keeps a link
+(`linked_at` set: `person` is not looked up by mail address), whatever the role says later, and
+the person's disconnecting Discord leaves it (`disconnect` in `src/post.js` takes back only what
+connecting made); only the admin team takes it back (all three NULL), which it can as long as the
+link is there, staff or not. Nothing else links one: not a candidate the thread offers, not an
+agent's proposal (below), not a mail address or a merge key. A change of side or person rewrites
+`messages.person`, `staff` and, from the admin page, `author` of its messages, and `last_staff`
+and `last_author` of the threads they are in (`relabelAccount`); their frontmatter keeps what
+they were written with, which `accountAuthor` replaces in the thread view, until a replay writes
+them again: there its name is the one `toAuthor` gives the account now (its person's while
+linked, its own once unlinked), the messages written while it was linked too.
+
+**A proposal of whose a staff account is.** none → proposed → answered (deleted) | declined
+(`account_proposals`, migration 0116; `proposeAccountLink` in `src/accountlinks.js`). A thread
+agent's `request_account_link` files one, of an account that waits to be linked (above) and a
+staff person in D1, once per account and person, with a note in the account's thread
+(`request_log`); it links nothing. Linking the account, to whomever, deletes its open proposals
+(the decision is in the log). Declining one sets `declined_at` and `declined_by` and keeps the row:
+the same person is neither proposed for the account again nor suggested. A person's row deleted
+takes theirs with it. Unlinking the account later brings no proposal back.
 
 ## Drafts and replies
 

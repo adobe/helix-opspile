@@ -61,7 +61,9 @@ import {
 import {
   getBot, listBots, setBot, unreviewedCount,
 } from './ourbots.js';
-import { linkAccount, listAccounts, unlinkedCount } from './accountlinks.js';
+import {
+  declineProposal, linkAccount, listAccounts, unlinkedCount,
+} from './accountlinks.js';
 import { decideAccountPair, undecidedPairCount } from './accountpairs.js';
 import {
   followable, setTeamFollow, teamFollows, teamFollowsBy,
@@ -776,7 +778,8 @@ async function requestList(env, me, { status, count }) {
   const merges = isAdmin(me) ? await openMergeCount(env) + await openPartnerCount(env) : 0;
   // And the bots nobody said whose they are (src/ourbots.js), the admin team's too.
   const bots = isAdmin(me) ? await unreviewedCount(env) : 0;
-  // And the admin accounts nobody said whose they are (src/accountlinks.js), the admin team's too.
+  // And the accounts staff by themselves nobody said whose they are (src/accountlinks.js: the host
+  // tenant's admin accounts, Discord accounts with a staff role), the admin team's too.
   const accounts = isAdmin(me) ? await unlinkedCount(env) : 0;
   // And a customer's two accounts that may be one person (src/accountpairs.js), the admin team's.
   const pairs = isAdmin(me) ? await undecidedPairCount(env) : 0;
@@ -2320,6 +2323,7 @@ async function adminRoute(request, env, url, me) {
     case 'PUT bots': return setBot(env, me, body);
     case 'GET accounts': return listAccounts(env);
     case 'PUT accounts': return linkAccount(env, me, body);
+    case 'POST accounts/decline': return declineProposal(env, me, body);
     case 'PUT account-pairs': return decideAccountPair(env, me, body);
     case 'GET cogs': return json(await cogsReport(env, url));
     case 'POST cogs/rollup': return json(await rollupCogs(env));
@@ -2340,7 +2344,7 @@ const DECIDING = new Set(['DELETE requests', 'POST member-requests/confirm',
   'POST portal/integration/approve', 'POST portal/integration/decline',
   'PUT portal/integration/auto', 'PUT portal/integration/audience', 'DELETE org-merge-requests', 'POST org-merge-requests/decline', 'POST org-merge',
   'DELETE org-merge', 'POST members', 'POST assign', 'DELETE assign', 'POST rules', 'PUT rules',
-  'DELETE rules', 'PUT bots', 'PUT accounts', 'PUT account-pairs', 'POST conflicts',
+  'DELETE rules', 'PUT bots', 'PUT accounts', 'POST accounts/decline', 'PUT account-pairs', 'POST conflicts',
   'POST rule-conflicts']);
 
 export async function admin(request, env, url, me) {
