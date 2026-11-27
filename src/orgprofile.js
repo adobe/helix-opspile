@@ -60,6 +60,7 @@ import {
 } from './partners.js';
 import { customersOf, partnersOf } from './orgpartners.js';
 import { ABOUT_MIN } from './threadlinks.js';
+import { PUBLIC_NOW } from './follows.js';
 import { personSlug } from './agent/okf.js';
 import { mailDomains } from './orgmerge.js';
 import { activeSince } from './listactivity.js';
@@ -116,7 +117,7 @@ async function publicHere(env, slug, since) {
       MAX(h.channel_name) AS name, COUNT(DISTINCT x.thread) AS threads, MAX(h.last_at) AS last
     FROM thread_orgs x JOIN threads h ON h.thread = x.thread
     WHERE x.org = ?1 AND x.role = 'customer' AND x.dismissed_at IS NULL AND x.p >= ?3
-      AND h.kind = 'channel' AND h.last_at >= ?2
+      AND ${PUBLIC_NOW('x')} AND h.kind = 'channel' AND h.last_at >= ?2
     GROUP BY 1, 2 ORDER BY threads DESC, last DESC LIMIT ?4`)
     .bind(slug, since, ABOUT_MIN, MAX_PUBLIC).all();
   return results || [];

@@ -287,7 +287,11 @@ org and role (`about`: the customer a partner's thread is about; `partner`: a pa
 post in a customer's or a public thread; `customer`: a customer whose people post in a public
 thread, migration 0113, which puts the thread where the customer's followers have its threads).
 Every link job (`{ link }`, a minute after a `labeled` result) writes
-what it finds for its role and deletes the rows of that role it no longer finds, unless dismissed;
+what it finds for its roles and deletes the rows of those roles it no longer finds, unless dismissed,
+and every row of a role the thread's org type has not (`ROLES`: an org retyped, a channel filed under
+another org; all of them for a vendor's or an internal org's thread). Until then a row of role
+`customer` counts only while the thread's org is public (`PUBLIC_NOW`, src/follows.js), so a retyped
+org's threads leave the customers' followers at once;
 `found_at` moves only when `p` or `via` changed. Shown is not dismissed, `p` at least `ABOUT_MIN`,
 and an org not merged. A dismissed row (`dismissed_at`, by whoever may work the thread) is kept
 through every job, so the org stays off the thread until `undo` clears it. Nothing else writes

@@ -48,7 +48,11 @@ const PATHS = {
 
 /** The thread vectors, made up: each thread's, and which are alike. */
 const VECTORS = {
-  [P1]: [1, 0, 0], [G1]: [0.9, 0.1, 0], [G2]: [0, 1, 0], [I1]: [0, 0, 1],
+  [P1]: [1, 0, 0],
+  [G1]: [0.9, 0.1, 0],
+  [G2]: [0, 1, 0],
+  [I1]: [0, 0, 1],
+  'slack:E1:CC:4.1': [0, 0.5, 0.5],
 };
 const cos = (a, b) => a.reduce((n, x, i) => n + x * b[i], 0)
   / (Math.hypot(...a) * Math.hypot(...b));
@@ -313,9 +317,9 @@ describe('a public thread', () => {
     const sql = e.DB.sqlite;
     sql.exec(`INSERT INTO orgs (slug, name, type, updated_at) VALUES ('community', 'Public', 'public', '${AT}')`);
     sql.prepare(`INSERT INTO threads (thread, source, tenant, channel_id, root_id, org, team, kind,
-        channel_name, title, path, root_at, last_at, any_at, messages, updated_at)
+        channel_name, title, path, root_at, last_at, any_at, messages, updated_at, embedded)
       VALUES (?, 'slack', 'E1', 'CC', '4.1', 'community', 'helix', 'channel', 'aem-community',
-        'How do I preview?', 'channels/community/helix/slack-CC/4.1/', ?, ?, ?, 3, ?)`)
+        'How do I preview?', 'channels/community/helix/slack-CC/4.1/', ?, ?, ?, 3, ?, 'h')`)
       .run(PUB, AT, AT, AT, AT);
     const person = (id, name, email) => sql.prepare(`INSERT INTO identities (source, tenant, user_id,
         kind, name, email, fetched_at) VALUES ('slack', 'E1', ?, 'person', ?, ?, ?)`).run(id, name, email, AT);
@@ -356,6 +360,23 @@ describe('a public thread', () => {
     assert.ok((await aboutThreads(e, 'globex', [PUB, G1])).has(PUB));
     assert.equal((await dismissAbout(e, ADA, { thread: PUB, org: 'globex', role: 'customer' })).ok, true);
     assert.equal((await aboutThreads(e, 'globex', [PUB])).has(PUB), false);
+  });
+
+  it('lets its customers go once its org is no longer public, and clears them when linked again', async () => {
+    const e = world();
+    await linkThread(e, PUB);
+    e.DB.sqlite.exec("UPDATE orgs SET type = 'customer' WHERE slug = 'community'");
+    // At once, before any job: the customer's filter and the thread's links leave it.
+    assert.equal((await aboutThreads(e, 'globex', [PUB])).has(PUB), false);
+    assert.deepEqual((await linkedOrgsOf(e, [PUB])).get(PUB).with.map((o) => o.role), ['partner']);
+    // Linked again as a customer's: its rows of role customer go, its partners stay.
+    await linkThread(e, PUB);
+    assert.deepEqual(e.DB.sqlite.prepare('SELECT role FROM thread_orgs WHERE thread = ?').all(PUB)
+      .map((x) => x.role), ['partner']);
+    // An org of a type of no links (a vendor) keeps none.
+    e.DB.sqlite.exec("UPDATE orgs SET type = 'vendor' WHERE slug = 'community'");
+    assert.equal((await linkThread(e, PUB)).result, 'skip');
+    assert.deepEqual(e.DB.sqlite.prepare('SELECT role FROM thread_orgs WHERE thread = ?').all(PUB), []);
   });
 
   it('tells the agent whose people they are, and not to say so in the channel', async () => {
