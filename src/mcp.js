@@ -38,7 +38,8 @@ const SERVER = { name: 'helix-opspile', title: 'opspile', version: '0.1.0' };
 const META = 'io.modelcontextprotocol/';
 const LIST_TTL_MS = 60 * 60 * 1000;
 
-const INSTRUCTIONS = 'opspile is the ops inbox for Slack and Microsoft Teams channels with customers. '
+const INSTRUCTIONS = 'opspile is the ops inbox for Slack, Microsoft Teams and Discord channels with customers, '
+  + 'and for its own customer portal. '
   + 'Start with list_threads (filter by waiting_on "us" for what needs an answer), or find threads '
   + 'about something with search_threads; read one with get_thread (get_message for a message it cut), and a knowledge-base entry it found with get_knowledge, then answer with post_draft (the shared draft the team sends), post_as_user or '
   + 'post_as_bot (the opspile app), or use react_to_message or resolve_thread. Everything is done '

@@ -200,7 +200,8 @@ export async function embedConcepts(env, { limit = 100 } = {}) {
     id: await conceptVectorId(r.repo, r.path),
     values: values[i],
     metadata: {
-      type: 'kb', [r.kind === 'team' ? 'team' : 'org']: r.slug, repo: r.repo, path: r.path,
+      // An end user's (`person`) under their own key: no team's or customer's search finds it.
+      type: 'kb', [['team', 'person'].includes(r.kind) ? r.kind : 'org']: r.slug, repo: r.repo, path: r.path,
     },
   })));
   for (let i = 0; i < items.length; i += BLOBS) {

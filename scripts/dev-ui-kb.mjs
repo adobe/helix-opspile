@@ -274,6 +274,13 @@ const SEED = {
         'description: Platform ops\' support engineer for sign-in and authoring: SSO, Document Authoring and SharePoint.',
         '---', '', '# Priya Nair', '',
       ].join('\n'),
+      // Her Discord name among her aliases: it suggests her for the Discord staff account of that
+      // name (src/accountlinks.js, the admin team's Staff accounts).
+      'contacts/lena-berg.md': [
+        '---', 'type: Contact', 'title: Lena Berg',
+        'description: Platform ops\' engineer for forms and the Sidekick.',
+        'aliases: [Lena, lb_ops]', '---', '', '# Lena Berg', '',
+      ].join('\n'),
       // A partner the team works with across customers.
       'contacts/ravi-kumar.md': [
         '---', 'type: Contact', 'title: Ravi Kumar',

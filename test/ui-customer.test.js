@@ -397,7 +397,7 @@ describe('a partner\'s overview, and a customer\'s partners, drawn', () => {
     assert.ok(!html.includes('id="cvCustomers"'));
   });
 
-  it('links the admin team to the page of each pair nothing links yet', () => {
+  it('links the ops teams to the page of each pair, to review or for its evidence', () => {
     const review = (c, pt) => `/pair/${c}:${pt}`;
     const row = (over) => ({
       slug: 'agency', name: 'Agency', type: 'partner', icon: null, linked: false, confirmed: false, p: null, signals: {}, threads: 2, people: 1, ...over,
@@ -407,11 +407,11 @@ describe('a partner\'s overview, and a customer\'s partners, drawn', () => {
     }, { ...pctx, review });
     assert.match(html, /<a class="tv-review" href="\/pair\/acme:agency" title="Open the pair in Likely partners[^"]*">Review<\/a>/);
     assert.match(html, /href="\/pair\/acme:other"/);
-    assert.ok(!html.includes('/pair/acme:mine'));
+    assert.match(html, /<a class="tv-review" href="\/pair\/acme:mine" title="Open the pair: what links them[^"]*">Evidence<\/a>/);
     // A partner's page: the pair is its customer's and its own.
-    assert.ok(!CustomerView.html(partner, { ...pctx, review }).includes('/pair/acme:agency'));
+    assert.match(CustomerView.html(partner, { ...pctx, review }), /href="\/pair\/acme:agency"[^>]*>Evidence</);
     assert.match(CustomerView.html(partner, { ...pctx, review }), /href="\/pair\/wonka:agency"/);
-    // Nobody but the admin team gets `review`.
+    // Nobody but the people on an ops team gets `review`.
     assert.ok(!CustomerView.html({ ...profile, partners: [row()] }, pctx).includes('tv-review'));
   });
 

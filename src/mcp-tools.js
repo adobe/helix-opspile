@@ -173,6 +173,24 @@ function summary(t, me) {
 const list = (v) => (v == null ? [] : [].concat(v).map((x) => String(x).trim().toLowerCase())
   .filter(Boolean));
 
+/**
+ * How a linked org and the thread's stand as partners (src/threadlinks.js `orgEntry`'s `pair`):
+ * `{ partner_link, partner_link_p?, partner_link_until? }`, nothing in a public thread.
+ */
+const partnerLink = (o) => {
+  // A public thread's org is nobody's customer or partner: its orgs have no pair.
+  if (!o.pair) {
+    return {};
+  }
+  const s = o.pair;
+  return {
+    partner_link: s.status,
+    ...(s.p !== null && s.p !== undefined && !['confirmed', 'former', 'dismissed'].includes(s.status)
+      ? { partner_link_p: Math.round(s.p * 100) / 100 } : {}),
+    ...(s.until ? { partner_link_until: s.until } : {}),
+  };
+};
+
 /** `{ error }` when a filter has values outside `allowed`. */
 function checkValues(name, values, allowed) {
   const bad = values.filter((v) => !allowed.includes(v));
@@ -397,12 +415,17 @@ function threadHead(key, data) {
     // Linked across a partner and its customers (src/threadlinks.js): the customers a partner's
     // thread is about, the partners in a customer's, and the threads possibly about the same
     // issue there (a title only where the person may see that thread).
+    // Each with how the two orgs stand as partners (`partner_link`, src/orgpartners.js
+    // `standingOf`): the admin team's word (confirmed, former, dismissed) or Clef's (sure,
+    // likely, unsure, unlikely), and Clef's probability where nobody decided.
     ...(data.linked && data.linked.about.length ? {
-      about_customers: data.linked.about.map((o) => ({ customer: o.slug, name: o.name, p: o.p })),
+      about_customers: data.linked.about.map((o) => ({
+        customer: o.slug, name: o.name, p: o.p, ...partnerLink(o),
+      })),
     } : {}),
     ...(data.linked && data.linked.with.some((o) => o.role !== 'customer') ? {
       with_partners: data.linked.with.filter((o) => o.role !== 'customer')
-        .map((o) => ({ partner: o.slug, name: o.name })),
+        .map((o) => ({ partner: o.slug, name: o.name, ...partnerLink(o) })),
     } : {}),
     // A public thread's: the customers whose people posted in it.
     ...(data.linked && data.linked.with.some((o) => o.role === 'customer') ? {

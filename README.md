@@ -720,6 +720,8 @@ A Discord application reads the servers in `DISCORD_GUILDS` through its bot, rea
 4. Optionally, `DISCORD_STAFF_ROLES` names the server roles of Adobe people, and with
    `DISCORD_CLIENT_ID` and `DISCORD_CLIENT_SECRET` (OAuth2 redirect
    `<origin>/api/auth/discord/callback`) people connect their Discord account in the inbox.
+   An account with a staff role that its person did not connect waits, once it wrote, in the
+   admin team's inbox (Staff accounts), which links it to the colleague who uses it.
 
 Discord lets only bots post and react through its API, and opspile acts as the person or not at
 all: Discord threads have no reply box, reactions or ✅ in the inbox, only a link to reply in

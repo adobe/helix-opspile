@@ -376,6 +376,35 @@ describe('the simple personal view', () => {
       assert.deepEqual(outline().slice(0, 4), ['# acme', 'a1', 'a2', '+2 acme']);
       page.GROUPS.fold = 'all';
     });
+
+    it('puts the partners at work in the threads it shows on the customer\'s logo, not on the rows', () => {
+      const agency = {
+        slug: 'agency', name: 'Agency Co', icon: 'agency.example', role: 'partner',
+      };
+      const studio = {
+        slug: 'studio', name: 'Studio', icon: null, role: 'partner',
+      };
+      const t = (key) => state.data.threads.find((x) => x.thread === key);
+      t('a2').linked = { about: [], with: [agency] };
+      t('a3').linked = { about: [], with: [agency, { slug: 'globex', name: 'Globex', role: 'customer' }] };
+      t('a4').linked = { about: [], with: [studio] };
+      const head = page.groupHtml(list()[0]);
+      assert.match(head, /<span class="pms" role="img" aria-label="With Agency Co, Studio: partners&#39; people post in these threads" title="[^"]*"><span class="pm"><img src="https:\/\/icons.test\/agency.example" alt="" data-fav data-fb="&lt;span class=&quot;ico av&quot;&gt;A&lt;\/span&gt;"><\/span><span class="pm"><span class="ico av">S<\/span><\/span><\/span><\/span><span class="nm">ACME/);
+      // The rows name no partner; a customer in a thread stays named.
+      assert.doesNotMatch(rowOf('a2'), /class="lkd"/);
+      assert.match(rowOf('a3'), /<span class="lkd" title="People of the customer Globex post in this thread">With Globex<\/span>/);
+      // Customers without a partner at work have none.
+      assert.doesNotMatch(page.groupHtml(list().find((x) => x.head === 'globex')), /class="pms"/);
+      // A partner only in a thread the heading folds away is not on it.
+      page.GROUPS.fold = 'three';
+      state.list.grouped = null;
+      assert.match(page.groupHtml(list()[0]), /aria-label="With Agency Co: the partner&#39;s people post in these threads"/);
+      page.GROUPS.fold = 'all';
+      // Searching, there are no headings: the row names its partner again.
+      state.search.q = 'thread';
+      assert.match(rowOf('a2'), /<span class="lkd"[^>]*>With Agency Co<\/span>/);
+      state.search.q = '';
+    });
   });
 
   describe('picking a customer', () => {

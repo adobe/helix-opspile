@@ -1391,9 +1391,10 @@ export async function typing(env, me, request, inTeam) {
 
 export async function disconnect(env, me, platform) {
   if (platform === 'discord') {
-    // The link was the point of connecting; it goes with the token.
+    // The link was the point of connecting; it goes with the token. One the admin team made
+    // (src/accountlinks.js) is the admin team's to take back.
     await env.DB.prepare(`UPDATE identities SET person = NULL WHERE source = 'discord'
-      AND person = ? AND user_id IN (SELECT user_id FROM user_tokens
+      AND person = ? AND linked_at IS NULL AND user_id IN (SELECT user_id FROM user_tokens
         WHERE person = ? AND platform = 'discord')`).bind(me.id, me.id).run();
   }
   await env.DB.prepare('DELETE FROM user_tokens WHERE person = ? AND platform = ?')
