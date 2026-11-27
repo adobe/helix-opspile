@@ -22,8 +22,8 @@ import {
 import { platformName } from './platforms.js';
 import { isAdmin } from './roles.js';
 import {
-  byThread, factThreads, md, namedIn, postedFrom, quoteLines, threadSection, threadsOf,
-  whoCouldKnow, withQuotes,
+  byThread, channelText, factThreads, markSeen, md, messageHref, namedIn, PEOPLE, postedFrom,
+  quoteLines, threadSection, threadsOf, whoCouldKnow, withQuotes,
 } from './requestevidence.js';
 import { UNASSIGNED } from './rules.js';
 
@@ -763,7 +763,9 @@ export async function pairQuotes(env, c, p, signals, ctx) {
  * behind each signal and the messages in them, the partner's knowledge-base entries that name the
  * customer, the channels; and who at Adobe worked those threads. Null when either org is gone.
  */
-export async function partnerEvidence(env, customer, partner) {
+export async function partnerEvidence(env, customer, partner, {
+  names = true, people: who = true,
+} = {}) {
   const [f, ev, merges] = await Promise.all([
     orgFacts(env),
     evidence(env),
@@ -793,14 +795,17 @@ export async function partnerEvidence(env, customer, partner) {
   const P = md(p.name || p.slug);
   const its = (email) => Boolean(email) && domainPartner(ctx.partnerOf, String(email).split('@')[1]) === p.slug;
   const sections = [
-    threadSection(`${P}'s people in ${C}'s threads${m.domains.length ? ` (${md(m.domains.join(', '))})` : ''}`, byThread(m.posters)),
+    threadSection(`${P}'s people in ${C}'s threads${names && m.domains.length ? ` (${md(m.domains.join(', '))})` : ''}`, byThread(m.posters)),
     threadSection(`${C} named in ${P}'s threads`, byThread(m.customer)),
     threadSection(`${P} named in ${C}'s threads`, byThread(m.partner.filter((x) => !its(x.email)))),
-    threadSection(`${C}'s people in ${P}'s threads${m.home ? ` (${md(m.home)})` : ''}`, byThread(m.guests)),
+    threadSection(`${C}'s people in ${P}'s threads${names && m.home ? ` (${md(m.home)})` : ''}`, byThread(m.guests)),
     threadSection('Threads that name the site owners of both', byThread(owned), {
-      note: (x) => (x.thread.fact ? `names \`${String(x.thread.fact.value).replace(/`/g, '')}\`` : null),
+      note: (x) => (names && x.thread.fact ? `names \`${String(x.thread.fact.value).replace(/`/g, '')}\`` : null),
     }),
   ];
+  if (!names) {
+    return { sections, people: [] };
+  }
   const kb = foundBy(signals, 'kb');
   if (kb.length) {
     sections.push({
@@ -829,8 +834,75 @@ export async function partnerEvidence(env, customer, partner) {
       head: 'Channels', items: channels.slice(0, 5), more: Math.max(0, channels.length - 5), threads: [],
     });
   }
-  const people = await whoCouldKnow(env, threadsOf({ sections }));
+  const people = who ? await whoCouldKnow(env, threadsOf({ sections })) : [];
   return { sections, people };
+}
+
+/** An item of the evidence's lists as the pair's page shows it: a thread `seen` only if `seen`. */
+function itemOf(x) {
+  if (!x.thread) {
+    return { text: x.text, href: x.href || null, note: x.note || null };
+  }
+  const t = x.thread;
+  const m = x.message;
+  const where = {
+    org: t.org, team: t.team, source: t.source, channel: channelText(t), at: m.at, n: x.n,
+  };
+  if (!x.seen) {
+    // Not theirs to read: whose, where and when only.
+    return { ...where, seen: false };
+  }
+  return {
+    ...where,
+    seen: true,
+    thread: t.thread,
+    title: t.title ? String(t.title).replace(/\s+/g, ' ').trim().slice(0, 120) : null,
+    href: messageHref(m),
+    permalink: m.permalink && /^https:\/\//.test(m.permalink) ? m.permalink : null,
+    author: m.author || null,
+    staff: Boolean(m.staff),
+    preview: m.preview ? String(m.preview).replace(/\s+/g, ' ').trim() : null,
+    note: x.note || null,
+  };
+}
+
+/**
+ * GET /api/admin/org-partners/evidence?pair=<customer>:<partner>: the threads behind a pair's
+ * signals, as its page lists them under "Why" (`partnerEvidence`, the same lists the admin
+ * team's request of the pair shows): `{ sections: [{ head, items, more }], people }`, each item a
+ * thread (`itemOf`) or, for the admin team, a knowledge-base entry or a channel. A thread the
+ * viewer may not see (src/requestevidence.js `markSeen`) is named by its org, team, channel and
+ * day only. Anyone on an ops team reads it as they read the pair (`orgPartners`), without what
+ * names mail domains, site owners, entries or channels, and whoever could know is found in the
+ * threads they may see only.
+ */
+export async function pairThreads(env, me, { pair = '' } = {}) {
+  const admin = isAdmin(me);
+  if (!admin && !(me && (me.teams || []).length)) {
+    return json({ error: 'for the people on an ops team' }, 403);
+  }
+  const [customer, partner] = String(pair || '').split(':');
+  if (!customer || !partner) {
+    return json({ error: 'open one pair with ?pair=<customer>:<partner>' }, 400);
+  }
+  const ev = await partnerEvidence(env, customer, partner, { names: admin, people: admin });
+  if (!ev) {
+    return json({ error: 'no such pair of orgs (one may be merged)' }, 404);
+  }
+  await markSeen(env, me, ev);
+  let { people } = ev;
+  if (!admin) {
+    const seen = ev.sections.flatMap((x) => x.items).filter((x) => x.seen)
+      .map((x) => x.thread.thread);
+    people = await whoCouldKnow(env, seen);
+  }
+  return json({
+    sections: ev.sections.filter((x) => x.items.length).map((x) => ({
+      head: x.head, items: x.items.map(itemOf), more: x.more,
+    })),
+    // Whoever reads it is no one to ask.
+    people: people.filter((p) => !me || p.id !== me.id).slice(0, PEOPLE),
+  });
 }
 
 // ---- the pairs kept --------------------------------------------------------------------------

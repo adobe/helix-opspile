@@ -4254,6 +4254,50 @@ async function showLink(customer, partner) {
     target: 'link', value: `${customer}:${partner}`, pair, orgs, requests: r.body.requests || [],
   };
   drawLink(state.view);
+  loadLinkThreads(state.view);
+}
+
+/** The threads behind a pair's signals (src/orgpartners.js `pairThreads`), under its "Why". */
+async function loadLinkThreads(v) {
+  const r = await call(`/api/admin/org-partners/evidence?pair=${encodeURIComponent(v.value)}`);
+  if (v !== state.view) return;
+  // eslint-disable-next-line no-param-reassign
+  v.threads = r.ok ? r.body : { error: r.body.error || `failed (${r.status})` };
+  if ($('lThreads')) $('lThreads').innerHTML = linkThreads(v);
+}
+
+/** Text the Worker wrote as markdown (src/requestevidence.js `md`), as HTML: `code` kept. */
+const mdText = (s) => esc(String(s || '').replace(/\\([\\`*_[\]<>~|])/g, '$1'))
+  .replace(/`([^`]+)`/g, '<code>$1</code>');
+
+/** One item of the threads' lists: a thread, linked at its message, or what it is not to read. */
+function linkThreadItem(x, v) {
+  if (x.seen === undefined) {
+    // A knowledge-base entry or a channel (the admin team's).
+    const text = x.href ? `<a href="${esc(x.href)}">${esc(x.text)}</a>` : esc(x.text);
+    return `<li>${text}${x.note ? ` <span class="sub">${mdText(x.note)}</span>` : ''}</li>`;
+  }
+  const where = `${esc(x.channel)} (${esc(platform(x))}), ${esc(dayOf(x.at))}`;
+  if (!x.seen) {
+    return `<li class="sub">A thread of <b>${esc(linkName(x.org, v.orgs))}</b> in ${esc(possOf(teamLabel(x.team)))} ${where}</li>`;
+  }
+  const many = x.n > 1 ? `, ${x.n} messages` : '';
+  const said = x.preview ? `<div class="said">${x.author ? `${esc(x.author)}${x.staff ? ' (Adobe)' : ''}: ` : ''}“${esc(x.preview)}”</div>` : '';
+  const permalink = x.permalink ? ` <a class="sub" href="${esc(x.permalink)}" target="_blank" rel="noopener">in ${esc(platform(x))}</a>` : '';
+  return `<li><a href="${esc(x.href)}">${esc(x.title || 'A thread')}</a> <span class="sub">${where}${many}${x.note ? `, ${mdText(x.note)}` : ''}</span>${permalink}${said}</li>`;
+}
+
+/** The threads behind the signals, as lists under their heads, and who at Adobe could know. */
+function linkThreads(v) {
+  const t = v.threads;
+  if (!t) return '<p class="sub">Finding the threads…</p>';
+  if (t.error) return `<p class="sub">The threads could not be read: ${esc(t.error)}</p>`;
+  if (!t.sections.length) return '<p class="sub">No thread the inbox reads says so.</p>';
+  const lists = t.sections.map((x) => `<h3>${mdText(x.head)}</h3><ul class="asks threads">${x.items.map((y) => linkThreadItem(y, v)).join('')}${x.more ? `<li class="sub">and ${x.more} more</li>` : ''}</ul>`).join('');
+  const people = t.people.length
+    ? `<p class="sub">Who could know: ${t.people.map((p) => `${esc(p.name)} (${esc(p.email)}, in ${p.threads === 1 ? 'one' : p.threads} of these threads, last ${esc(dayOf(p.last))})`).join('; ')}.</p>`
+    : '';
+  return `${lists}${people}`;
 }
 
 /** The pair as it is now, read again, in its page (after a decision there). */
@@ -4346,7 +4390,7 @@ function drawLink(v) {
   $('detail').innerHTML = `<div class="title">${backButton()}<h1 class="fill">${esc(p)} <span class="sub">for</span> ${esc(c)}</h1></div>
     <div class="status" id="status"></div>
     <div class="card"><div class="pair">${pairSide(orgs[pair.partner], false)}${pairSide(orgs[pair.customer], false)}</div></div>
-    <div class="card"><h2>Why ${esc(p)} may work for ${esc(c)}</h2><p>${clef}</p>${evidence}</div>
+    <div class="card"><h2>Why ${esc(p)} may work for ${esc(c)}</h2><p>${clef}</p>${evidence}<div id="lThreads">${linkThreads(v)}</div></div>
     <div class="card"><h2>Partner of the customer</h2>${linkState(pair, p, c)}${decide}${listed}${ask}
       ${mine ? `<div class="form"><button id="lWithdraw"${off(key)}>Take my request back</button></div>` : ''}
       <p class="hint">${state.me.admin

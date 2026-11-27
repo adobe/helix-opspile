@@ -208,6 +208,43 @@ describe('the evidence of a request', () => {
     assert.match(e.AI.asked.at(-1), /- In a thread of B \(#aem-globexcorp\), Adobe staff wrote: "This is the same contract as the one of Globex, the parent company"/);
   });
 
+  it('lists the threads behind a pair on its page, and what a viewer may not read by where only', async () => {
+    const e = env();
+    const get = (who) => quiet(() => call(e, who, 'GET', '/api/admin/org-partners/evidence?pair=globex:agency'));
+    // The admin team: the heads with the mail domains, each thread linked at its message.
+    const a = await get(ADA);
+    assert.equal(a.status, 200);
+    const posters = a.body.sections.find((s) => /people in Globex's threads/.test(s.head));
+    assert.equal(posters.head, 'The Agency\'s people in Globex\'s threads (agency.example)');
+    const [first] = posters.items;
+    assert.equal(first.seen, true);
+    assert.equal(first.title, 'Site migration');
+    assert.equal(first.href, '/inbox?team=helix&t=slack%3AE1%3AC1%3A1.1&m=m2');
+    assert.equal(first.permalink, 'https://example.slack.com/archives/C1/p2');
+    assert.match(first.preview, /^We migrated the site for Globex/);
+    assert.deepEqual(a.body.people.map((p) => p.email), ['bo@staff.example', 'cy@staff.example']);
+    // Bo, on the team of the threads: them too, under heads without the domains, and not
+    // himself as who could know.
+    const b = await get(BO);
+    assert.equal(b.status, 200);
+    assert.ok(b.body.sections.some((s) => s.head === 'The Agency\'s people in Globex\'s threads'));
+    assert.ok(!JSON.stringify(b.body).includes('agency.example'));
+    assert.ok(b.body.sections.flatMap((s) => s.items).every((x) => x.seen && x.href));
+    assert.deepEqual(b.body.people.map((p) => p.email), ['cy@staff.example']);
+    // Someone on another team: where and when only, and nobody who could know.
+    const z = await get({ id: 9, email: 'zed@staff.example', teams: ['edge'] });
+    assert.equal(z.status, 200);
+    const items = z.body.sections.flatMap((s) => s.items);
+    assert.ok(items.length);
+    assert.deepEqual(Object.keys(items[0]).sort(), ['at', 'channel', 'n', 'org', 'seen', 'source', 'team']);
+    assert.ok(!/Site migration|We migrated/.test(JSON.stringify(z.body)));
+    assert.deepEqual(z.body.people, []);
+    // Nobody off an ops team, and no such pair.
+    assert.equal((await get({ id: 10, email: 'x@staff.example', teams: [] })).status, 403);
+    const none = await quiet(() => call(e, ADA, 'GET', '/api/admin/org-partners/evidence?pair=globex:nobody'));
+    assert.equal(none.status, 404);
+  });
+
   it('names a thread the viewer may not see by its customer, team and channel only', async () => {
     const e = env();
     const thread = {
