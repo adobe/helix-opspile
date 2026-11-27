@@ -86,7 +86,7 @@ let bar;
  * Customers button of narrower screens.
  */
 function load() {
-  views = piece('const PERSONAL_FACETS', "/**\n * A facet row's bar", 'personal, expertOn, simple, viewFacets, passes, toggleFilter, mentionsOn, notButton', {
+  views = piece('const PERSONAL_FACETS', "/**\n * A facet row's bar", 'personal, expertOn, simple, viewFacets, passes, toggleFilter, mentionsOn, notButton, namesMe, facetPasses', {
     FACETS, state, pass: null, keptUnread: (t) => t.unread, viewerId: () => ME,
   });
   const activityOf = (t) => String(t.last_at || t.any_at || '');
@@ -777,6 +777,35 @@ describe('the simple personal view', () => {
       assert.equal(sum, 4);
     });
 
+    it('says what the @ hides that waits for you, and turns it off to show it', () => {
+      const note = () => piece('function hiddenByAt() {', '/** Shown once the personal', 'atNote', {
+        mentionsOn: views.mentionsOn,
+        searching: () => Boolean(state.search.q),
+        badgePool: page.badgePool,
+        viewCount: page.viewCount,
+        namesMe: views.namesMe,
+        viewFacets: views.viewFacets,
+        facetPasses: views.facetPasses,
+      }).atNote();
+      state.unread = true;
+      Object.assign(state.data.threads.find((t) => t.thread === 'g1'), { unreadForYou: 1 });
+      Object.assign(state.data.threads.find((t) => t.thread === 'a2'), { unreadForYou: 2 });
+      // Without the @, nothing is hidden: the list has them.
+      assert.equal(note(), '');
+      state.mentions = true;
+      assert.match(note(), /^<div class="end" role="status">3 more messages wait for you in threads you are in that do not mention you\. <button type="button" class="linkish" data-atoff>Show them<\/button><\/div>$/);
+      // Only what passes the other filters: a customer picked counts its own.
+      pick('globex');
+      assert.match(note(), /^<div class="end" role="status">1 more message waits for you[^<]*<button[^>]*>Show it</);
+      // A thread that mentions you is in the list, its replies with it.
+      pick('globex');
+      Object.assign(state.data.threads.find((t) => t.thread === 'a1'), { unreadForYou: 5 });
+      assert.match(note(), /^<div class="end" role="status">3 more /);
+      read('g1');
+      read('a2');
+      assert.equal(note(), '');
+    });
+
     it('keeps a thread once you read it: its mention stays in the thread', () => {
       state.mentions = true;
       Object.assign(state.data.threads.find((t) => t.thread === 'g2'), {
@@ -788,7 +817,7 @@ describe('the simple personal view', () => {
       assert.deepEqual(rows(), ['a1', 'a3', 'g2']);
     });
 
-    it('with unread only, is what the red badge counts', () => {
+    it('with unread only, keeps the unread mentions of you', () => {
       state.mentions = true;
       state.unread = true;
       assert.deepEqual(rows(), ['a1', 'g2']);
